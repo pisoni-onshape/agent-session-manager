@@ -25,9 +25,9 @@ It keeps a read-only local SQLite catalog, lets you search/filter/sort sessions,
 
 1. Generate the Xcode project:
 
-   ```bash
-   xcodegen generate
-   ```
+    ```bash
+    xcodegen generate
+    ```
 
 2. Open the app in Xcode:
 
@@ -46,6 +46,12 @@ It keeps a read-only local SQLite catalog, lets you search/filter/sort sessions,
 
    ```bash
    open ~/Library/Developer/Xcode/DerivedData/AgentSessionManager-*/Build/Products/Debug/AgentSessionManager.app
+   ```
+
+5. For a project-local CLI build shortcut:
+
+   ```bash
+   ./build.sh
    ```
 
 ## Notes
