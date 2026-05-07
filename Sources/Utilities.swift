@@ -163,12 +163,12 @@ enum WorkspaceLauncher {
         pasteboard.setString(text, forType: .string)
     }
 
-    static func copilotConnectCommand(for record: SessionRecord) -> String {
+    static func copilotResumeCommand(for record: SessionRecord) -> String {
         var components: [String] = []
         if let workspacePath = record.workspacePath {
             components.append("cd \(shellQuote(workspacePath))")
         }
-        components.append("copilot --connect \(shellQuote(record.sourceSessionId))")
+        components.append("copilot --resume \(shellQuote(record.sourceSessionId))")
         return components.joined(separator: " && ")
     }
 
@@ -177,7 +177,7 @@ enum WorkspaceLauncher {
         if let workingDirectory {
             commandComponents.append("cd \(shellQuote(workingDirectory))")
         }
-        commandComponents.append("copilot --connect \(shellQuote(sessionId))")
+        commandComponents.append("copilot --resume \(shellQuote(sessionId))")
         let shellCommand = commandComponents.joined(separator: " && ")
 
         let script = """

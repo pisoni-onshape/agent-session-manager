@@ -140,7 +140,7 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func copyPrimaryCommand(_ record: SessionRecord) {
-        let command = WorkspaceLauncher.copilotConnectCommand(for: record)
+        let command = WorkspaceLauncher.copilotResumeCommand(for: record)
         WorkspaceLauncher.copyToPasteboard(command)
     }
 
