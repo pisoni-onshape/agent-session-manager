@@ -30,6 +30,7 @@ final class SessionBrowserViewModel: ObservableObject {
         do {
             let persisted = try catalog.loadPersistedSessions()
             applySessions(persisted)
+            lastRefreshDate = catalogModifiedDate()
             if persisted.isEmpty {
                 await refreshSessions()
             }
@@ -197,5 +198,10 @@ final class SessionBrowserViewModel: ObservableObject {
         default:
             return fallback()
         }
+    }
+
+    private func catalogModifiedDate() -> Date? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: AppPaths.catalogDatabaseURL.path)
+        return attributes?[.modificationDate] as? Date
     }
 }

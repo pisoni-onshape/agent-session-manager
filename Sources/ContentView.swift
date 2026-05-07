@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var viewModel: SessionBrowserViewModel
+    @StateObject private var searchFieldController = ToolbarSearchFieldController()
 
     var body: some View {
         NavigationSplitView {
@@ -34,8 +35,22 @@ struct ContentView: View {
                 )
             }
         }
-        .searchable(text: $viewModel.filters.searchText, prompt: "Search title, project, branch, preview")
+        .background {
+            SearchShortcutCaptureView {
+                searchFieldController.focus()
+            }
+            .frame(width: 0, height: 0)
+        }
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ToolbarSearchField(
+                    text: $viewModel.filters.searchText,
+                    placeholder: "Search title, project, branch, preview (Cmd-K)",
+                    controller: searchFieldController
+                )
+                .frame(width: 420)
+            }
+
             ToolbarItemGroup {
                 Button {
                     Task { await viewModel.refreshSessions() }
@@ -121,6 +136,85 @@ struct ContentView: View {
         }
         .padding(16)
         .background(.bar)
+    }
+}
+
+private final class ToolbarSearchFieldController: ObservableObject {
+    weak var searchField: NSSearchField?
+
+    func focus() {
+        guard let searchField else { return }
+        DispatchQueue.main.async {
+            searchField.window?.makeFirstResponder(searchField)
+        }
+    }
+}
+
+private struct ToolbarSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let controller: ToolbarSearchFieldController
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let searchField = NSSearchField()
+        searchField.placeholderString = placeholder
+        searchField.delegate = context.coordinator
+        searchField.sendsSearchStringImmediately = true
+        controller.searchField = searchField
+        return searchField
+    }
+
+    func updateNSView(_ nsView: NSSearchField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        nsView.placeholderString = placeholder
+        controller.searchField = nsView
+    }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        @Binding private var text: String
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            text = field.stringValue
+        }
+    }
+}
+
+private struct SearchShortcutCaptureView: NSViewRepresentable {
+    let onFocusSearch: () -> Void
+
+    func makeNSView(context: Context) -> SearchShortcutNSView {
+        let view = SearchShortcutNSView()
+        view.onFocusSearch = onFocusSearch
+        return view
+    }
+
+    func updateNSView(_ nsView: SearchShortcutNSView, context: Context) {
+        nsView.onFocusSearch = onFocusSearch
+    }
+}
+
+private final class SearchShortcutNSView: NSView {
+    var onFocusSearch: (() -> Void)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers == [.command], event.charactersIgnoringModifiers?.lowercased() == "k" {
+            onFocusSearch?()
+            return true
+        }
+
+        return super.performKeyEquivalent(with: event)
     }
 }
 
