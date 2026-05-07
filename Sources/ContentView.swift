@@ -13,7 +13,12 @@ struct ContentView: View {
                         .tag(session.id)
                 }
                 .overlay {
-                    if viewModel.displayedSessions.isEmpty {
+                    if viewModel.shouldShowLoadingPlaceholder {
+                        LoadingStateView(
+                            title: viewModel.startupLoadingText,
+                            detail: viewModel.startupLoadingDetailText
+                        )
+                    } else if viewModel.displayedSessions.isEmpty {
                         ContentUnavailableView(
                             "No Sessions Found",
                             systemImage: "tray",
@@ -27,6 +32,11 @@ struct ContentView: View {
             if let session = viewModel.selectedSession {
                 SessionDetailView(session: session, viewModel: viewModel)
                     .padding(24)
+            } else if viewModel.shouldShowLoadingPlaceholder {
+                LoadingStateView(
+                    title: viewModel.startupLoadingText,
+                    detail: viewModel.startupLoadingDetailText
+                )
             } else {
                 ContentUnavailableView(
                     "No Session Selected",
@@ -83,10 +93,33 @@ struct ContentView: View {
                     .background(.thinMaterial)
             } else {
                 HStack {
-                    Text(viewModel.sessionCountSummary)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    if let refreshStatusText = viewModel.refreshStatusText {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(refreshStatusText)
+                            .font(.callout)
+                        Text(viewModel.refreshDetailText)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else if !viewModel.hasCompletedInitialLoad {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading session index…")
+                            .font(.callout)
+                        Text("Preparing the local session catalog.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(viewModel.sessionCountSummary)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
+                    if let lastRefreshDisplayText = viewModel.lastRefreshDisplayText {
+                        Text(lastRefreshDisplayText)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -150,6 +183,27 @@ private final class ToolbarSearchFieldController: ObservableObject {
         DispatchQueue.main.async {
             searchField.window?.makeFirstResponder(searchField)
         }
+    }
+}
+
+private struct LoadingStateView: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .controlSize(.large)
+            Text(title)
+                .font(.title3.weight(.semibold))
+            Text(detail)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
     }
 }
 

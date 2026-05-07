@@ -22,12 +22,14 @@ struct AgentSessionManagerApp: App {
                     Task { await viewModel.refreshSessions() }
                 }
                 .keyboardShortcut("r")
+                .disabled(viewModel.isRefreshing)
 
                 Divider()
 
                 Button("Rebuild Session Index") {
                     Task { await viewModel.rebuildSessions() }
                 }
+                .disabled(viewModel.isRefreshing)
             }
         }
     }

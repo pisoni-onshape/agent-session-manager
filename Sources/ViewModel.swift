@@ -1,11 +1,18 @@
 import Foundation
 
+enum RefreshActivity: Equatable {
+    case idle
+    case incremental
+    case rebuild
+}
+
 @MainActor
 final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var allSessions: [SessionRecord] = []
     @Published var filters = SessionFilterState()
     @Published var selectedSessionID: String?
-    @Published private(set) var isRefreshing = false
+    @Published private(set) var refreshActivity: RefreshActivity = .idle
+    @Published private(set) var hasCompletedInitialLoad = false
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
     @Published var presentedTranscript: TranscriptDocument?
@@ -27,58 +34,72 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func loadInitialData() async {
-        guard let catalog else { return }
+        guard let catalog else {
+            hasCompletedInitialLoad = true
+            return
+        }
         do {
             let persisted = try catalog.loadPersistedSessions()
             applySessions(persisted)
             lastRefreshDate = catalogModifiedDate()
-            await refreshSessions()
+            await performRefresh(
+                activity: .incremental,
+                operation: { try catalog.refreshSessions() },
+                completesInitialLoad: true
+            )
         } catch {
             errorMessage = error.localizedDescription
+            hasCompletedInitialLoad = true
         }
     }
 
     func refreshSessions() async {
-        guard let catalog else {
-            errorMessage = "The catalog could not be initialized."
-            return
-        }
-
-        isRefreshing = true
-        defer { isRefreshing = false }
-
-        do {
-            let refreshed = try catalog.refreshSessions()
-            applySessions(refreshed)
-            lastRefreshDate = Date()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        await performRefresh(activity: .incremental, operation: { try catalogOrThrow().refreshSessions() })
     }
 
     func rebuildSessions() async {
-        guard let catalog else {
-            errorMessage = "The catalog could not be initialized."
-            return
-        }
+        await performRefresh(activity: .rebuild, operation: { try catalogOrThrow().rebuildSessions() })
+    }
 
-        isRefreshing = true
-        defer { isRefreshing = false }
-
-        do {
-            let rebuilt = try catalog.rebuildSessions()
-            applySessions(rebuilt)
-            lastRefreshDate = Date()
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    var isRefreshing: Bool {
+        refreshActivity != .idle
     }
 
     var lastRefreshDisplayText: String? {
         guard let lastRefreshDate else { return nil }
         return lastRefreshDate.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    var refreshStatusText: String? {
+        switch refreshActivity {
+        case .idle:
+            return nil
+        case .incremental:
+            return "Refreshing session index…"
+        case .rebuild:
+            return "Rebuilding session index…"
+        }
+    }
+
+    var refreshDetailText: String {
+        switch refreshActivity {
+        case .idle, .incremental:
+            return "Checking local sources for new or changed sessions."
+        case .rebuild:
+            return "Re-reading all local session data and rebuilding the catalog."
+        }
+    }
+
+    var startupLoadingText: String {
+        refreshStatusText ?? "Refreshing session index…"
+    }
+
+    var startupLoadingDetailText: String {
+        refreshStatusText == nil ? "Loading the local session catalog." : refreshDetailText
+    }
+
+    var shouldShowLoadingPlaceholder: Bool {
+        displayedSessions.isEmpty && (!hasCompletedInitialLoad || isRefreshing)
     }
 
     var displayedSessions: [SessionRecord] {
@@ -235,6 +256,40 @@ final class SessionBrowserViewModel: ObservableObject {
     private func catalogModifiedDate() -> Date? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: AppPaths.catalogDatabaseURL.path)
         return attributes?[.modificationDate] as? Date
+    }
+
+    private func performRefresh(
+        activity: RefreshActivity,
+        operation: () throws -> [SessionRecord],
+        completesInitialLoad: Bool = false
+    ) async {
+        refreshActivity = activity
+        defer {
+            refreshActivity = .idle
+            if completesInitialLoad {
+                hasCompletedInitialLoad = true
+            }
+        }
+
+        do {
+            let refreshed = try operation()
+            applySessions(refreshed)
+            lastRefreshDate = Date()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func catalogOrThrow() throws -> SessionCatalog {
+        guard let catalog else {
+            throw NSError(
+                domain: "SessionBrowserViewModel",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The catalog could not be initialized."]
+            )
+        }
+        return catalog
     }
 
 }
