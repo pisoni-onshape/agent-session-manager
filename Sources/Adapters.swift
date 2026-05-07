@@ -76,6 +76,10 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
                 ? try? TranscriptPreviewExtractor.extractMarkdownSummary(from: checkpointIndexURL)
                 : nil
 
+            guard eventPreview?.firstUser != nil || eventPreview?.firstAssistant != nil else {
+                return nil
+            }
+
             let workspacePath = metadata["cwd"] ?? metadata["git_root"]
             let fallbackTitle = metadata["id"] ?? sessionDirectory.lastPathComponent
             let title = metadata["name"]
@@ -143,6 +147,10 @@ struct CursorAdapter: SessionSourceAdapter {
                 let title = TextSanitizer.inferTitle(from: preview.firstUser, fallback: sessionId)
                 let relatedPlanPath = SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
 
+                guard preview.firstUser != nil || preview.firstAssistant != nil else {
+                    return nil
+                }
+
                 return SessionRecord(
                     source: .cursor,
                     sourceSessionId: sessionId,
@@ -201,6 +209,10 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
                     ? try? TranscriptPreviewExtractor.extractVSCodeChatSessionModel(from: chatSessionURL)
                     : nil
                 let relatedPlanPath = SessionArtifactLocator.vscodePlanPath(workspaceDirectory: workspaceDirectory, sessionId: sessionID)
+
+                guard preview.firstUser != nil || preview.firstAssistant != nil else {
+                    return nil
+                }
 
                 return SessionRecord(
                     source: .vscodeCopilot,
