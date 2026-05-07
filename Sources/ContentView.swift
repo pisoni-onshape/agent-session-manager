@@ -500,20 +500,20 @@ private struct TranscriptTimelineView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(transcript.entries.enumerated()), id: \.element.id) { index, entry in
+            ForEach(Array(transcript.displayItems.enumerated()), id: \.element.id) { index, item in
                 if shouldShowDateHeader(at: index) {
-                    TranscriptDateHeader(date: entry.timestamp!)
+                    TranscriptDateHeader(date: item.timestamp!)
                 }
-                TranscriptEntryView(entry: entry)
+                TranscriptTimelineItemView(item: item)
             }
         }
     }
 
     private func shouldShowDateHeader(at index: Int) -> Bool {
-        guard let timestamp = transcript.entries[index].timestamp else {
+        guard let timestamp = transcript.displayItems[index].timestamp else {
             return false
         }
-        guard index > 0, let previousTimestamp = transcript.entries[index - 1].timestamp else {
+        guard index > 0, let previousTimestamp = transcript.displayItems[index - 1].timestamp else {
             return true
         }
         return !calendar.isDate(previousTimestamp, inSameDayAs: timestamp)
@@ -609,6 +609,81 @@ private struct TranscriptEntryView: View {
         case .tool, .system:
             return Color.secondary.opacity(0.08)
         }
+    }
+}
+
+private struct TranscriptTimelineItemView: View {
+    let item: TranscriptDisplayItem
+
+    var body: some View {
+        switch item {
+        case let .entry(entry):
+            TranscriptEntryView(entry: entry)
+        case let .collapsedEvents(_, entries):
+            CollapsedTranscriptEventsView(entries: entries)
+        }
+    }
+}
+
+private struct CollapsedTranscriptEventsView: View {
+    let entries: [TranscriptEntry]
+    @State private var isExpanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(entries) { entry in
+                    TranscriptEntryView(entry: entry)
+                }
+            }
+            .padding(.top, 12)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(summaryTitle)
+                        .font(.callout.weight(.semibold))
+                    Spacer()
+                    if let timeSummary {
+                        Text(timeSummary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let summaryDetail {
+                    Text(summaryDetail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var summaryTitle: String {
+        let noun = entries.count == 1 ? "internal event" : "internal events"
+        return "\(entries.count) \(noun)"
+    }
+
+    private var summaryDetail: String? {
+        let previewTitles = entries.prefix(2).map(\.title)
+        guard !previewTitles.isEmpty else { return nil }
+        var components = previewTitles
+        if entries.count > previewTitles.count {
+            components.append("+\(entries.count - previewTitles.count) more")
+        }
+        return components.joined(separator: " • ")
+    }
+
+    private var timeSummary: String? {
+        let timestamps = entries.compactMap(\.timestamp)
+        guard let first = timestamps.first else { return nil }
+        guard let last = timestamps.last, last != first else {
+            return first.formatted(date: .omitted, time: .shortened)
+        }
+        return "\(first.formatted(date: .omitted, time: .shortened)) - \(last.formatted(date: .omitted, time: .shortened))"
     }
 }
 

@@ -76,6 +76,17 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(transcript.entries[3].title, "Started view")
         XCTAssertEqual(transcript.entries[4].title, "Completed view")
         XCTAssertEqual(transcript.entries[5].body, "I’ll trace the terminal initialization path first.")
+
+        let displayItems = transcript.displayItems
+        XCTAssertEqual(displayItems.count, 4)
+        guard case let .collapsedEvents(_, leadingEvents) = displayItems[0] else {
+            return XCTFail("Expected leading non-chat entries to be collapsed.")
+        }
+        XCTAssertEqual(leadingEvents.count, 2)
+        guard case let .collapsedEvents(_, toolEvents) = displayItems[2] else {
+            return XCTFail("Expected tool entries to be collapsed.")
+        }
+        XCTAssertEqual(toolEvents.count, 2)
     }
 
     func testTranscriptLoaderBuildsCursorTranscriptWithoutTimestamps() throws {

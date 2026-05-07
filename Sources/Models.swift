@@ -141,6 +141,10 @@ struct TranscriptEntry: Identifiable, Equatable, Sendable {
     let title: String
     let body: String?
     let timestamp: Date?
+
+    var isChatMessage: Bool {
+        role == .user || role == .assistant
+    }
 }
 
 struct TranscriptDocument: Identifiable, Equatable, Sendable {
@@ -154,5 +158,54 @@ struct TranscriptDocument: Identifiable, Equatable, Sendable {
 
     var id: String {
         "\(source.rawValue)::\(sessionID)"
+    }
+}
+
+enum TranscriptDisplayItem: Identifiable, Equatable, Sendable {
+    case entry(TranscriptEntry)
+    case collapsedEvents(id: String, entries: [TranscriptEntry])
+
+    var id: String {
+        switch self {
+        case let .entry(entry):
+            return entry.id
+        case let .collapsedEvents(id, _):
+            return id
+        }
+    }
+
+    var timestamp: Date? {
+        switch self {
+        case let .entry(entry):
+            return entry.timestamp
+        case let .collapsedEvents(_, entries):
+            return entries.compactMap(\.timestamp).first
+        }
+    }
+}
+
+extension TranscriptDocument {
+    var displayItems: [TranscriptDisplayItem] {
+        var items: [TranscriptDisplayItem] = []
+        var pendingEvents: [TranscriptEntry] = []
+
+        func flushPendingEvents() {
+            guard !pendingEvents.isEmpty else { return }
+            let groupID = pendingEvents.map(\.id).joined(separator: "::")
+            items.append(.collapsedEvents(id: groupID, entries: pendingEvents))
+            pendingEvents.removeAll()
+        }
+
+        for entry in entries {
+            if entry.isChatMessage {
+                flushPendingEvents()
+                items.append(.entry(entry))
+            } else {
+                pendingEvents.append(entry)
+            }
+        }
+
+        flushPendingEvents()
+        return items
     }
 }
