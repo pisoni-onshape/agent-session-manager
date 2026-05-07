@@ -69,6 +69,9 @@ struct ContentView: View {
                 }
             }
         }
+        .sheet(item: $viewModel.presentedTranscript) { transcript in
+            TranscriptViewerSheet(transcript: transcript)
+        }
         .alert("Index refresh recommended", isPresented: $viewModel.showStaleRefreshPrompt) {
             Button("No", role: .cancel) {}
             Button("Yes") {
@@ -313,13 +316,18 @@ private struct SessionDetailView: View {
                 }
             }
 
+            Button("View Transcript") {
+                viewModel.openTranscript(for: session)
+            }
+            .disabled(session.rawTranscriptPath == nil)
+
             if session.source == .copilotCLI {
                 Button("Copy Resume Command") {
                     viewModel.copyPrimaryCommand(session)
                 }
             }
 
-            Button("Reveal Transcript") {
+            Button("Reveal Raw File") {
                 viewModel.revealTranscript(for: session)
             }
             .disabled(session.rawTranscriptPath == nil && session.rawMetadataPath == nil)
@@ -409,5 +417,213 @@ private struct PathRow: View {
                 .padding(12)
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
+    }
+}
+
+private struct TranscriptViewerSheet: View {
+    let transcript: TranscriptDocument
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let timestampNotice = transcript.timestampNotice {
+                        Label(timestampNotice, systemImage: "clock.badge.exclamationmark")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+
+                    if transcript.entries.isEmpty {
+                        ContentUnavailableView(
+                            "Transcript Unavailable",
+                            systemImage: "text.bubble",
+                            description: Text("No readable conversation entries were found in this transcript.")
+                        )
+                    } else {
+                        TranscriptTimelineView(transcript: transcript)
+                    }
+                }
+                .padding(24)
+            }
+        }
+        .frame(minWidth: 920, minHeight: 720)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Transcript")
+                    .font(.title2.weight(.semibold))
+                Text(transcript.sessionTitle)
+                    .font(.title3)
+                Label(transcript.source.displayName, systemImage: transcript.source.systemImageName)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text(transcript.rawTranscriptPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 10) {
+                Text("\(transcript.entries.count) items")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button("Reveal Raw File") {
+                        WorkspaceLauncher.reveal(path: transcript.rawTranscriptPath)
+                    }
+
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+            }
+        }
+        .padding(20)
+    }
+}
+
+private struct TranscriptTimelineView: View {
+    let transcript: TranscriptDocument
+    private let calendar = Calendar.current
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(transcript.entries.enumerated()), id: \.element.id) { index, entry in
+                if shouldShowDateHeader(at: index) {
+                    TranscriptDateHeader(date: entry.timestamp!)
+                }
+                TranscriptEntryView(entry: entry)
+            }
+        }
+    }
+
+    private func shouldShowDateHeader(at index: Int) -> Bool {
+        guard let timestamp = transcript.entries[index].timestamp else {
+            return false
+        }
+        guard index > 0, let previousTimestamp = transcript.entries[index - 1].timestamp else {
+            return true
+        }
+        return !calendar.isDate(previousTimestamp, inSameDayAs: timestamp)
+    }
+}
+
+private struct TranscriptDateHeader: View {
+    let date: Date
+
+    var body: some View {
+        HStack {
+            Text(date.formatted(date: .complete, time: .omitted))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Divider()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct TranscriptEntryView: View {
+    let entry: TranscriptEntry
+
+    var body: some View {
+        switch entry.role {
+        case .user:
+            HStack {
+                Spacer(minLength: 80)
+                chatCard
+                    .frame(maxWidth: 700, alignment: .trailing)
+            }
+        case .assistant:
+            HStack {
+                chatCard
+                    .frame(maxWidth: 700, alignment: .leading)
+                Spacer(minLength: 80)
+            }
+        case .tool, .system:
+            eventCard
+        }
+    }
+
+    private var chatCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(entry.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let timestamp = entry.timestamp {
+                    Text(timestamp.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let body = entry.body {
+                MarkdownTextBlock(text: body)
+            }
+        }
+        .padding(16)
+        .background(backgroundColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var eventCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(entry.title, systemImage: entry.role == .tool ? "hammer" : "info.circle")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                if let timestamp = entry.timestamp {
+                    Text(timestamp.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let body = entry.body {
+                MarkdownTextBlock(text: body)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var backgroundColor: Color {
+        switch entry.role {
+        case .user:
+            return Color.accentColor.opacity(0.14)
+        case .assistant:
+            return Color.green.opacity(0.12)
+        case .tool, .system:
+            return Color.secondary.opacity(0.08)
+        }
+    }
+}
+
+private struct MarkdownTextBlock: View {
+    let text: String
+
+    var body: some View {
+        Group {
+            if let attributedText = try? AttributedString(markdown: text) {
+                Text(attributedText)
+            } else {
+                Text(text)
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

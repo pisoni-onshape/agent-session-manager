@@ -265,7 +265,49 @@ enum SessionArtifactLocator {
     }
 }
 
+enum TranscriptLoadingError: LocalizedError {
+    case transcriptUnavailable
+    case transcriptUnreadable(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .transcriptUnavailable:
+            return "This session does not have a readable transcript file."
+        case let .transcriptUnreadable(path):
+            return "The transcript at \(path) could not be read."
+        }
+    }
+}
+
 enum TranscriptPreviewExtractor {
+    static func loadTranscript(for record: SessionRecord) throws -> TranscriptDocument {
+        guard let transcriptPath = record.rawTranscriptPath else {
+            throw TranscriptLoadingError.transcriptUnavailable
+        }
+
+        let url = URL(fileURLWithPath: transcriptPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw TranscriptLoadingError.transcriptUnreadable(url.path)
+        }
+
+        switch record.source {
+        case .copilotCLI, .vscodeCopilot:
+            return try extractEventTranscriptDocument(
+                from: url,
+                source: record.source,
+                sessionId: record.sourceSessionId,
+                title: record.title
+            )
+        case .cursor:
+            return try extractCursorTranscriptDocument(
+                from: url,
+                source: record.source,
+                sessionId: record.sourceSessionId,
+                title: record.title
+            )
+        }
+    }
+
     static func extractEventTranscript(from url: URL) throws -> TranscriptPreview {
         let contents = try String(contentsOf: url, encoding: .utf8)
         var preview = TranscriptPreview()
@@ -305,6 +347,57 @@ enum TranscriptPreviewExtractor {
         }
 
         return preview
+    }
+
+    private static func extractEventTranscriptDocument(
+        from url: URL,
+        source: SessionSource,
+        sessionId: String,
+        title: String
+    ) throws -> TranscriptDocument {
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        var toolNamesByCallID: [String: String] = [:]
+        var entries: [TranscriptEntry] = []
+
+        for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let data = line.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = object["type"] as? String else {
+                continue
+            }
+
+            let payload = object["data"] as? [String: Any]
+            let entryID = object["id"] as? String ?? UUID().uuidString
+            let timestamp = eventTimestamp(in: object, payload: payload)
+
+            if type == "tool.execution_start",
+               let toolCallId = payload?["toolCallId"] as? String,
+               let toolName = payload?["toolName"] as? String {
+                toolNamesByCallID[toolCallId] = toolName
+            }
+
+            guard let entry = eventTranscriptEntry(
+                type: type,
+                payload: payload,
+                timestamp: timestamp,
+                entryID: entryID,
+                toolNamesByCallID: toolNamesByCallID
+            ) else {
+                continue
+            }
+
+            entries.append(entry)
+        }
+
+        return TranscriptDocument(
+            sessionID: sessionId,
+            sessionTitle: title,
+            source: source,
+            rawTranscriptPath: url.path,
+            entries: entries,
+            timestampsAreComplete: true,
+            timestampNotice: nil
+        )
     }
 
     static func extractVSCodeChatSessionModel(from url: URL) throws -> String? {
@@ -349,6 +442,59 @@ enum TranscriptPreviewExtractor {
         }
 
         return preview
+    }
+
+    private static func extractCursorTranscriptDocument(
+        from url: URL,
+        source: SessionSource,
+        sessionId: String,
+        title: String
+    ) throws -> TranscriptDocument {
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        var entries: [TranscriptEntry] = []
+
+        for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
+            guard let data = line.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let role = object["role"] as? String,
+                  let body = extractCursorText(from: object) else {
+                continue
+            }
+
+            let entryRole: TranscriptEntryRole
+            let entryTitle: String
+            switch role {
+            case "user":
+                entryRole = .user
+                entryTitle = "User"
+            case "assistant":
+                entryRole = .assistant
+                entryTitle = "Assistant"
+            default:
+                entryRole = .system
+                entryTitle = role.capitalized
+            }
+
+            entries.append(
+                TranscriptEntry(
+                    id: "\(sessionId)-\(index)",
+                    role: entryRole,
+                    title: entryTitle,
+                    body: body,
+                    timestamp: nil
+                )
+            )
+        }
+
+        return TranscriptDocument(
+            sessionID: sessionId,
+            sessionTitle: title,
+            source: source,
+            rawTranscriptPath: url.path,
+            entries: entries,
+            timestampsAreComplete: false,
+            timestampNotice: "Cursor transcripts preserve message order, but the inspected local JSONL files do not include per-message timestamps."
+        )
     }
 
     static func extractMarkdownSummary(from url: URL) throws -> String? {
@@ -396,6 +542,145 @@ enum TranscriptPreviewExtractor {
             current = dictionary[key]
         }
         return current as? String
+    }
+
+    private static func eventTranscriptEntry(
+        type: String,
+        payload: [String: Any]?,
+        timestamp: Date?,
+        entryID: String,
+        toolNamesByCallID: [String: String]
+    ) -> TranscriptEntry? {
+        switch type {
+        case "user.message":
+            let body = TextSanitizer.clean(payload?["content"] as? String)
+            return body.map {
+                TranscriptEntry(id: entryID, role: .user, title: "User", body: $0, timestamp: timestamp)
+            }
+        case "assistant.message":
+            let body = TextSanitizer.clean(payload?["content"] as? String)
+            return body.map {
+                TranscriptEntry(id: entryID, role: .assistant, title: "Assistant", body: $0, timestamp: timestamp)
+            }
+        case "session.start":
+            let producer = payload?["producer"] as? String
+            let version = payload?["copilotVersion"] as? String
+            let body = [producer, version.map { "Version \($0)" }]
+                .compactMap { $0 }
+                .joined(separator: " • ")
+            return TranscriptEntry(
+                id: entryID,
+                role: .system,
+                title: "Session Started",
+                body: body.isEmpty ? nil : body,
+                timestamp: timestamp
+            )
+        case "session.model_change":
+            let model = normalizeModelIdentifier(payload?["newModel"] as? String) ?? "Unknown model"
+            return TranscriptEntry(
+                id: entryID,
+                role: .system,
+                title: "Model Changed",
+                body: model,
+                timestamp: timestamp
+            )
+        case "session.info":
+            let infoType = prettifyEventLabel(payload?["infoType"] as? String ?? "Info")
+            let body = TextSanitizer.clean(payload?["message"] as? String)
+            return TranscriptEntry(
+                id: entryID,
+                role: .system,
+                title: infoType,
+                body: body,
+                timestamp: timestamp
+            )
+        case "tool.execution_start":
+            let toolName = payload?["toolName"] as? String ?? "Tool"
+            let body = toolArgumentsSummary(payload?["arguments"])
+            return TranscriptEntry(
+                id: entryID,
+                role: .tool,
+                title: "Started \(toolName)",
+                body: body,
+                timestamp: timestamp
+            )
+        case "tool.execution_complete":
+            let toolCallId = payload?["toolCallId"] as? String
+            let toolName = toolCallId.flatMap { toolNamesByCallID[$0] } ?? "Tool"
+            let success = payload?["success"] as? Bool ?? true
+            let body = toolCompletionSummary(payload)
+            return TranscriptEntry(
+                id: entryID,
+                role: .tool,
+                title: success ? "Completed \(toolName)" : "Failed \(toolName)",
+                body: body,
+                timestamp: timestamp
+            )
+        default:
+            return nil
+        }
+    }
+
+    private static func eventTimestamp(in object: [String: Any], payload: [String: Any]?) -> Date? {
+        ISO8601DateCoding.parse(object["timestamp"] as? String)
+            ?? ISO8601DateCoding.parse(payload?["startTime"] as? String)
+    }
+
+    private static func prettifyEventLabel(_ rawValue: String) -> String {
+        rawValue
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
+    }
+
+    private static func toolArgumentsSummary(_ value: Any?) -> String? {
+        if let rawString = value as? String {
+            return TextSanitizer.summarize(rawString, limit: 220)
+        }
+
+        guard let dictionary = value as? [String: Any] else { return nil }
+        let preferredKeys = ["description", "question", "prompt", "command", "query", "pattern", "path", "url", "intent"]
+        for key in preferredKeys {
+            if let text = TextSanitizer.summarize(dictionary[key] as? String, limit: 220) {
+                return text
+            }
+        }
+
+        if let agentName = dictionary["agentName"] as? String {
+            let detail = TextSanitizer.summarize(dictionary["description"] as? String, limit: 180)
+            return [agentName, detail].compactMap { $0 }.joined(separator: " • ")
+        }
+
+        if let skill = dictionary["skill"] as? String {
+            return skill
+        }
+
+        return nil
+    }
+
+    private static func toolCompletionSummary(_ payload: [String: Any]?) -> String? {
+        guard let payload else { return nil }
+        let success = payload["success"] as? Bool ?? true
+        if !success {
+            if let error = TextSanitizer.clean(payload["error"] as? String) {
+                return error
+            }
+            if let failure = nestedString(in: payload, path: ["result", "error"]) {
+                return TextSanitizer.clean(failure)
+            }
+        }
+
+        if let detail = nestedString(in: payload, path: ["result", "content"]),
+           detail.count <= 140 {
+            return TextSanitizer.clean(detail)
+        }
+
+        if let detail = nestedString(in: payload, path: ["result", "detailedContent"]),
+           detail.count <= 140 {
+            return TextSanitizer.clean(detail)
+        }
+
+        return nil
     }
 }
 

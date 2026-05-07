@@ -8,9 +8,11 @@ Agent Session Manager is a macOS SwiftUI desktop app that aggregates local sessi
 
 It keeps a read-only local SQLite catalog, lets you search/filter/sort sessions, and exposes the best available source-aware action for each session:
 
-- **Copilot CLI**: exact resume via `copilot --connect <session-id>`
+- **Copilot CLI**: exact resume via `copilot --resume <session-id>`
 - **Cursor**: open the workspace in Cursor when the workspace path can be reconstructed, otherwise reveal the transcript
 - **VS Code**: open the workspace in VS Code
+
+It also supports an in-app read-only transcript viewer so you can inspect the conversation without opening raw JSONL files in Finder.
 
 ## Project shape
 
@@ -60,3 +62,4 @@ It keeps a read-only local SQLite catalog, lets you search/filter/sort sessions,
 - The local SQLite catalog lives under `~/Library/Application Support/AgentSessionManager/catalog.sqlite3`.
 - Cursor project path reconstruction is heuristic because its local project directory name is lossy for paths that contain hyphens; when reconstruction fails, the app falls back to transcript reveal.
 - Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (`chatSessions` selected model). Cursor transcripts did not show a stable per-session model field in the inspected local store.
+- The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and VS Code Copilot. Cursor transcripts are still readable in-app, but the inspected local JSONL files do not expose per-message timestamps.

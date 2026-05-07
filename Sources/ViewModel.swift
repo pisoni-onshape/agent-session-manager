@@ -9,6 +9,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
     @Published var showStaleRefreshPrompt = false
+    @Published var presentedTranscript: TranscriptDocument?
 
     private let catalog: SessionCatalog?
 
@@ -163,6 +164,15 @@ final class SessionBrowserViewModel: ObservableObject {
 
     func revealTranscript(for record: SessionRecord) {
         WorkspaceLauncher.reveal(path: record.rawTranscriptPath ?? record.rawMetadataPath)
+    }
+
+    func openTranscript(for record: SessionRecord) {
+        do {
+            presentedTranscript = try TranscriptPreviewExtractor.loadTranscript(for: record)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func openPlan(for record: SessionRecord) {

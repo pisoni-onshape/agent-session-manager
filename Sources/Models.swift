@@ -1,6 +1,6 @@
 import Foundation
 
-enum SessionSource: String, CaseIterable, Codable, Identifiable {
+enum SessionSource: String, CaseIterable, Codable, Identifiable, Sendable {
     case copilotCLI = "copilot-cli"
     case cursor
     case vscodeCopilot = "vscode-copilot"
@@ -30,14 +30,14 @@ enum SessionSource: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-enum ResumeActionKind: String, Codable {
+enum ResumeActionKind: String, Codable, Sendable {
     case copilotConnect
     case openInCursor
     case openInVSCode
     case revealPath
 }
 
-enum SessionSortMode: String, CaseIterable, Identifiable {
+enum SessionSortMode: String, CaseIterable, Identifiable, Sendable {
     case recentlyUpdated
     case startedAt
     case project
@@ -62,7 +62,7 @@ enum SessionSortMode: String, CaseIterable, Identifiable {
     }
 }
 
-struct SessionRecord: Identifiable, Equatable {
+struct SessionRecord: Identifiable, Equatable, Sendable {
     let source: SessionSource
     let sourceSessionId: String
     let workspacePath: String?
@@ -99,7 +99,7 @@ struct SessionRecord: Identifiable, Equatable {
     }
 }
 
-struct TranscriptPreview {
+struct TranscriptPreview: Sendable {
     var sessionId: String?
     var startedAt: Date?
     var latestModel: String?
@@ -111,7 +111,7 @@ struct TranscriptPreview {
     }
 }
 
-struct SessionFilterState {
+struct SessionFilterState: Sendable {
     static let allProjectsToken = "__all_projects__"
     static let allBranchesToken = "__all_branches__"
     static let allSourcesToken = "__all_sources__"
@@ -125,5 +125,34 @@ struct SessionFilterState {
 
     var selectedSource: SessionSource? {
         SessionSource(rawValue: selectedSourceRawValue)
+    }
+}
+
+enum TranscriptEntryRole: String, Sendable {
+    case user
+    case assistant
+    case tool
+    case system
+}
+
+struct TranscriptEntry: Identifiable, Equatable, Sendable {
+    let id: String
+    let role: TranscriptEntryRole
+    let title: String
+    let body: String?
+    let timestamp: Date?
+}
+
+struct TranscriptDocument: Identifiable, Equatable, Sendable {
+    let sessionID: String
+    let sessionTitle: String
+    let source: SessionSource
+    let rawTranscriptPath: String
+    let entries: [TranscriptEntry]
+    let timestampsAreComplete: Bool
+    let timestampNotice: String?
+
+    var id: String {
+        "\(source.rawValue)::\(sessionID)"
     }
 }
