@@ -1,0 +1,5 @@
+.DS_Store
+build/
+DerivedData/
+AgentSessionManager.xcodeproj/project.xcworkspace/xcuserdata/
+AgentSessionManager.xcodeproj/xcuserdata/
