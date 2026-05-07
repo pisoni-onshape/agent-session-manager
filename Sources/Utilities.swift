@@ -692,6 +692,19 @@ func fileDates(for url: URL) -> (created: Date?, modified: Date?) {
     )
 }
 
+func fileFingerprint(for path: String?) -> String {
+    guard let path else { return "missing" }
+    let url = URL(fileURLWithPath: path)
+    let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+    let modified = (attributes?[.modificationDate] as? Date).map { ISO8601DateCoding.string($0) ?? "unknown-date" } ?? "missing-date"
+    let size = (attributes?[.size] as? NSNumber)?.stringValue ?? "missing-size"
+    return "\(path)|\(modified)|\(size)"
+}
+
+func combinedFingerprint(paths: [String?]) -> String {
+    paths.map(fileFingerprint).joined(separator: "||")
+}
+
 func loadJSONDictionary(from url: URL) throws -> [String: Any]? {
     let data = try Data(contentsOf: url)
     return try JSONSerialization.jsonObject(with: data) as? [String: Any]

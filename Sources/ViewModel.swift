@@ -8,7 +8,6 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
-    @Published var showStaleRefreshPrompt = false
     @Published var presentedTranscript: TranscriptDocument?
 
     private let catalog: SessionCatalog?
@@ -33,11 +32,7 @@ final class SessionBrowserViewModel: ObservableObject {
             let persisted = try catalog.loadPersistedSessions()
             applySessions(persisted)
             lastRefreshDate = catalogModifiedDate()
-            if persisted.isEmpty {
-                await refreshSessions()
-            } else {
-                showStaleRefreshPrompt = shouldPromptForStaleRefresh(lastRefreshDate: lastRefreshDate)
-            }
+            await refreshSessions()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -56,7 +51,25 @@ final class SessionBrowserViewModel: ObservableObject {
             let refreshed = try catalog.refreshSessions()
             applySessions(refreshed)
             lastRefreshDate = Date()
-            showStaleRefreshPrompt = false
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func rebuildSessions() async {
+        guard let catalog else {
+            errorMessage = "The catalog could not be initialized."
+            return
+        }
+
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        do {
+            let rebuilt = try catalog.rebuildSessions()
+            applySessions(rebuilt)
+            lastRefreshDate = Date()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -66,13 +79,6 @@ final class SessionBrowserViewModel: ObservableObject {
     var lastRefreshDisplayText: String? {
         guard let lastRefreshDate else { return nil }
         return lastRefreshDate.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    var staleRefreshPromptMessage: String {
-        if let lastRefreshDisplayText {
-            return "The session index was last refreshed on \(lastRefreshDisplayText). Refresh it now?"
-        }
-        return "The session index has not been refreshed recently. Refresh it now?"
     }
 
     var displayedSessions: [SessionRecord] {
@@ -231,8 +237,4 @@ final class SessionBrowserViewModel: ObservableObject {
         return attributes?[.modificationDate] as? Date
     }
 
-    private func shouldPromptForStaleRefresh(lastRefreshDate: Date?) -> Bool {
-        guard let lastRefreshDate else { return false }
-        return Date().timeIntervalSince(lastRefreshDate) >= 7 * 24 * 60 * 60
-    }
 }

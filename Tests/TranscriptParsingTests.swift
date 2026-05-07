@@ -63,6 +63,7 @@ final class TranscriptParsingTests: XCTestCase {
             rawTranscriptPath: url.path,
             rawMetadataPath: nil,
             relatedPlanPath: nil,
+            fingerprint: "fingerprint-event",
             resumeKind: .copilotConnect,
             resumePayload: "abc-123",
             isNewtonProject: false
@@ -114,6 +115,7 @@ final class TranscriptParsingTests: XCTestCase {
             rawTranscriptPath: url.path,
             rawMetadataPath: nil,
             relatedPlanPath: nil,
+            fingerprint: "fingerprint-cursor",
             resumeKind: .revealPath,
             resumePayload: url.path,
             isNewtonProject: true

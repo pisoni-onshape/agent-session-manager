@@ -60,6 +60,9 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
 
 - The app is intentionally **read-only** with respect to the original session stores.
 - The local SQLite catalog lives under `~/Library/Application Support/AgentSessionManager/catalog.sqlite3`.
+- The app now runs an **incremental refresh automatically on launch** and the main **Refresh** button uses that same incremental path.
+- Incremental refresh still scans the source directories, but it only reparses sessions whose transcript/metadata files changed and only upserts/deletes affected rows in SQLite.
+- A **Rebuild Session Index** command remains available under the **Catalog** menu as a recovery/debug path.
 - Cursor project path reconstruction is heuristic because its local project directory name is lossy for paths that contain hyphens; when reconstruction fails, the app falls back to transcript reveal.
 - Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (`chatSessions` selected model). Cursor transcripts did not show a stable per-session model field in the inspected local store.
 - The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and VS Code Copilot. Cursor transcripts are still readable in-app, but the inspected local JSONL files do not expose per-message timestamps.

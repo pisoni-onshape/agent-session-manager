@@ -78,6 +78,7 @@ struct SessionRecord: Identifiable, Equatable, Sendable {
     let rawTranscriptPath: String?
     let rawMetadataPath: String?
     let relatedPlanPath: String?
+    let fingerprint: String
     let resumeKind: ResumeActionKind
     let resumePayload: String
     let isNewtonProject: Bool

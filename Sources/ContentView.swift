@@ -72,14 +72,6 @@ struct ContentView: View {
         .sheet(item: $viewModel.presentedTranscript) { transcript in
             TranscriptViewerSheet(transcript: transcript)
         }
-        .alert("Index refresh recommended", isPresented: $viewModel.showStaleRefreshPrompt) {
-            Button("No", role: .cancel) {}
-            Button("Yes") {
-                Task { await viewModel.refreshSessions() }
-            }
-        } message: {
-            Text(viewModel.staleRefreshPromptMessage)
-        }
         .safeAreaInset(edge: .bottom) {
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)

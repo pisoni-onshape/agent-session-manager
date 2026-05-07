@@ -58,6 +58,7 @@ final class SQLiteSessionStore {
             raw_transcript_path,
             raw_metadata_path,
             related_plan_path,
+            fingerprint,
             resume_kind,
             resume_payload,
             is_newton_project
@@ -77,7 +78,7 @@ final class SQLiteSessionStore {
         var records: [SessionRecord] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             guard let source = SessionSource(rawValue: string(from: statement, column: 0) ?? ""),
-                  let resumeKind = ResumeActionKind(rawValue: string(from: statement, column: 15) ?? "") else {
+                  let resumeKind = ResumeActionKind(rawValue: string(from: statement, column: 16) ?? "") else {
                 continue
             }
             records.append(
@@ -97,9 +98,10 @@ final class SQLiteSessionStore {
                     rawTranscriptPath: string(from: statement, column: 12),
                     rawMetadataPath: string(from: statement, column: 13),
                     relatedPlanPath: string(from: statement, column: 14),
+                    fingerprint: string(from: statement, column: 15) ?? "",
                     resumeKind: resumeKind,
-                    resumePayload: string(from: statement, column: 16) ?? "",
-                    isNewtonProject: sqlite3_column_int(statement, 17) == 1
+                    resumePayload: string(from: statement, column: 17) ?? "",
+                    isNewtonProject: sqlite3_column_int(statement, 18) == 1
                 )
             )
         }
@@ -111,65 +113,41 @@ final class SQLiteSessionStore {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             try execute("DELETE FROM sessions;")
-            let insertSQL = """
-            INSERT INTO sessions (
-                id,
-                source,
-                source_session_id,
-                workspace_path,
-                project_name,
-                branch,
-                conversation_model,
-                started_at,
-                updated_at,
-                title,
-                summary,
-                first_user_preview,
-                first_assistant_preview,
-                raw_transcript_path,
-                raw_metadata_path,
-                related_plan_path,
-                resume_kind,
-                resume_payload,
-                is_newton_project
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """
+            try upsert(records: records)
 
-            var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(database, insertSQL, -1, &statement, nil) == SQLITE_OK else {
-                throw SQLiteStoreError.prepareFailed(lastErrorMessage())
-            }
-            defer { sqlite3_finalize(statement) }
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
 
-            for record in records {
-                sqlite3_reset(statement)
-                sqlite3_clear_bindings(statement)
+    func applyIncrementalUpdate(records: [SessionRecord], removedIDs: [String]) throws {
+        if records.isEmpty, removedIDs.isEmpty {
+            return
+        }
 
-                bind(record.id, to: statement, index: 1)
-                bind(record.source.rawValue, to: statement, index: 2)
-                bind(record.sourceSessionId, to: statement, index: 3)
-                bind(record.workspacePath, to: statement, index: 4)
-                bind(record.projectName, to: statement, index: 5)
-                bind(record.branch, to: statement, index: 6)
-                bind(record.conversationModel, to: statement, index: 7)
-                bind(ISO8601DateCoding.string(record.startedAt), to: statement, index: 8)
-                bind(ISO8601DateCoding.string(record.updatedAt), to: statement, index: 9)
-                bind(record.title, to: statement, index: 10)
-                bind(record.summary, to: statement, index: 11)
-                bind(record.firstUserPreview, to: statement, index: 12)
-                bind(record.firstAssistantPreview, to: statement, index: 13)
-                bind(record.rawTranscriptPath, to: statement, index: 14)
-                bind(record.rawMetadataPath, to: statement, index: 15)
-                bind(record.relatedPlanPath, to: statement, index: 16)
-                bind(record.resumeKind.rawValue, to: statement, index: 17)
-                bind(record.resumePayload, to: statement, index: 18)
-                sqlite3_bind_int(statement, 19, record.isNewtonProject ? 1 : 0)
+        try execute("BEGIN IMMEDIATE TRANSACTION;")
+        do {
+            if !removedIDs.isEmpty {
+                let placeholders = Array(repeating: "?", count: removedIDs.count).joined(separator: ", ")
+                let deleteSQL = "DELETE FROM sessions WHERE id IN (\(placeholders));"
+                var deleteStatement: OpaquePointer?
+                guard sqlite3_prepare_v2(database, deleteSQL, -1, &deleteStatement, nil) == SQLITE_OK else {
+                    throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+                }
+                defer { sqlite3_finalize(deleteStatement) }
 
-                guard sqlite3_step(statement) == SQLITE_DONE else {
+                for (index, id) in removedIDs.enumerated() {
+                    bind(id, to: deleteStatement, index: Int32(index + 1))
+                }
+
+                guard sqlite3_step(deleteStatement) == SQLITE_DONE else {
                     throw SQLiteStoreError.stepFailed(lastErrorMessage())
                 }
             }
 
+            try upsert(records: records)
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -197,6 +175,7 @@ final class SQLiteSessionStore {
                 raw_transcript_path TEXT,
                 raw_metadata_path TEXT,
                 related_plan_path TEXT,
+                fingerprint TEXT,
                 resume_kind TEXT NOT NULL,
                 resume_payload TEXT NOT NULL,
                 is_newton_project INTEGER NOT NULL
@@ -210,6 +189,9 @@ final class SQLiteSessionStore {
         }
         if !columns.contains("related_plan_path") {
             try execute("ALTER TABLE sessions ADD COLUMN related_plan_path TEXT;")
+        }
+        if !columns.contains("fingerprint") {
+            try execute("ALTER TABLE sessions ADD COLUMN fingerprint TEXT;")
         }
     }
 
@@ -225,6 +207,71 @@ final class SQLiteSessionStore {
             return
         }
         sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+    }
+
+    private func upsert(records: [SessionRecord]) throws {
+        guard !records.isEmpty else { return }
+
+        let insertSQL = """
+        INSERT OR REPLACE INTO sessions (
+            id,
+            source,
+            source_session_id,
+            workspace_path,
+            project_name,
+            branch,
+            conversation_model,
+            started_at,
+            updated_at,
+            title,
+            summary,
+            first_user_preview,
+            first_assistant_preview,
+            raw_transcript_path,
+            raw_metadata_path,
+            related_plan_path,
+            fingerprint,
+            resume_kind,
+            resume_payload,
+            is_newton_project
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, insertSQL, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        for record in records {
+            sqlite3_reset(statement)
+            sqlite3_clear_bindings(statement)
+
+            bind(record.id, to: statement, index: 1)
+            bind(record.source.rawValue, to: statement, index: 2)
+            bind(record.sourceSessionId, to: statement, index: 3)
+            bind(record.workspacePath, to: statement, index: 4)
+            bind(record.projectName, to: statement, index: 5)
+            bind(record.branch, to: statement, index: 6)
+            bind(record.conversationModel, to: statement, index: 7)
+            bind(ISO8601DateCoding.string(record.startedAt), to: statement, index: 8)
+            bind(ISO8601DateCoding.string(record.updatedAt), to: statement, index: 9)
+            bind(record.title, to: statement, index: 10)
+            bind(record.summary, to: statement, index: 11)
+            bind(record.firstUserPreview, to: statement, index: 12)
+            bind(record.firstAssistantPreview, to: statement, index: 13)
+            bind(record.rawTranscriptPath, to: statement, index: 14)
+            bind(record.rawMetadataPath, to: statement, index: 15)
+            bind(record.relatedPlanPath, to: statement, index: 16)
+            bind(record.fingerprint, to: statement, index: 17)
+            bind(record.resumeKind.rawValue, to: statement, index: 18)
+            bind(record.resumePayload, to: statement, index: 19)
+            sqlite3_bind_int(statement, 20, record.isNewtonProject ? 1 : 0)
+
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw SQLiteStoreError.stepFailed(lastErrorMessage())
+            }
+        }
     }
 
     private func string(from statement: OpaquePointer?, column: Int32) -> String? {

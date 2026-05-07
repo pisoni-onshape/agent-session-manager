@@ -25,6 +25,7 @@ final class SQLiteStoreTests: XCTestCase {
             rawTranscriptPath: "/tmp/events.jsonl",
             rawMetadataPath: "/tmp/workspace.yaml",
             relatedPlanPath: "/tmp/plan.md",
+            fingerprint: "fingerprint-v1",
             resumeKind: .copilotConnect,
             resumePayload: "session-1",
             isNewtonProject: true
@@ -40,6 +41,53 @@ final class SQLiteStoreTests: XCTestCase {
         XCTAssertEqual(loaded.first?.resumeKind, .copilotConnect)
         XCTAssertEqual(loaded.first?.conversationModel, "gpt-5.4")
         XCTAssertEqual(loaded.first?.relatedPlanPath, "/tmp/plan.md")
+        XCTAssertEqual(loaded.first?.fingerprint, "fingerprint-v1")
         XCTAssertTrue(loaded.first?.isNewtonProject == true)
+    }
+
+    func testApplyIncrementalUpdateUpsertsAndDeletesSessions() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        let original = makeRecord(sessionID: "session-1", title: "Original", fingerprint: "v1")
+        let removed = makeRecord(sessionID: "session-2", title: "Removed", fingerprint: "gone")
+
+        try store.replaceAll(records: [original, removed])
+
+        let updated = makeRecord(sessionID: "session-1", title: "Updated", fingerprint: "v2")
+        let added = makeRecord(sessionID: "session-3", title: "Added", fingerprint: "v1")
+        try store.applyIncrementalUpdate(records: [updated, added], removedIDs: [removed.id])
+
+        let loaded = try store.fetchAll()
+        XCTAssertEqual(loaded.map(\.sourceSessionId).sorted(), ["session-1", "session-3"])
+        XCTAssertEqual(loaded.first(where: { $0.sourceSessionId == "session-1" })?.title, "Updated")
+        XCTAssertEqual(loaded.first(where: { $0.sourceSessionId == "session-1" })?.fingerprint, "v2")
+        XCTAssertEqual(loaded.first(where: { $0.sourceSessionId == "session-3" })?.title, "Added")
+    }
+
+    private func makeRecord(sessionID: String, title: String, fingerprint: String) -> SessionRecord {
+        SessionRecord(
+            source: .copilotCLI,
+            sourceSessionId: sessionID,
+            workspacePath: "/Users/pisoni/repos/newton5",
+            projectName: "newton5",
+            branch: "main",
+            conversationModel: "gpt-5.4",
+            startedAt: ISO8601DateCoding.parse("2026-05-07T06:18:14.516Z"),
+            updatedAt: ISO8601DateCoding.parse("2026-05-07T06:30:14.516Z"),
+            title: title,
+            summary: "Summary",
+            firstUserPreview: "Prompt",
+            firstAssistantPreview: "Response",
+            rawTranscriptPath: "/tmp/\(sessionID).jsonl",
+            rawMetadataPath: "/tmp/\(sessionID).yaml",
+            relatedPlanPath: "/tmp/\(sessionID)-plan.md",
+            fingerprint: fingerprint,
+            resumeKind: .copilotConnect,
+            resumePayload: sessionID,
+            isNewtonProject: true
+        )
     }
 }
