@@ -9,7 +9,9 @@
 /* Begin PBXBuildFile section */
 		04BEFA40C45EE48667B6A7AA /* TextSanitizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530298199879A385F6C372DE /* TextSanitizerTests.swift */; };
 		2686696D7E0B57A714094702 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BE74D318718590BE9CACF18 /* ContentView.swift */; };
+		2AF4C97E7BBA5D896468E5E0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8F7C6545E063326573123004 /* Assets.xcassets */; };
 		5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */; };
+		7950ABE1A14965929DF95531 /* SessionCatalogRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */; };
 		803ACF05877C08CCEFB0EE76 /* Adapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BEF66E0F0DD94E3CBE7EAB8 /* Adapters.swift */; };
 		84A9C7B5FF6CE384E094168C /* Storage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EBC35DE3C94D9B0C3A4728 /* Storage.swift */; };
 		A8691C46379AB4B8DFE6D842 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC6FF5831403EEB1D0CAFAC /* Utilities.swift */; };
@@ -39,9 +41,11 @@
 		618F620A1984E0955FBD39D1 /* TranscriptParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptParsingTests.swift; sourceTree = "<group>"; };
 		6B13126C4E6606DC01E73C15 /* AgentSessionManagerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentSessionManagerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6BEF66E0F0DD94E3CBE7EAB8 /* Adapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Adapters.swift; sourceTree = "<group>"; };
+		74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalogRefreshTests.swift; sourceTree = "<group>"; };
 		82B73D4FEC3FBEE9171DF758 /* AgentSessionManager.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentSessionManager.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		892DA86504AA676C90F9F425 /* ViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewModel.swift; sourceTree = "<group>"; };
 		8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLiteStoreTests.swift; sourceTree = "<group>"; };
+		8F7C6545E063326573123004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		CEA1E8ACE6592728373C134F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -75,6 +79,7 @@
 		43479DAFE5DECECE84F26ABE /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */,
 				8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */,
 				530298199879A385F6C372DE /* TextSanitizerTests.swift */,
 				618F620A1984E0955FBD39D1 /* TranscriptParsingTests.swift */,
@@ -82,9 +87,18 @@
 			path = Tests;
 			sourceTree = "<group>";
 		};
+		4868E39C77ED9339F6F8D622 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				8F7C6545E063326573123004 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		8023B3E4C2BB80609122D50E = {
 			isa = PBXGroup;
 			children = (
+				4868E39C77ED9339F6F8D622 /* Resources */,
 				10286145732139A311ED6BC6 /* Sources */,
 				43479DAFE5DECECE84F26ABE /* Tests */,
 				F5B1F1F7DA9F9F08A18A23C3 /* Frameworks */,
@@ -117,6 +131,7 @@
 			buildConfigurationList = 60CA20D22C7F31E71E379ACA /* Build configuration list for PBXNativeTarget "AgentSessionManager" */;
 			buildPhases = (
 				47DA1D9C9808AE95FEBDE2F0 /* Sources */,
+				DD1AE42AB373B6C89DAA6FAE /* Resources */,
 				FEAA8B0E39CFB2193DB2D07D /* Frameworks */,
 			);
 			buildRules = (
@@ -179,6 +194,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		DD1AE42AB373B6C89DAA6FAE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2AF4C97E7BBA5D896468E5E0 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		47DA1D9C9808AE95FEBDE2F0 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -199,6 +225,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */,
+				7950ABE1A14965929DF95531 /* SessionCatalogRefreshTests.swift in Sources */,
 				04BEFA40C45EE48667B6A7AA /* TextSanitizerTests.swift in Sources */,
 				D15892D1CCA981D256988BB4 /* TranscriptParsingTests.swift in Sources */,
 			);
