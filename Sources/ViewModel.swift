@@ -8,6 +8,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
+    @Published var showStaleRefreshPrompt = false
 
     private let catalog: SessionCatalog?
 
@@ -33,6 +34,8 @@ final class SessionBrowserViewModel: ObservableObject {
             lastRefreshDate = catalogModifiedDate()
             if persisted.isEmpty {
                 await refreshSessions()
+            } else {
+                showStaleRefreshPrompt = shouldPromptForStaleRefresh(lastRefreshDate: lastRefreshDate)
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -52,10 +55,23 @@ final class SessionBrowserViewModel: ObservableObject {
             let refreshed = try catalog.refreshSessions()
             applySessions(refreshed)
             lastRefreshDate = Date()
+            showStaleRefreshPrompt = false
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    var lastRefreshDisplayText: String? {
+        guard let lastRefreshDate else { return nil }
+        return lastRefreshDate.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    var staleRefreshPromptMessage: String {
+        if let lastRefreshDisplayText {
+            return "The session index was last refreshed on \(lastRefreshDisplayText). Refresh it now?"
+        }
+        return "The session index has not been refreshed recently. Refresh it now?"
     }
 
     var displayedSessions: [SessionRecord] {
@@ -203,5 +219,10 @@ final class SessionBrowserViewModel: ObservableObject {
     private func catalogModifiedDate() -> Date? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: AppPaths.catalogDatabaseURL.path)
         return attributes?[.modificationDate] as? Date
+    }
+
+    private func shouldPromptForStaleRefresh(lastRefreshDate: Date?) -> Bool {
+        guard let lastRefreshDate else { return false }
+        return Date().timeIntervalSince(lastRefreshDate) >= 7 * 24 * 60 * 60
     }
 }

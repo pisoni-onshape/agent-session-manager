@@ -63,11 +63,19 @@ struct ContentView: View {
                 }
                 .disabled(viewModel.isRefreshing)
 
-                if let lastRefreshDate = viewModel.lastRefreshDate {
-                    Text(lastRefreshDate, style: .time)
+                if let lastRefreshDisplayText = viewModel.lastRefreshDisplayText {
+                    Text(lastRefreshDisplayText)
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+        .alert("Index refresh recommended", isPresented: $viewModel.showStaleRefreshPrompt) {
+            Button("No", role: .cancel) {}
+            Button("Yes") {
+                Task { await viewModel.refreshSessions() }
+            }
+        } message: {
+            Text(viewModel.staleRefreshPromptMessage)
         }
         .safeAreaInset(edge: .bottom) {
             if let errorMessage = viewModel.errorMessage {
