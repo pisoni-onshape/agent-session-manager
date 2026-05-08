@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var viewModel: SessionBrowserViewModel
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var searchFieldController = ToolbarSearchFieldController()
 
     var body: some View {
@@ -14,7 +15,7 @@ struct ContentView: View {
                         session: session,
                         transcriptMatch: viewModel.searchMatch(for: session),
                         onOpenTranscriptMatch: {
-                            viewModel.openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
+                            openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
                         }
                     )
                         .tag(session.id)
@@ -37,7 +38,11 @@ struct ContentView: View {
             .navigationSplitViewColumnWidth(min: 340, ideal: 400)
         } detail: {
             if let session = viewModel.selectedSession {
-                SessionDetailView(session: session, viewModel: viewModel)
+                SessionDetailView(
+                    session: session,
+                    viewModel: viewModel,
+                    onOpenTranscript: { openTranscript(for: session) }
+                )
                     .padding(24)
             } else if viewModel.shouldShowLoadingPlaceholder {
                 LoadingStateView(
@@ -92,12 +97,6 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-        .sheet(item: $viewModel.presentedTranscript) { presentedTranscript in
-            TranscriptViewerSheet(
-                transcript: presentedTranscript.transcript,
-                initialSearchText: presentedTranscript.initialSearchText
-            )
         }
         .safeAreaInset(edge: .bottom) {
             if let errorMessage = viewModel.errorMessage {
@@ -161,6 +160,19 @@ struct ContentView: View {
                 .padding(.vertical, 10)
                 .background(.thinMaterial)
             }
+        }
+    }
+
+    private func openTranscript(for record: SessionRecord, initialSearchText: String = "") {
+        Task {
+            guard let presentedTranscript = await viewModel.loadPresentedTranscript(
+                for: record,
+                initialSearchText: initialSearchText
+            ) else {
+                return
+            }
+
+            openWindow(value: presentedTranscript)
         }
     }
 
@@ -446,6 +458,7 @@ private struct SessionRowView: View {
 private struct SessionDetailView: View {
     let session: SessionRecord
     @ObservedObject var viewModel: SessionBrowserViewModel
+    let onOpenTranscript: () -> Void
 
     var body: some View {
         ScrollView {
@@ -485,7 +498,7 @@ private struct SessionDetailView: View {
             }
 
             Button("View Transcript") {
-                viewModel.openTranscript(for: session)
+                onOpenTranscript()
             }
             .disabled(session.rawTranscriptPath == nil)
 
@@ -588,7 +601,7 @@ private struct PathRow: View {
     }
 }
 
-private struct TranscriptViewerSheet: View {
+struct TranscriptViewerView: View {
     let transcript: TranscriptDocument
     let initialSearchText: String
     @Environment(\.dismiss) private var dismiss

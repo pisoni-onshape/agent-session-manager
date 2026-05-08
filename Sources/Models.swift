@@ -1,6 +1,6 @@
 import Foundation
 
-enum SessionSource: String, CaseIterable, Codable, Identifiable, Sendable {
+enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case copilotCLI = "copilot-cli"
     case cursor
     case vscodeCopilot = "vscode-copilot"
@@ -365,7 +365,7 @@ struct TranscriptViewerSearchResult: Equatable, Sendable {
     }
 }
 
-struct PresentedTranscript: Identifiable, Equatable, Sendable {
+struct PresentedTranscript: Codable, Hashable, Identifiable, Sendable {
     let transcript: TranscriptDocument
     let initialSearchText: String
 
@@ -468,14 +468,14 @@ enum SessionSearchEvaluator {
     }
 }
 
-enum TranscriptEntryRole: String, Sendable {
+enum TranscriptEntryRole: String, Codable, Hashable, Sendable {
     case user
     case assistant
     case tool
     case system
 }
 
-struct TranscriptEntry: Identifiable, Equatable, Sendable {
+struct TranscriptEntry: Codable, Hashable, Identifiable, Sendable {
     let id: String
     let role: TranscriptEntryRole
     let title: String
@@ -487,7 +487,7 @@ struct TranscriptEntry: Identifiable, Equatable, Sendable {
     }
 }
 
-struct TranscriptDocument: Identifiable, Equatable, Sendable {
+struct TranscriptDocument: Codable, Hashable, Identifiable, Sendable {
     let sessionID: String
     let sessionTitle: String
     let source: SessionSource

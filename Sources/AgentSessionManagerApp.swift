@@ -36,5 +36,21 @@ struct AgentSessionManagerApp: App {
                 .disabled(viewModel.isRefreshing)
             }
         }
+        WindowGroup("Transcript", for: PresentedTranscript.self) { presentedTranscript in
+            if let presentedTranscript = presentedTranscript.wrappedValue {
+                TranscriptViewerView(
+                    transcript: presentedTranscript.transcript,
+                    initialSearchText: presentedTranscript.initialSearchText
+                )
+            } else {
+                ContentUnavailableView(
+                    "No Transcript Selected",
+                    systemImage: "text.bubble",
+                    description: Text("Open a transcript from the main window to inspect it here.")
+                )
+                .frame(minWidth: 920, minHeight: 720)
+            }
+        }
+        .defaultSize(width: 920, height: 720)
     }
 }

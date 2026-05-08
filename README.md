@@ -68,5 +68,6 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
 - A **Rebuild Session Index** command remains available under the **Catalog** menu as a recovery/debug path.
 - Cursor project path reconstruction is heuristic because its local project directory name is lossy for paths that contain hyphens; when reconstruction fails, the app falls back to transcript reveal.
 - Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (`chatSessions` selected model). Cursor transcripts did not show a stable per-session model field in the inspected local store.
+- The in-app transcript viewer now opens in a separate window instead of an attached sheet, preserving the same UI while avoiding parent-window repositioning.
 - The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and VS Code Copilot. Cursor transcripts are still readable in-app, but the inspected local JSONL files do not expose per-message timestamps.
 - `./build.sh` computes the marketing version as `<incrementing-build-number>.<commit-derived-8-digit-number>` and installs the finished Release app into `/Applications`.

@@ -60,7 +60,6 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var hasCompletedInitialLoad = false
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
-    @Published var presentedTranscript: PresentedTranscript?
     @Published private(set) var loadingTranscriptTitle: String?
 
     private let catalog: SessionCatalog?
@@ -259,20 +258,22 @@ final class SessionBrowserViewModel: ObservableObject {
         WorkspaceLauncher.reveal(path: record.rawTranscriptPath ?? record.rawMetadataPath)
     }
 
-    func openTranscript(for record: SessionRecord, initialSearchText: String = "") {
+    func loadPresentedTranscript(for record: SessionRecord, initialSearchText: String = "") async -> PresentedTranscript? {
         loadingTranscriptTitle = record.title
-        Task {
-            do {
-                presentedTranscript = PresentedTranscript(
-                    transcript: try await transcriptCache.document(for: record),
-                    initialSearchText: initialSearchText
-                )
-                loadingTranscriptTitle = nil
-                errorMessage = nil
-            } catch {
-                loadingTranscriptTitle = nil
-                errorMessage = error.localizedDescription
-            }
+        defer {
+            loadingTranscriptTitle = nil
+        }
+
+        do {
+            let presentedTranscript = PresentedTranscript(
+                transcript: try await transcriptCache.document(for: record),
+                initialSearchText: initialSearchText
+            )
+            errorMessage = nil
+            return presentedTranscript
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
     }
 
