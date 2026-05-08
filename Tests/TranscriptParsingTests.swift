@@ -3,6 +3,41 @@ import XCTest
 @testable import AgentSessionManager
 
 final class TranscriptParsingTests: XCTestCase {
+    func testFieldedSearchParserKeepsRecognizedClausesAndFallbackTerms() {
+        let query = SessionSearchQueryParser.parse(#"project:"agent session manager" branch:main title:"session index" foo:refresh"#)
+
+        XCTAssertEqual(
+            query.fieldClauses,
+            [
+                SessionSearchFieldClause(field: .project, value: "agent session manager"),
+                SessionSearchFieldClause(field: .branch, value: "main"),
+                SessionSearchFieldClause(field: .title, value: "session index")
+            ]
+        )
+        XCTAssertEqual(query.freeTextTerms, ["refresh"])
+        XCTAssertTrue(query.usesStructuredSyntax)
+    }
+
+    func testUnlabeledToolbarSearchKeepsWholeQueryBehavior() {
+        var filters = SessionFilterState()
+        filters.searchText = "refresh behavior"
+
+        let contiguous = makeRecord(
+            sessionID: "contiguous",
+            title: "Refresh fix",
+            summary: "Investigated refresh behavior in the transcript browser."
+        )
+        let splitAcrossFields = makeRecord(
+            sessionID: "split",
+            title: "Refresh",
+            summary: "Behavior only appears in a separate summary field."
+        )
+
+        let filtered = SessionFilterEvaluator.filterSessions([contiguous, splitAcrossFields], filters: filters)
+
+        XCTAssertEqual(filtered.map(\.sourceSessionId), ["contiguous"])
+    }
+
     func testEventTranscriptExtractionFindsSessionAndPreview() throws {
         let url = try temporaryFile(
             named: "event.jsonl",
@@ -130,11 +165,117 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(transcript.entries[1].title, "Assistant")
     }
 
+    func testViewerSearchOnlyMatchesChatMessages() {
+        let transcript = TranscriptDocument(
+            sessionID: "viewer-search",
+            sessionTitle: "Viewer Search",
+            source: .copilotCLI,
+            rawTranscriptPath: "/tmp/viewer-search.jsonl",
+            entries: [
+                TranscriptEntry(id: "u1", role: .user, title: "User", body: "Find the quads regression.", timestamp: nil),
+                TranscriptEntry(id: "t1", role: .tool, title: "Started view", body: "quads.swift", timestamp: nil),
+                TranscriptEntry(id: "a1", role: .assistant, title: "Assistant", body: "I will inspect the edge path next.", timestamp: nil)
+            ],
+            timestampsAreComplete: false,
+            timestampNotice: nil
+        )
+
+        let result = transcript.viewerSearchResult(for: "quads")
+
+        XCTAssertEqual(result.totalMatchCount, 1)
+        XCTAssertEqual(result.matchingEntryCount, 1)
+        XCTAssertEqual(result.displayItems.count, 1)
+        guard case let .entry(entry) = result.displayItems[0] else {
+            return XCTFail("Expected a matching chat entry.")
+        }
+        XCTAssertEqual(entry.id, "u1")
+    }
+
+    func testSearchTextMatcherProducesHighlightedSegments() {
+        let segments = SearchTextMatcher.segments(in: "Refresh the refresh flow", query: "refresh")
+
+        XCTAssertEqual(
+            segments,
+            [
+                HighlightedTextSegment(text: "Refresh", isMatch: true),
+                HighlightedTextSegment(text: " the ", isMatch: false),
+                HighlightedTextSegment(text: "refresh", isMatch: true),
+                HighlightedTextSegment(text: " flow", isMatch: false)
+            ]
+        )
+    }
+
+    func testTranscriptSetSearchReturnsPerSessionMatches() async throws {
+        let matchingURL = try temporaryFile(
+            named: "matching.jsonl",
+            contents: """
+            {"type":"user.message","data":{"content":"Find the terminal drag bug."},"id":"evt-1","timestamp":"2026-05-07T06:19:00.000Z"}
+            {"type":"assistant.message","data":{"content":"I’ll inspect the drag target next."},"id":"evt-2","timestamp":"2026-05-07T06:19:10.000Z"}
+            """
+        )
+        let nonMatchingURL = try temporaryFile(
+            named: "other.jsonl",
+            contents: """
+            {"type":"user.message","data":{"content":"Please summarize the search improvements plan."},"id":"evt-1","timestamp":"2026-05-07T06:19:00.000Z"}
+            {"type":"assistant.message","data":{"content":"I’ll outline the filter changes."},"id":"evt-2","timestamp":"2026-05-07T06:19:10.000Z"}
+            """
+        )
+
+        let matchingRecord = makeRecord(
+            sessionID: "matching",
+            title: "Find drag bug",
+            summary: nil,
+            rawTranscriptPath: matchingURL.path
+        )
+        let nonMatchingRecord = makeRecord(
+            sessionID: "other",
+            title: "Search plan",
+            summary: nil,
+            rawTranscriptPath: nonMatchingURL.path
+        )
+
+        let cache = TranscriptDocumentCache()
+        let matches = try await cache.search(records: [matchingRecord, nonMatchingRecord], query: "drag")
+
+        XCTAssertEqual(matches.map(\.sessionRecordID), [matchingRecord.id])
+        XCTAssertEqual(matches.first?.matchCount, 2)
+        XCTAssertEqual(matches.first?.snippets.count, 2)
+    }
+
     private func temporaryFile(named name: String, contents: String) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(name)
         try contents.write(to: url, atomically: true, encoding: .utf8)
         return url
+    }
+
+    private func makeRecord(
+        sessionID: String,
+        title: String,
+        summary: String?,
+        rawTranscriptPath: String = "/tmp/test.jsonl"
+    ) -> SessionRecord {
+        SessionRecord(
+            source: .copilotCLI,
+            sourceSessionId: sessionID,
+            workspacePath: "/Users/pisoni/Development/LocalProjects/agent-session-manager",
+            projectName: "agent-session-manager",
+            branch: "main",
+            conversationModel: "gpt-5.4",
+            startedAt: ISO8601DateCoding.parse("2026-05-07T06:18:14.516Z"),
+            updatedAt: ISO8601DateCoding.parse("2026-05-07T06:30:14.516Z"),
+            title: title,
+            summary: summary,
+            firstUserPreview: "Prompt",
+            firstAssistantPreview: "Response",
+            rawTranscriptPath: rawTranscriptPath,
+            rawMetadataPath: nil,
+            relatedPlanPath: nil,
+            fingerprint: "fingerprint-\(sessionID)",
+            resumeKind: .copilotConnect,
+            resumePayload: sessionID,
+            isNewtonProject: false
+        )
     }
 }
