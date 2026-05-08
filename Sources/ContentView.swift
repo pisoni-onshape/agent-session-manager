@@ -611,9 +611,9 @@ private struct TranscriptViewerSheet: View {
                         )
                     } else if searchResult.isActive, searchResult.displayItems.isEmpty {
                         ContentUnavailableView(
-                            "No Matching Transcript Items",
+                            "No Matching Messages",
                             systemImage: "text.magnifyingglass",
-                            description: Text("No transcript entries matched the current search.")
+                            description: Text("Only user and assistant messages are searched in this view.")
                         )
                     } else {
                         TranscriptTimelineView(
@@ -652,7 +652,7 @@ private struct TranscriptViewerSheet: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 10) {
-                    TextField("Search transcript text", text: $searchText)
+                    TextField("Search chat messages", text: $searchText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 280)
 
@@ -684,7 +684,7 @@ private struct TranscriptViewerSheet: View {
 
     private var itemSummary: String {
         if searchResult.isActive {
-            let itemNoun = searchResult.matchingEntryCount == 1 ? "item" : "items"
+            let itemNoun = searchResult.matchingEntryCount == 1 ? "message" : "messages"
             let matchNoun = searchResult.totalMatchCount == 1 ? "match" : "matches"
             return "\(searchResult.totalMatchCount) \(matchNoun) in \(searchResult.matchingEntryCount) \(itemNoun)"
         }

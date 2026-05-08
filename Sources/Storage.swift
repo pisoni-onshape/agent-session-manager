@@ -2,6 +2,7 @@ import Foundation
 import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+private let transcriptIndexSchemaVersion = "chat-only-v1"
 
 enum SQLiteStoreError: LocalizedError {
     case openFailed(String)
@@ -281,6 +282,14 @@ final class SQLiteSessionStore {
             );
             """
         )
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS catalog_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            """
+        )
 
         let columns = try existingColumnNames(in: "sessions")
         if !columns.contains("conversation_model") {
@@ -294,6 +303,7 @@ final class SQLiteSessionStore {
         }
 
         transcriptIndexMode = try ensureTranscriptIndex()
+        try resetTranscriptIndexIfNeeded()
     }
 
     private func execute(_ sql: String) throws {
@@ -447,6 +457,49 @@ final class SQLiteSessionStore {
             return nil
         }
         return string(from: statement, column: 0)
+    }
+
+    private func metadataValue(forKey key: String) throws -> String? {
+        let sql = "SELECT value FROM catalog_metadata WHERE key = ? LIMIT 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bind(key, to: statement, index: 1)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            return nil
+        }
+        return string(from: statement, column: 0)
+    }
+
+    private func setMetadataValue(_ value: String, forKey key: String) throws {
+        let sql = """
+        INSERT INTO catalog_metadata (key, value)
+        VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bind(key, to: statement, index: 1)
+        bind(value, to: statement, index: 2)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+        }
+    }
+
+    private func resetTranscriptIndexIfNeeded() throws {
+        let existingVersion = try metadataValue(forKey: "transcript_index_schema_version")
+        guard existingVersion != transcriptIndexSchemaVersion else {
+            return
+        }
+        try execute("DELETE FROM transcript_entries;")
+        try setMetadataValue(transcriptIndexSchemaVersion, forKey: "transcript_index_schema_version")
     }
 
     private func ensureTranscriptIndex() throws -> TranscriptIndexMode {

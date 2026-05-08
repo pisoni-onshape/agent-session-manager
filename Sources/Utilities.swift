@@ -446,20 +446,18 @@ enum TranscriptPreviewExtractor {
     }
 
     static func searchableEntries(for record: SessionRecord) throws -> [TranscriptIndexEntry] {
-        guard let transcriptPath = record.rawTranscriptPath else {
-            throw TranscriptLoadingError.transcriptUnavailable
-        }
+        let transcript = try loadTranscript(for: record)
+        return transcript.entries.enumerated().compactMap { index, entry in
+            guard entry.isChatMessage,
+                  let body = TextSanitizer.clean(entry.body) else {
+                return nil
+            }
 
-        let url = URL(fileURLWithPath: transcriptPath)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw TranscriptLoadingError.transcriptUnreadable(url.path)
-        }
-
-        switch record.source {
-        case .copilotCLI, .vscodeCopilot:
-            return try extractEventTranscriptSearchableEntries(from: url, sessionRecordID: record.id)
-        case .cursor:
-            return try extractCursorTranscriptSearchableEntries(from: url, sessionRecordID: record.id)
+            return TranscriptIndexEntry(
+                sessionRecordID: record.id,
+                entryIndex: index,
+                text: body
+            )
         }
     }
 
@@ -650,75 +648,6 @@ enum TranscriptPreviewExtractor {
             timestampsAreComplete: false,
             timestampNotice: "Cursor transcripts preserve message order, but the inspected local JSONL files do not include per-message timestamps."
         )
-    }
-
-    private static func extractEventTranscriptSearchableEntries(
-        from url: URL,
-        sessionRecordID: String
-    ) throws -> [TranscriptIndexEntry] {
-        let contents = try String(contentsOf: url, encoding: .utf8)
-        var toolNamesByCallID: [String: String] = [:]
-        var entries: [TranscriptIndexEntry] = []
-
-        for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
-            guard let data = line.data(using: .utf8),
-                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let type = object["type"] as? String else {
-                continue
-            }
-
-            let payload = object["data"] as? [String: Any]
-            if type == "tool.execution_start",
-               let toolCallId = payload?["toolCallId"] as? String,
-               let toolName = payload?["toolName"] as? String {
-                toolNamesByCallID[toolCallId] = toolName
-            }
-
-            guard let text = searchableEventText(
-                type: type,
-                payload: payload,
-                toolNamesByCallID: toolNamesByCallID
-            ) else {
-                continue
-            }
-
-            entries.append(
-                TranscriptIndexEntry(
-                    sessionRecordID: sessionRecordID,
-                    entryIndex: index,
-                    text: text
-                )
-            )
-        }
-
-        return entries
-    }
-
-    private static func extractCursorTranscriptSearchableEntries(
-        from url: URL,
-        sessionRecordID: String
-    ) throws -> [TranscriptIndexEntry] {
-        let contents = try String(contentsOf: url, encoding: .utf8)
-        var entries: [TranscriptIndexEntry] = []
-
-        for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
-            guard let data = line.data(using: .utf8),
-                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let text = extractCursorText(from: object),
-                  !text.isEmpty else {
-                continue
-            }
-
-            entries.append(
-                TranscriptIndexEntry(
-                    sessionRecordID: sessionRecordID,
-                    entryIndex: index,
-                    text: text
-                )
-            )
-        }
-
-        return entries
     }
 
     static func extractMarkdownSummary(from url: URL) throws -> String? {

@@ -560,6 +560,7 @@ extension TranscriptDocument {
         }
 
         let matches = entries.compactMap { entry -> (TranscriptEntry, Int)? in
+            guard entry.isChatMessage else { return nil }
             let matchCount = SearchTextMatcher.matchCount(in: entry.body, query: query)
             guard matchCount > 0 else { return nil }
             return (entry, matchCount)

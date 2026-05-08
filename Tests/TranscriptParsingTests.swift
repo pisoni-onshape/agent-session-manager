@@ -193,7 +193,7 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(transcript.entries[1].title, "Assistant")
     }
 
-    func testViewerSearchMatchesToolEntriesToo() {
+    func testViewerSearchOnlyMatchesChatMessages() {
         let transcript = TranscriptDocument(
             sessionID: "viewer-search",
             sessionTitle: "Viewer Search",
@@ -208,15 +208,15 @@ final class TranscriptParsingTests: XCTestCase {
             timestampNotice: nil
         )
 
-        let result = transcript.viewerSearchResult(for: "memory")
+        let result = transcript.viewerSearchResult(for: "quads")
 
         XCTAssertEqual(result.totalMatchCount, 1)
         XCTAssertEqual(result.matchingEntryCount, 1)
         XCTAssertEqual(result.displayItems.count, 1)
         guard case let .entry(entry) = result.displayItems[0] else {
-            return XCTFail("Expected a matching transcript entry.")
+            return XCTFail("Expected a matching chat entry.")
         }
-        XCTAssertEqual(entry.id, "t1")
+        XCTAssertEqual(entry.id, "u1")
     }
 
     func testSearchTextMatcherProducesHighlightedSegments() {
@@ -270,7 +270,7 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(matches.first?.snippets.count, 2)
     }
 
-    func testSearchableTranscriptEntriesIncludeToolBodies() throws {
+    func testSearchableTranscriptEntriesOnlyIncludeChatMessages() throws {
         let url = try temporaryFile(
             named: "searchable.jsonl",
             contents: """
@@ -289,18 +289,11 @@ final class TranscriptParsingTests: XCTestCase {
 
         let entries = try TranscriptPreviewExtractor.searchableEntries(for: record)
 
-        XCTAssertEqual(entries.map(\.entryIndex), [0, 1, 2])
-        XCTAssertEqual(
-            entries.map(\.text),
-            [
-                "Find the terminal drag bug.",
-                "view\n/tmp/file.swift",
-                "I’ll inspect the drag target next."
-            ]
-        )
+        XCTAssertEqual(entries.map(\.entryIndex), [0, 2])
+        XCTAssertEqual(entries.map(\.text), ["Find the terminal drag bug.", "I’ll inspect the drag target next."])
     }
 
-    func testSearchableTranscriptEntriesKeepLongToolResultContent() throws {
+    func testSearchableTranscriptEntriesIgnoreToolResultContent() throws {
         let longContent = String(repeating: "prefix ", count: 40) + "pickDefaultInferenceId" + String(repeating: " suffix", count: 40)
         let url = try temporaryFile(
             named: "tool-result.jsonl",
@@ -319,8 +312,7 @@ final class TranscriptParsingTests: XCTestCase {
 
         let entries = try TranscriptPreviewExtractor.searchableEntries(for: record)
 
-        XCTAssertEqual(entries.count, 2)
-        XCTAssertTrue(entries[1].text.contains("pickDefaultInferenceId"))
+        XCTAssertTrue(entries.isEmpty)
     }
 
     func testTranscriptLoaderKeepsLongToolResultContentVisible() throws {
