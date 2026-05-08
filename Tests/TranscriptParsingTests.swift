@@ -18,6 +18,21 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertTrue(query.usesStructuredSyntax)
     }
 
+    func testFieldedSearchParserRecognizesTranscriptClauses() {
+        let query = SessionSearchQueryParser.parse(#"project:newton transcript:"drag bug" transcript:cursor"#)
+
+        XCTAssertEqual(
+            query.fieldClauses,
+            [
+                SessionSearchFieldClause(field: .project, value: "newton"),
+                SessionSearchFieldClause(field: .transcript, value: "drag bug"),
+                SessionSearchFieldClause(field: .transcript, value: "cursor")
+            ]
+        )
+        XCTAssertEqual(query.metadataFieldClauses, [SessionSearchFieldClause(field: .project, value: "newton")])
+        XCTAssertEqual(query.transcriptFieldValues, ["drag bug", "cursor"])
+    }
+
     func testUnlabeledToolbarSearchKeepsWholeQueryBehavior() {
         var filters = SessionFilterState()
         filters.searchText = "refresh behavior"
@@ -36,6 +51,19 @@ final class TranscriptParsingTests: XCTestCase {
         let filtered = SessionFilterEvaluator.filterSessions([contiguous, splitAcrossFields], filters: filters)
 
         XCTAssertEqual(filtered.map(\.sourceSessionId), ["contiguous"])
+    }
+
+    func testSessionSearchEvaluatorAllowsTranscriptMatchesForStructuredFreeTextTerms() {
+        let parsedQuery = SessionSearchQueryParser.parse("project:agent drag")
+        let record = makeRecord(sessionID: "drag-session", title: "Investigate", summary: "No metadata drag hint here.")
+
+        let matches = SessionSearchEvaluator.matches(
+            record,
+            parsedQuery: parsedQuery,
+            transcriptSessionIDsByQuery: ["drag": [record.id]]
+        )
+
+        XCTAssertTrue(matches)
     }
 
     func testEventTranscriptExtractionFindsSessionAndPreview() throws {
@@ -240,6 +268,29 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(matches.map(\.sessionRecordID), [matchingRecord.id])
         XCTAssertEqual(matches.first?.matchCount, 2)
         XCTAssertEqual(matches.first?.snippets.count, 2)
+    }
+
+    func testSearchableTranscriptEntriesOnlyIncludeChatMessages() throws {
+        let url = try temporaryFile(
+            named: "searchable.jsonl",
+            contents: """
+            {"type":"user.message","data":{"content":"Find the terminal drag bug."},"id":"evt-1","timestamp":"2026-05-07T06:19:00.000Z"}
+            {"type":"tool.execution_start","data":{"toolCallId":"call-1","toolName":"view","arguments":{"path":"/tmp/file.swift"}},"id":"evt-2","timestamp":"2026-05-07T06:19:05.000Z"}
+            {"type":"assistant.message","data":{"content":"I’ll inspect the drag target next."},"id":"evt-3","timestamp":"2026-05-07T06:19:10.000Z"}
+            """
+        )
+
+        let record = makeRecord(
+            sessionID: "searchable",
+            title: "Searchable transcript",
+            summary: nil,
+            rawTranscriptPath: url.path
+        )
+
+        let entries = try TranscriptPreviewExtractor.searchableEntries(for: record)
+
+        XCTAssertEqual(entries.map(\.entryIndex), [0, 2])
+        XCTAssertEqual(entries.map(\.text), ["Find the terminal drag bug.", "I’ll inspect the drag target next."])
     }
 
     private func temporaryFile(named name: String, contents: String) throws -> URL {

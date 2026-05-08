@@ -20,9 +20,15 @@ enum SQLiteStoreError: LocalizedError {
     }
 }
 
+enum TranscriptIndexMode {
+    case trigram
+    case tokenPrefix
+}
+
 final class SQLiteSessionStore {
     private let databaseURL: URL
     private var database: OpaquePointer?
+    private var transcriptIndexMode: TranscriptIndexMode = .tokenPrefix
 
     init(databaseURL: URL) throws {
         self.databaseURL = databaseURL
@@ -109,11 +115,16 @@ final class SQLiteSessionStore {
         return records
     }
 
-    func replaceAll(records: [SessionRecord]) throws {
+    func replaceAll(
+        records: [SessionRecord],
+        transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
+    ) throws {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             try execute("DELETE FROM sessions;")
+            try execute("DELETE FROM transcript_entries;")
             try upsert(records: records)
+            try insertTranscriptEntries(transcriptEntriesBySessionID)
 
             try execute("COMMIT;")
         } catch {
@@ -122,37 +133,93 @@ final class SQLiteSessionStore {
         }
     }
 
-    func applyIncrementalUpdate(records: [SessionRecord], removedIDs: [String]) throws {
+    func applyIncrementalUpdate(
+        records: [SessionRecord],
+        removedIDs: [String],
+        transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
+    ) throws {
         if records.isEmpty, removedIDs.isEmpty {
             return
         }
 
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
+            let changedIDs = records.map(\.id)
             if !removedIDs.isEmpty {
-                let placeholders = Array(repeating: "?", count: removedIDs.count).joined(separator: ", ")
-                let deleteSQL = "DELETE FROM sessions WHERE id IN (\(placeholders));"
-                var deleteStatement: OpaquePointer?
-                guard sqlite3_prepare_v2(database, deleteSQL, -1, &deleteStatement, nil) == SQLITE_OK else {
-                    throw SQLiteStoreError.prepareFailed(lastErrorMessage())
-                }
-                defer { sqlite3_finalize(deleteStatement) }
-
-                for (index, id) in removedIDs.enumerated() {
-                    bind(id, to: deleteStatement, index: Int32(index + 1))
-                }
-
-                guard sqlite3_step(deleteStatement) == SQLITE_DONE else {
-                    throw SQLiteStoreError.stepFailed(lastErrorMessage())
-                }
+                try deleteRecords(withIDs: removedIDs, from: "sessions", idColumn: "id")
             }
 
+            try deleteRecords(withIDs: removedIDs + changedIDs, from: "transcript_entries", idColumn: "session_id")
             try upsert(records: records)
+            try insertTranscriptEntries(transcriptEntriesBySessionID)
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
             throw error
         }
+    }
+
+    func searchTranscriptEntries(sessionIDs: [String], query: String) throws -> [TranscriptIndexSearchHit] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty, !sessionIDs.isEmpty else {
+            return []
+        }
+
+        let placeholders = Array(repeating: "?", count: sessionIDs.count).joined(separator: ", ")
+        let predicate: String?
+        let sql: String
+        switch transcriptIndexMode {
+        case .trigram:
+            predicate = escapeLikePattern(normalizedQuery)
+            sql = """
+            SELECT session_id, entry_index, entry_text
+            FROM transcript_entries
+            WHERE session_id IN (\(placeholders))
+              AND entry_text LIKE '%' || ? || '%' ESCAPE '\\'
+            ORDER BY session_id ASC, entry_index ASC;
+            """
+        case .tokenPrefix:
+            predicate = tokenizedFTSQuery(from: normalizedQuery)
+            guard predicate != nil else {
+                return []
+            }
+            sql = """
+            SELECT session_id, entry_index, entry_text
+            FROM transcript_entries
+            WHERE session_id IN (\(placeholders))
+              AND transcript_entries MATCH ?
+            ORDER BY session_id ASC, entry_index ASC;
+            """
+        }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        for (index, sessionID) in sessionIDs.enumerated() {
+            bind(sessionID, to: statement, index: Int32(index + 1))
+        }
+        bind(predicate, to: statement, index: Int32(sessionIDs.count + 1))
+
+        var hits: [TranscriptIndexSearchHit] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let sessionRecordID = string(from: statement, column: 0),
+                  let text = string(from: statement, column: 2) else {
+                continue
+            }
+
+            hits.append(
+                TranscriptIndexSearchHit(
+                    sessionRecordID: sessionRecordID,
+                    entryIndex: Int(sqlite3_column_int(statement, 1)),
+                    text: text
+                )
+            )
+        }
+
+        return hits
     }
 
     private func migrate() throws {
@@ -193,6 +260,8 @@ final class SQLiteSessionStore {
         if !columns.contains("fingerprint") {
             try execute("ALTER TABLE sessions ADD COLUMN fingerprint TEXT;")
         }
+
+        transcriptIndexMode = try ensureTranscriptIndex()
     }
 
     private func execute(_ sql: String) throws {
@@ -207,6 +276,10 @@ final class SQLiteSessionStore {
             return
         }
         sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+    }
+
+    private func bind(_ value: Int, to statement: OpaquePointer?, index: Int32) {
+        sqlite3_bind_int(statement, index, Int32(value))
     }
 
     private func upsert(records: [SessionRecord]) throws {
@@ -274,6 +347,39 @@ final class SQLiteSessionStore {
         }
     }
 
+    private func insertTranscriptEntries(_ entriesBySessionID: [String: [TranscriptIndexEntry]]) throws {
+        guard !entriesBySessionID.isEmpty else { return }
+
+        let insertSQL = """
+        INSERT INTO transcript_entries (
+            session_id,
+            entry_index,
+            entry_text
+        ) VALUES (?, ?, ?);
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, insertSQL, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        for entries in entriesBySessionID.values {
+            for entry in entries {
+                sqlite3_reset(statement)
+                sqlite3_clear_bindings(statement)
+
+                bind(entry.sessionRecordID, to: statement, index: 1)
+                bind(entry.entryIndex, to: statement, index: 2)
+                bind(entry.text, to: statement, index: 3)
+
+                guard sqlite3_step(statement) == SQLITE_DONE else {
+                    throw SQLiteStoreError.stepFailed(lastErrorMessage())
+                }
+            }
+        }
+    }
+
     private func string(from statement: OpaquePointer?, column: Int32) -> String? {
         guard let cString = sqlite3_column_text(statement, column) else { return nil }
         return String(cString: cString)
@@ -294,6 +400,94 @@ final class SQLiteSessionStore {
             }
         }
         return columns
+    }
+
+    private func existingVirtualTableSQL(named table: String) throws -> String? {
+        let sql = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bind(table, to: statement, index: 1)
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            return nil
+        }
+        return string(from: statement, column: 0)
+    }
+
+    private func ensureTranscriptIndex() throws -> TranscriptIndexMode {
+        if let existingSQL = try existingVirtualTableSQL(named: "transcript_entries")?.lowercased() {
+            if existingSQL.contains("tokenize='trigram'") || existingSQL.contains("tokenize=\"trigram\"") {
+                return .trigram
+            }
+            return .tokenPrefix
+        }
+
+        do {
+            try execute(
+                """
+                CREATE VIRTUAL TABLE transcript_entries USING fts5(
+                    session_id UNINDEXED,
+                    entry_index UNINDEXED,
+                    entry_text,
+                    tokenize='trigram'
+                );
+                """
+            )
+            return .trigram
+        } catch {
+            try execute(
+                """
+                CREATE VIRTUAL TABLE transcript_entries USING fts5(
+                    session_id UNINDEXED,
+                    entry_index UNINDEXED,
+                    entry_text,
+                    tokenize='unicode61 remove_diacritics 1',
+                    prefix='2 3 4'
+                );
+                """
+            )
+            return .tokenPrefix
+        }
+    }
+
+    private func deleteRecords(withIDs ids: [String], from table: String, idColumn: String) throws {
+        guard !ids.isEmpty else { return }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ", ")
+        let deleteSQL = "DELETE FROM \(table) WHERE \(idColumn) IN (\(placeholders));"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, deleteSQL, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        for (index, id) in ids.enumerated() {
+            bind(id, to: statement, index: Int32(index + 1))
+        }
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+        }
+    }
+
+    private func tokenizedFTSQuery(from rawQuery: String) -> String? {
+        let tokens = rawQuery
+            .lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        guard !tokens.isEmpty else {
+            return nil
+        }
+        return tokens.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"*" }.joined(separator: " ")
+    }
+
+    private func escapeLikePattern(_ rawValue: String) -> String {
+        rawValue
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
     }
 
     private func lastErrorMessage() -> String {

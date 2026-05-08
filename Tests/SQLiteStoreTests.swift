@@ -67,6 +67,34 @@ final class SQLiteStoreTests: XCTestCase {
         XCTAssertEqual(loaded.first(where: { $0.sourceSessionId == "session-3" })?.title, "Added")
     }
 
+    func testTranscriptIndexQueriesReturnOnlyCurrentSessionRows() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        let matching = makeRecord(sessionID: "session-1", title: "Matching", fingerprint: "v1")
+        let other = makeRecord(sessionID: "session-2", title: "Other", fingerprint: "v1")
+
+        try store.replaceAll(
+            records: [matching, other],
+            transcriptEntriesBySessionID: [
+                matching.id: [
+                    TranscriptIndexEntry(sessionRecordID: matching.id, entryIndex: 0, text: "Find the terminal drag bug."),
+                    TranscriptIndexEntry(sessionRecordID: matching.id, entryIndex: 1, text: "I’ll inspect the drag target next.")
+                ],
+                other.id: [
+                    TranscriptIndexEntry(sessionRecordID: other.id, entryIndex: 0, text: "Please summarize the filter changes.")
+                ]
+            ]
+        )
+
+        let hits = try store.searchTranscriptEntries(sessionIDs: [matching.id, other.id], query: "drag")
+
+        XCTAssertEqual(hits.map(\.sessionRecordID), [matching.id, matching.id])
+        XCTAssertEqual(hits.map(\.entryIndex), [0, 1])
+    }
+
     private func makeRecord(sessionID: String, title: String, fingerprint: String) -> SessionRecord {
         SessionRecord(
             source: .copilotCLI,

@@ -37,6 +37,10 @@ final class SessionCatalog {
         try store.fetchAll()
     }
 
+    func searchTranscriptIndex(sessionIDs: [String], query: String) throws -> [TranscriptIndexSearchHit] {
+        try store.searchTranscriptEntries(sessionIDs: sessionIDs, query: query)
+    }
+
     func refreshSessions() throws -> [SessionRecord] {
         let existingRecords = try store.fetchAll()
         let existingByID = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.id, $0) })
@@ -44,6 +48,7 @@ final class SessionCatalog {
 
         var refreshedRecordsByID: [String: SessionRecord] = [:]
         var changedRecords: [SessionRecord] = []
+        var transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
 
         for candidate in candidates {
             if let existingRecord = existingByID[candidate.id],
@@ -55,11 +60,16 @@ final class SessionCatalog {
             if let record = try candidate.loadRecord() {
                 refreshedRecordsByID[record.id] = record
                 changedRecords.append(record)
+                transcriptEntriesBySessionID[record.id] = try TranscriptPreviewExtractor.searchableEntries(for: record)
             }
         }
 
         let removedIDs = Set(existingByID.keys).subtracting(refreshedRecordsByID.keys)
-        try store.applyIncrementalUpdate(records: changedRecords, removedIDs: Array(removedIDs))
+        try store.applyIncrementalUpdate(
+            records: changedRecords,
+            removedIDs: Array(removedIDs),
+            transcriptEntriesBySessionID: transcriptEntriesBySessionID
+        )
 
         return refreshedRecordsByID.values.sorted(by: SessionCatalog.sort(lhs:rhs:))
     }
@@ -68,7 +78,12 @@ final class SessionCatalog {
         let records = try adapters
             .flatMap { try $0.discover() }
             .sorted(by: SessionCatalog.sort(lhs:rhs:))
-        try store.replaceAll(records: records)
+        let transcriptEntriesBySessionID = try Dictionary(
+            uniqueKeysWithValues: records.map { record in
+                (record.id, try TranscriptPreviewExtractor.searchableEntries(for: record))
+            }
+        )
+        try store.replaceAll(records: records, transcriptEntriesBySessionID: transcriptEntriesBySessionID)
         return records
     }
 

@@ -107,6 +107,7 @@ enum SessionSearchField: String, CaseIterable, Sendable {
     case source
     case model
     case id
+    case transcript
 }
 
 struct SessionSearchFieldClause: Equatable, Sendable {
@@ -130,6 +131,37 @@ struct ParsedSessionSearchQuery: Equatable, Sendable {
 
     var normalizedWholeText: String {
         rawText.lowercased()
+    }
+
+    var metadataFieldClauses: [SessionSearchFieldClause] {
+        fieldClauses.filter { $0.field != .transcript }
+    }
+
+    var transcriptFieldValues: [String] {
+        fieldClauses
+            .filter { $0.field == .transcript }
+            .map(\.value)
+    }
+
+    var transcriptQueries: [String] {
+        if isEmpty {
+            return []
+        }
+        if !usesStructuredSyntax {
+            return [normalizedWholeText]
+        }
+        return orderedUnique(transcriptFieldValues + freeTextTerms)
+    }
+
+    private func orderedUnique(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        for value in values where !value.isEmpty {
+            if seen.insert(value).inserted {
+                ordered.append(value)
+            }
+        }
+        return ordered
     }
 }
 
@@ -287,6 +319,8 @@ extension SessionRecord {
             return [conversationModel?.lowercased()].compactMap { $0 }
         case .id:
             return [sourceSessionId.lowercased(), id.lowercased()]
+        case .transcript:
+            return []
         }
     }
 }
@@ -303,7 +337,7 @@ struct TranscriptPreview: Sendable {
     }
 }
 
-struct SessionFilterState: Sendable {
+struct SessionFilterState: Equatable, Sendable {
     static let allProjectsToken = "__all_projects__"
     static let allBranchesToken = "__all_branches__"
     static let allSourcesToken = "__all_sources__"
@@ -341,19 +375,87 @@ struct TranscriptSessionSearchMatch: Identifiable, Equatable, Sendable {
     }
 }
 
-struct TranscriptSessionSearchState: Equatable, Sendable {
-    var isExpanded = false
-    var queryText = ""
-    var appliedQuery = ""
+struct TranscriptIndexEntry: Equatable, Sendable {
+    let sessionRecordID: String
+    let entryIndex: Int
+    let text: String
+}
+
+struct TranscriptIndexSearchHit: Equatable, Sendable {
+    let sessionRecordID: String
+    let entryIndex: Int
+    let text: String
+}
+
+struct SessionSearchState: Equatable, Sendable {
+    var requestedQuery = ""
     var searchedScopeSignature = ""
     var searchedSessionCount = 0
-    var resultsBySessionID: [String: TranscriptSessionSearchMatch] = [:]
-    var totalMatchCount = 0
+    var resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:]
+    var mergedResultsBySessionID: [String: TranscriptSessionSearchMatch] = [:]
     var isSearching = false
     var lastError: String?
 
-    var hasAppliedQuery: Bool {
-        !appliedQuery.isEmpty
+    var sessionIDsByQuery: [String: Set<String>] {
+        Dictionary(
+            uniqueKeysWithValues: resultsByQuery.map { query, hits in
+                (query, Set(hits.map(\.sessionRecordID)))
+            }
+        )
+    }
+
+    var totalMatchCount: Int {
+        mergedResultsBySessionID.values.reduce(0) { $0 + $1.matchCount }
+    }
+
+    var hasRequestedQuery: Bool {
+        !requestedQuery.isEmpty
+    }
+}
+
+enum SessionSearchEvaluator {
+    static func filterSessions(
+        _ sessions: [SessionRecord],
+        parsedQuery: ParsedSessionSearchQuery,
+        transcriptSessionIDsByQuery: [String: Set<String>]
+    ) -> [SessionRecord] {
+        sessions.filter { matches($0, parsedQuery: parsedQuery, transcriptSessionIDsByQuery: transcriptSessionIDsByQuery) }
+    }
+
+    static func matches(
+        _ record: SessionRecord,
+        parsedQuery: ParsedSessionSearchQuery,
+        transcriptSessionIDsByQuery: [String: Set<String>]
+    ) -> Bool {
+        if parsedQuery.isEmpty {
+            return true
+        }
+
+        if !parsedQuery.usesStructuredSyntax {
+            return record.matchesBroadSearch(parsedQuery.normalizedWholeText)
+                || transcriptSessionIDsByQuery[parsedQuery.normalizedWholeText]?.contains(record.id) == true
+        }
+
+        guard parsedQuery.metadataFieldClauses.allSatisfy(record.matchesFieldClause) else {
+            return false
+        }
+
+        for transcriptQuery in parsedQuery.transcriptFieldValues {
+            guard transcriptSessionIDsByQuery[transcriptQuery]?.contains(record.id) == true else {
+                return false
+            }
+        }
+
+        for freeTextTerm in parsedQuery.freeTextTerms {
+            if record.matchesBroadSearch(freeTextTerm) {
+                continue
+            }
+            guard transcriptSessionIDsByQuery[freeTextTerm]?.contains(record.id) == true else {
+                return false
+            }
+        }
+
+        return true
     }
 }
 

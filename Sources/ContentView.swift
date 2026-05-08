@@ -11,7 +11,7 @@ struct ContentView: View {
                 List(viewModel.displayedSessions, selection: $viewModel.selectedSessionID) { session in
                     SessionRowView(
                         session: session,
-                        transcriptMatch: viewModel.transcriptSearchMatch(for: session)
+                        transcriptMatch: viewModel.searchMatch(for: session)
                     )
                         .tag(session.id)
                 }
@@ -24,7 +24,7 @@ struct ContentView: View {
                     } else if viewModel.displayedSessions.isEmpty {
                         ContentUnavailableView(
                             viewModel.emptyStateTitle,
-                            systemImage: viewModel.transcriptSearch.hasAppliedQuery && !viewModel.transcriptSearchScopeNeedsRefresh ? "text.magnifyingglass" : "tray",
+                            systemImage: viewModel.filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "tray" : "magnifyingglass",
                             description: Text(viewModel.emptyStateDescription)
                         )
                     }
@@ -59,7 +59,7 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     ToolbarSearchField(
                         text: $viewModel.filters.searchText,
-                        placeholder: "Search title, project, branch, preview (Cmd-K)",
+                        placeholder: "Search sessions and transcripts (Cmd-K)",
                         controller: searchFieldController
                     )
                     .frame(width: 390)
@@ -120,9 +120,18 @@ struct ContentView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text(viewModel.sessionCountSummary)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 10) {
+                            Text(viewModel.sessionCountSummary)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            if let searchStatusText = viewModel.searchStatusText {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(searchStatusText)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                     Spacer()
                     if let lastRefreshDisplayText = viewModel.lastRefreshDisplayText {
@@ -179,52 +188,9 @@ struct ContentView: View {
                 }
                 .pickerStyle(.menu)
             }
-
-            transcriptSearchSection
         }
         .padding(16)
         .background(.bar)
-    }
-
-    private var transcriptSearchSection: some View {
-        DisclosureGroup("Transcript Search", isExpanded: $viewModel.transcriptSearch.isExpanded) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    TextField("Search transcript contents", text: $viewModel.transcriptSearch.queryText)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit {
-                            viewModel.submitTranscriptSearch()
-                        }
-
-                    Button("Search") {
-                        viewModel.submitTranscriptSearch()
-                    }
-                    .disabled(
-                        viewModel.transcriptSearch.isSearching ||
-                            viewModel.transcriptSearch.queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    )
-
-                    Button("Clear") {
-                        viewModel.clearTranscriptSearch()
-                    }
-                    .disabled(
-                        viewModel.transcriptSearch.queryText.isEmpty &&
-                            !viewModel.transcriptSearch.hasAppliedQuery
-                    )
-                }
-
-                if let status = viewModel.transcriptSearchStatusText {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(viewModel.transcriptSearch.lastError == nil ? Color.secondary : Color.red)
-                } else {
-                    Text("Searches the currently filtered sessions only when you submit.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.top, 8)
-        }
     }
 }
 
@@ -348,7 +314,8 @@ private struct SearchLabelHintMenu: View {
             ("branch:", "branch:", "Match git branches"),
             ("source:", "source:", "Match Copilot CLI, Cursor, or VS Code"),
             ("model:", "model:", "Match conversation models"),
-            ("id:", "id:", "Match source session IDs")
+            ("id:", "id:", "Match source session IDs"),
+            ("transcript:", "transcript:", "Search transcript text only")
         ]
     }
 
@@ -356,7 +323,8 @@ private struct SearchLabelHintMenu: View {
         [
             #"project:"agent session manager" branch:main"#,
             #"title:"session index" source:copilot"#,
-            #"model:gpt-5.4 id:abc-123"#
+            #"model:gpt-5.4 id:abc-123"#,
+            #"transcript:"drag bug" project:newton"#
         ]
     }
 }

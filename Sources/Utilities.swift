@@ -182,6 +182,15 @@ enum SearchTextMatcher {
         return snippet
     }
 
+    static func snippet(in rawText: String, queries: [String], limit: Int = 120) -> String? {
+        for query in queries {
+            if let snippet = snippet(in: rawText, query: query, limit: limit) {
+                return snippet
+            }
+        }
+        return nil
+    }
+
     static func matchRanges(in text: String, query rawQuery: String?) -> [Range<String.Index>] {
         guard let query = normalizedQuery(rawQuery) else { return [] }
 
@@ -432,6 +441,22 @@ enum TranscriptPreviewExtractor {
                 source: record.source,
                 sessionId: record.sourceSessionId,
                 title: record.title
+            )
+        }
+    }
+
+    static func searchableEntries(for record: SessionRecord) throws -> [TranscriptIndexEntry] {
+        let transcript = try loadTranscript(for: record)
+        return transcript.entries.enumerated().compactMap { index, entry in
+            guard entry.isChatMessage,
+                  let body = TextSanitizer.clean(entry.body) else {
+                return nil
+            }
+
+            return TranscriptIndexEntry(
+                sessionRecordID: record.id,
+                entryIndex: index,
+                text: body
             )
         }
     }

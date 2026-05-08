@@ -9,14 +9,51 @@ final class SessionCatalogRefreshTests: XCTestCase {
         let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
 
         let store = try SQLiteSessionStore(databaseURL: databaseURL)
-        let unchanged = makeRecord(sessionID: "unchanged", title: "Unchanged", fingerprint: "same")
-        let changed = makeRecord(sessionID: "changed", title: "Changed old", fingerprint: "old")
-        let removed = makeRecord(sessionID: "removed", title: "Removed", fingerprint: "gone")
-        try store.replaceAll(records: [unchanged, changed, removed])
+        let unchanged = try makeRecord(
+            sessionID: "unchanged",
+            title: "Unchanged",
+            fingerprint: "same",
+            directory: directory,
+            transcriptText: "Keep the existing transcript entry."
+        )
+        let changed = try makeRecord(
+            sessionID: "changed",
+            title: "Changed old",
+            fingerprint: "old",
+            directory: directory,
+            transcriptText: "Original transcript contents."
+        )
+        let removed = try makeRecord(
+            sessionID: "removed",
+            title: "Removed",
+            fingerprint: "gone",
+            directory: directory,
+            transcriptText: "Removed transcript contents."
+        )
+        try store.replaceAll(
+            records: [unchanged, changed, removed],
+            transcriptEntriesBySessionID: [
+                unchanged.id: try TranscriptPreviewExtractor.searchableEntries(for: unchanged),
+                changed.id: try TranscriptPreviewExtractor.searchableEntries(for: changed),
+                removed.id: try TranscriptPreviewExtractor.searchableEntries(for: removed)
+            ]
+        )
 
         var parseCount = 0
-        let changedNewRecord = makeRecord(sessionID: "changed", title: "Changed new", fingerprint: "new")
-        let addedRecord = makeRecord(sessionID: "added", title: "Added", fingerprint: "fresh")
+        let changedNewRecord = try makeRecord(
+            sessionID: "changed",
+            title: "Changed new",
+            fingerprint: "new",
+            directory: directory,
+            transcriptText: "Updated transcript contents for search."
+        )
+        let addedRecord = try makeRecord(
+            sessionID: "added",
+            title: "Added",
+            fingerprint: "fresh",
+            directory: directory,
+            transcriptText: "Freshly added transcript contents."
+        )
 
         let adapter = FakeSessionAdapter(
             candidates: [
@@ -50,6 +87,10 @@ final class SessionCatalogRefreshTests: XCTestCase {
         let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
         let refreshed = try catalog.refreshSessions()
         let persisted = try store.fetchAll()
+        let transcriptHits = try store.searchTranscriptEntries(
+            sessionIDs: persisted.map(\.id),
+            query: "updated transcript"
+        )
 
         XCTAssertEqual(parseCount, 2)
         XCTAssertEqual(Set(refreshed.map(\.sourceSessionId)), ["unchanged", "changed", "added"])
@@ -57,10 +98,23 @@ final class SessionCatalogRefreshTests: XCTestCase {
         XCTAssertEqual(persisted.first(where: { $0.sourceSessionId == "unchanged" })?.title, "Unchanged")
         XCTAssertEqual(persisted.first(where: { $0.sourceSessionId == "changed" })?.title, "Changed new")
         XCTAssertNil(persisted.first(where: { $0.sourceSessionId == "removed" }))
+        XCTAssertEqual(Set(transcriptHits.map(\.sessionRecordID)), [changedNewRecord.id])
     }
 
-    private func makeRecord(sessionID: String, title: String, fingerprint: String) -> SessionRecord {
-        SessionRecord(
+    private func makeRecord(
+        sessionID: String,
+        title: String,
+        fingerprint: String,
+        directory: URL,
+        transcriptText: String
+    ) throws -> SessionRecord {
+        let transcriptURL = directory.appendingPathComponent("\(sessionID).jsonl")
+        try """
+        {"type":"user.message","data":{"content":"\(transcriptText)"},"id":"\(sessionID)-1","timestamp":"2026-05-07T06:19:00.000Z"}
+        {"type":"assistant.message","data":{"content":"Assistant reply for \(sessionID)."},"id":"\(sessionID)-2","timestamp":"2026-05-07T06:19:10.000Z"}
+        """.write(to: transcriptURL, atomically: true, encoding: .utf8)
+
+        return SessionRecord(
             source: .copilotCLI,
             sourceSessionId: sessionID,
             workspacePath: "/Users/pisoni/repos/newton5",
@@ -73,7 +127,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
             summary: "Summary",
             firstUserPreview: "Prompt",
             firstAssistantPreview: "Response",
-            rawTranscriptPath: "/tmp/\(sessionID).jsonl",
+            rawTranscriptPath: transcriptURL.path,
             rawMetadataPath: "/tmp/\(sessionID).yaml",
             relatedPlanPath: nil,
             fingerprint: fingerprint,

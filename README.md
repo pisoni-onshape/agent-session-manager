@@ -12,7 +12,7 @@ It keeps a read-only local SQLite catalog, lets you search/filter/sort sessions,
 - **Cursor**: open the workspace in Cursor when the workspace path can be reconstructed, otherwise reveal the transcript
 - **VS Code**: open the workspace in VS Code
 
-It also supports an in-app read-only transcript viewer so you can inspect the conversation without opening raw JSONL files in Finder.
+It also supports an in-app read-only transcript viewer so you can inspect the conversation without opening raw JSONL files in Finder, and the main toolbar search now searches indexed transcript contents as you type in addition to session metadata.
 
 ## Project shape
 
@@ -37,32 +37,36 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
    open AgentSessionManager.xcodeproj
    ```
 
-3. Run it from Xcode with the `AgentSessionManager` scheme, or build/test from the command line:
+3. Use the project build script for normal app builds and installs. It builds **Release**, stamps the app version automatically, closes any running `/Applications/AgentSessionManager.app`, and replaces the installed app:
 
-   ```bash
-    xcodebuild -project AgentSessionManager.xcodeproj -scheme AgentSessionManager -destination 'platform=macOS' build
+    ```bash
+    ./build.sh
+     ```
+
+4. The standard installed app location after `./build.sh` completes is:
+
+    ```bash
+    /Applications/AgentSessionManager.app
+    ```
+
+5. For manual testing without changing the build/install flow, you can still run tests directly:
+
+    ```bash
     xcodebuild -project AgentSessionManager.xcodeproj -scheme AgentSessionManager -destination 'platform=macOS' test
     ```
 
-4. To launch the built app directly from the command line after a build:
-
-   ```bash
-   open ~/Library/Developer/Xcode/DerivedData/AgentSessionManager-*/Build/Products/Debug/AgentSessionManager.app
-   ```
-
-5. For a project-local CLI build shortcut:
-
-   ```bash
-   ./build.sh
-   ```
+`AGENTS.md` in the repository root and `.github/copilot-instructions.md` tell Copilot to use `./build.sh` as the standard build path for this project.
 
 ## Notes
 
 - The app is intentionally **read-only** with respect to the original session stores.
 - The local SQLite catalog lives under `~/Library/Application Support/AgentSessionManager/catalog.sqlite3`.
 - The app now runs an **incremental refresh automatically on launch** and the main **Refresh** button uses that same incremental path.
-- Incremental refresh still scans the source directories, but it only reparses sessions whose transcript/metadata files changed and only upserts/deletes affected rows in SQLite.
+- Incremental refresh still scans the source directories, but it only reparses sessions whose transcript/metadata files changed and only upserts/deletes affected rows in SQLite, including the persisted transcript search index.
+- The main toolbar search supports the existing metadata labels plus a new **`transcript:`** label for transcript-only matching; unlabeled searches can match either metadata or indexed transcript text.
+- **Catalog** menu actions now include **Open Index Folder** for quickly revealing the directory that contains `catalog.sqlite3`.
 - A **Rebuild Session Index** command remains available under the **Catalog** menu as a recovery/debug path.
 - Cursor project path reconstruction is heuristic because its local project directory name is lossy for paths that contain hyphens; when reconstruction fails, the app falls back to transcript reveal.
 - Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (`chatSessions` selected model). Cursor transcripts did not show a stable per-session model field in the inspected local store.
 - The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and VS Code Copilot. Cursor transcripts are still readable in-app, but the inspected local JSONL files do not expose per-message timestamps.
+- `./build.sh` computes the marketing version as `<incrementing-build-number>.<commit-derived-8-digit-number>` and installs the finished Release app into `/Applications`.
