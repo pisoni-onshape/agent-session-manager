@@ -126,6 +126,16 @@ struct ContentView: View {
                         Text("Preparing the local session catalog.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                    } else if let transcriptLoadingStatusText = viewModel.transcriptLoadingStatusText {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(transcriptLoadingStatusText)
+                            .font(.callout)
+                        if let transcriptLoadingDetailText = viewModel.transcriptLoadingDetailText {
+                            Text(transcriptLoadingDetailText)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
                     } else {
                         HStack(spacing: 10) {
                             Text(viewModel.sessionCountSummary)

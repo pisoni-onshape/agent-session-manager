@@ -61,6 +61,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
     @Published var presentedTranscript: PresentedTranscript?
+    @Published private(set) var loadingTranscriptTitle: String?
 
     private let catalog: SessionCatalog?
     private let transcriptCache = TranscriptDocumentCache()
@@ -198,6 +199,19 @@ final class SessionBrowserViewModel: ObservableObject {
         return "Searching transcripts in \(searchState.searchedSessionCount) \(noun)..."
     }
 
+    var isLoadingTranscript: Bool {
+        loadingTranscriptTitle != nil
+    }
+
+    var transcriptLoadingStatusText: String? {
+        guard isLoadingTranscript else { return nil }
+        return "Loading transcript…"
+    }
+
+    var transcriptLoadingDetailText: String? {
+        loadingTranscriptTitle
+    }
+
     var transcriptViewerSearchText: String {
         let parsedQuery = parsedSearchQuery
         if let firstTranscriptQuery = parsedQuery.transcriptQueries.first {
@@ -246,14 +260,17 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func openTranscript(for record: SessionRecord, initialSearchText: String = "") {
+        loadingTranscriptTitle = record.title
         Task {
             do {
                 presentedTranscript = PresentedTranscript(
                     transcript: try await transcriptCache.document(for: record),
                     initialSearchText: initialSearchText
                 )
+                loadingTranscriptTitle = nil
                 errorMessage = nil
             } catch {
+                loadingTranscriptTitle = nil
                 errorMessage = error.localizedDescription
             }
         }
