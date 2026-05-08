@@ -60,7 +60,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var hasCompletedInitialLoad = false
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
-    @Published var presentedTranscript: TranscriptDocument?
+    @Published var presentedTranscript: PresentedTranscript?
 
     private let catalog: SessionCatalog?
     private let transcriptCache = TranscriptDocumentCache()
@@ -198,6 +198,14 @@ final class SessionBrowserViewModel: ObservableObject {
         return "Searching transcripts in \(searchState.searchedSessionCount) \(noun)..."
     }
 
+    var transcriptViewerSearchText: String {
+        let parsedQuery = parsedSearchQuery
+        if let firstTranscriptQuery = parsedQuery.transcriptQueries.first {
+            return firstTranscriptQuery
+        }
+        return filters.searchText
+    }
+
     func searchMatch(for record: SessionRecord) -> TranscriptSessionSearchMatch? {
         searchState.mergedResultsBySessionID[record.id]
     }
@@ -237,10 +245,13 @@ final class SessionBrowserViewModel: ObservableObject {
         WorkspaceLauncher.reveal(path: record.rawTranscriptPath ?? record.rawMetadataPath)
     }
 
-    func openTranscript(for record: SessionRecord) {
+    func openTranscript(for record: SessionRecord, initialSearchText: String = "") {
         Task {
             do {
-                presentedTranscript = try await transcriptCache.document(for: record)
+                presentedTranscript = PresentedTranscript(
+                    transcript: try await transcriptCache.document(for: record),
+                    initialSearchText: initialSearchText
+                )
                 errorMessage = nil
             } catch {
                 errorMessage = error.localizedDescription

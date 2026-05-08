@@ -193,7 +193,7 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(transcript.entries[1].title, "Assistant")
     }
 
-    func testViewerSearchOnlyMatchesChatMessages() {
+    func testViewerSearchMatchesToolEntriesToo() {
         let transcript = TranscriptDocument(
             sessionID: "viewer-search",
             sessionTitle: "Viewer Search",
@@ -201,22 +201,22 @@ final class TranscriptParsingTests: XCTestCase {
             rawTranscriptPath: "/tmp/viewer-search.jsonl",
             entries: [
                 TranscriptEntry(id: "u1", role: .user, title: "User", body: "Find the quads regression.", timestamp: nil),
-                TranscriptEntry(id: "t1", role: .tool, title: "Started view", body: "quads.swift", timestamp: nil),
+                TranscriptEntry(id: "t1", role: .tool, title: "Started view", body: "Memory cache diagnostics", timestamp: nil),
                 TranscriptEntry(id: "a1", role: .assistant, title: "Assistant", body: "I will inspect the edge path next.", timestamp: nil)
             ],
             timestampsAreComplete: false,
             timestampNotice: nil
         )
 
-        let result = transcript.viewerSearchResult(for: "quads")
+        let result = transcript.viewerSearchResult(for: "memory")
 
         XCTAssertEqual(result.totalMatchCount, 1)
         XCTAssertEqual(result.matchingEntryCount, 1)
         XCTAssertEqual(result.displayItems.count, 1)
         guard case let .entry(entry) = result.displayItems[0] else {
-            return XCTFail("Expected a matching chat entry.")
+            return XCTFail("Expected a matching transcript entry.")
         }
-        XCTAssertEqual(entry.id, "u1")
+        XCTAssertEqual(entry.id, "t1")
     }
 
     func testSearchTextMatcherProducesHighlightedSegments() {
@@ -321,6 +321,29 @@ final class TranscriptParsingTests: XCTestCase {
 
         XCTAssertEqual(entries.count, 2)
         XCTAssertTrue(entries[1].text.contains("pickDefaultInferenceId"))
+    }
+
+    func testTranscriptLoaderKeepsLongToolResultContentVisible() throws {
+        let longContent = String(repeating: "prefix ", count: 20) + "memory" + String(repeating: " suffix", count: 20)
+        let url = try temporaryFile(
+            named: "tool-visible.jsonl",
+            contents: """
+            {"type":"tool.execution_start","data":{"toolCallId":"call-1","toolName":"view","arguments":{"path":"/tmp/file.swift"}},"id":"evt-1","timestamp":"2026-05-07T06:19:05.000Z"}
+            {"type":"tool.execution_complete","data":{"toolCallId":"call-1","success":true,"result":{"content":"\(longContent)"}},"id":"evt-2","timestamp":"2026-05-07T06:19:06.000Z"}
+            """
+        )
+
+        let record = makeRecord(
+            sessionID: "tool-visible",
+            title: "Visible tool content",
+            summary: nil,
+            rawTranscriptPath: url.path
+        )
+
+        let transcript = try TranscriptPreviewExtractor.loadTranscript(for: record)
+
+        XCTAssertEqual(transcript.entries.count, 2)
+        XCTAssertTrue(transcript.entries[1].body?.contains("memory") == true)
     }
 
     private func temporaryFile(named name: String, contents: String) throws -> URL {

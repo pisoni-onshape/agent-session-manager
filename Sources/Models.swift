@@ -365,6 +365,15 @@ struct TranscriptViewerSearchResult: Equatable, Sendable {
     }
 }
 
+struct PresentedTranscript: Identifiable, Equatable, Sendable {
+    let transcript: TranscriptDocument
+    let initialSearchText: String
+
+    var id: String {
+        transcript.id
+    }
+}
+
 struct TranscriptSessionSearchMatch: Identifiable, Equatable, Sendable {
     let sessionRecordID: String
     let matchCount: Int
@@ -551,7 +560,6 @@ extension TranscriptDocument {
         }
 
         let matches = entries.compactMap { entry -> (TranscriptEntry, Int)? in
-            guard entry.isChatMessage else { return nil }
             let matchCount = SearchTextMatcher.matchCount(in: entry.body, query: query)
             guard matchCount > 0 else { return nil }
             return (entry, matchCount)

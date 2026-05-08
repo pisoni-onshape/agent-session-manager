@@ -810,7 +810,11 @@ enum TranscriptPreviewExtractor {
             )
         case "session.info":
             let infoType = prettifyEventLabel(payload?["infoType"] as? String ?? "Info")
-            let body = TextSanitizer.clean(payload?["message"] as? String)
+            let body = searchableEventText(
+                type: type,
+                payload: payload,
+                toolNamesByCallID: toolNamesByCallID
+            )
             return TranscriptEntry(
                 id: entryID,
                 role: .system,
@@ -820,7 +824,11 @@ enum TranscriptPreviewExtractor {
             )
         case "tool.execution_start":
             let toolName = payload?["toolName"] as? String ?? "Tool"
-            let body = toolArgumentsSummary(payload?["arguments"])
+            let body = searchableEventText(
+                type: type,
+                payload: payload,
+                toolNamesByCallID: toolNamesByCallID
+            )
             return TranscriptEntry(
                 id: entryID,
                 role: .tool,
@@ -832,7 +840,11 @@ enum TranscriptPreviewExtractor {
             let toolCallId = payload?["toolCallId"] as? String
             let toolName = toolCallId.flatMap { toolNamesByCallID[$0] } ?? "Tool"
             let success = payload?["success"] as? Bool ?? true
-            let body = toolCompletionSummary(payload)
+            let body = searchableEventText(
+                type: type,
+                payload: payload,
+                toolNamesByCallID: toolNamesByCallID
+            )
             return TranscriptEntry(
                 id: entryID,
                 role: .tool,

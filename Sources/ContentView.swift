@@ -11,7 +11,10 @@ struct ContentView: View {
                 List(viewModel.displayedSessions, selection: $viewModel.selectedSessionID) { session in
                     SessionRowView(
                         session: session,
-                        transcriptMatch: viewModel.searchMatch(for: session)
+                        transcriptMatch: viewModel.searchMatch(for: session),
+                        onOpenTranscriptMatch: {
+                            viewModel.openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
+                        }
                     )
                         .tag(session.id)
                 }
@@ -89,8 +92,11 @@ struct ContentView: View {
                 }
             }
         }
-        .sheet(item: $viewModel.presentedTranscript) { transcript in
-            TranscriptViewerSheet(transcript: transcript)
+        .sheet(item: $viewModel.presentedTranscript) { presentedTranscript in
+            TranscriptViewerSheet(
+                transcript: presentedTranscript.transcript,
+                initialSearchText: presentedTranscript.initialSearchText
+            )
         }
         .safeAreaInset(edge: .bottom) {
             if let errorMessage = viewModel.errorMessage {
@@ -360,6 +366,7 @@ private final class SearchShortcutNSView: NSView {
 private struct SessionRowView: View {
     let session: SessionRecord
     let transcriptMatch: TranscriptSessionSearchMatch?
+    let onOpenTranscriptMatch: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -395,9 +402,12 @@ private struct SessionRowView: View {
                 .lineLimit(3)
 
             if let transcriptMatch {
-                Label(transcriptMatchLabel(transcriptMatch.matchCount), systemImage: "text.magnifyingglass")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentColor)
+                Button(action: onOpenTranscriptMatch) {
+                    Label(transcriptMatchLabel(transcriptMatch.matchCount), systemImage: "text.magnifyingglass")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
 
                 if let snippet = transcriptMatch.snippets.first {
                     Text(snippet)
@@ -568,8 +578,15 @@ private struct PathRow: View {
 
 private struct TranscriptViewerSheet: View {
     let transcript: TranscriptDocument
+    let initialSearchText: String
     @Environment(\.dismiss) private var dismiss
-    @State private var searchText = ""
+    @State private var searchText: String
+
+    init(transcript: TranscriptDocument, initialSearchText: String = "") {
+        self.transcript = transcript
+        self.initialSearchText = initialSearchText
+        _searchText = State(initialValue: initialSearchText)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -594,9 +611,9 @@ private struct TranscriptViewerSheet: View {
                         )
                     } else if searchResult.isActive, searchResult.displayItems.isEmpty {
                         ContentUnavailableView(
-                            "No Matching Messages",
+                            "No Matching Transcript Items",
                             systemImage: "text.magnifyingglass",
-                            description: Text("Only user and assistant messages are searched in this view.")
+                            description: Text("No transcript entries matched the current search.")
                         )
                     } else {
                         TranscriptTimelineView(
@@ -635,7 +652,7 @@ private struct TranscriptViewerSheet: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 10) {
-                    TextField("Search chat messages", text: $searchText)
+                    TextField("Search transcript text", text: $searchText)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 280)
 
@@ -667,9 +684,9 @@ private struct TranscriptViewerSheet: View {
 
     private var itemSummary: String {
         if searchResult.isActive {
-            let messageNoun = searchResult.matchingEntryCount == 1 ? "message" : "messages"
+            let itemNoun = searchResult.matchingEntryCount == 1 ? "item" : "items"
             let matchNoun = searchResult.totalMatchCount == 1 ? "match" : "matches"
-            return "\(searchResult.totalMatchCount) \(matchNoun) in \(searchResult.matchingEntryCount) \(messageNoun)"
+            return "\(searchResult.totalMatchCount) \(matchNoun) in \(searchResult.matchingEntryCount) \(itemNoun)"
         }
         return "\(transcript.entries.count) items"
     }
