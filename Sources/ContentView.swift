@@ -56,12 +56,19 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ToolbarSearchField(
-                    text: $viewModel.filters.searchText,
-                    placeholder: "Search title, project, branch, preview (Cmd-K)",
-                    controller: searchFieldController
-                )
-                .frame(width: 420)
+                HStack(spacing: 8) {
+                    ToolbarSearchField(
+                        text: $viewModel.filters.searchText,
+                        placeholder: "Search title, project, branch, preview (Cmd-K)",
+                        controller: searchFieldController
+                    )
+                    .frame(width: 390)
+
+                    SearchLabelHintMenu(
+                        searchText: $viewModel.filters.searchText,
+                        controller: searchFieldController
+                    )
+                }
             }
 
             ToolbarItemGroup {
@@ -290,6 +297,67 @@ private struct ToolbarSearchField: NSViewRepresentable {
             guard let field = notification.object as? NSSearchField else { return }
             text = field.stringValue
         }
+    }
+}
+
+private struct SearchLabelHintMenu: View {
+    @Binding var searchText: String
+    let controller: ToolbarSearchFieldController
+
+    var body: some View {
+        Menu {
+            Section("Field labels") {
+                ForEach(searchLabels, id: \.label) { item in
+                    Button {
+                        insertToken(item.token)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.label)
+                            Text(item.hint)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Section("Examples") {
+                ForEach(searchExamples, id: \.self) { example in
+                    Button(example) {
+                        searchText = example
+                        controller.focus()
+                    }
+                }
+            }
+        } label: {
+            Label("Labels", systemImage: "tag")
+        }
+        .help("Structured search labels")
+    }
+
+    private func insertToken(_ token: String) {
+        let needsSpace = !searchText.isEmpty && !searchText.hasSuffix(" ")
+        searchText += needsSpace ? " \(token)" : token
+        controller.focus()
+    }
+
+    private var searchLabels: [(label: String, token: String, hint: String)] {
+        [
+            ("title:", "title:", "Match session titles"),
+            ("project:", "project:", "Match project names"),
+            ("branch:", "branch:", "Match git branches"),
+            ("source:", "source:", "Match Copilot CLI, Cursor, or VS Code"),
+            ("model:", "model:", "Match conversation models"),
+            ("id:", "id:", "Match source session IDs")
+        ]
+    }
+
+    private var searchExamples: [String] {
+        [
+            #"project:"agent session manager" branch:main"#,
+            #"title:"session index" source:copilot"#,
+            #"model:gpt-5.4 id:abc-123"#
+        ]
     }
 }
 
