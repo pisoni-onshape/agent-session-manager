@@ -9,7 +9,10 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 filterBar
                 List(viewModel.displayedSessions, selection: $viewModel.selectedSessionID) { session in
-                    SessionRowView(session: session)
+                    SessionRowView(
+                        session: session,
+                        transcriptMatch: viewModel.transcriptSearchMatch(for: session)
+                    )
                         .tag(session.id)
                 }
                 .overlay {
@@ -20,9 +23,9 @@ struct ContentView: View {
                         )
                     } else if viewModel.displayedSessions.isEmpty {
                         ContentUnavailableView(
-                            "No Sessions Found",
-                            systemImage: "tray",
-                            description: Text("Adjust the filters or refresh the local index.")
+                            viewModel.emptyStateTitle,
+                            systemImage: viewModel.transcriptSearch.hasAppliedQuery && !viewModel.transcriptSearchScopeNeedsRefresh ? "text.magnifyingglass" : "tray",
+                            description: Text(viewModel.emptyStateDescription)
                         )
                     }
                 }
@@ -169,9 +172,52 @@ struct ContentView: View {
                 }
                 .pickerStyle(.menu)
             }
+
+            transcriptSearchSection
         }
         .padding(16)
         .background(.bar)
+    }
+
+    private var transcriptSearchSection: some View {
+        DisclosureGroup("Transcript Search", isExpanded: $viewModel.transcriptSearch.isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    TextField("Search transcript contents", text: $viewModel.transcriptSearch.queryText)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            viewModel.submitTranscriptSearch()
+                        }
+
+                    Button("Search") {
+                        viewModel.submitTranscriptSearch()
+                    }
+                    .disabled(
+                        viewModel.transcriptSearch.isSearching ||
+                            viewModel.transcriptSearch.queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+
+                    Button("Clear") {
+                        viewModel.clearTranscriptSearch()
+                    }
+                    .disabled(
+                        viewModel.transcriptSearch.queryText.isEmpty &&
+                            !viewModel.transcriptSearch.hasAppliedQuery
+                    )
+                }
+
+                if let status = viewModel.transcriptSearchStatusText {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(viewModel.transcriptSearch.lastError == nil ? Color.secondary : Color.red)
+                } else {
+                    Text("Searches the currently filtered sessions only when you submit.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 8)
+        }
     }
 }
 
@@ -277,6 +323,7 @@ private final class SearchShortcutNSView: NSView {
 
 private struct SessionRowView: View {
     let session: SessionRecord
+    let transcriptMatch: TranscriptSessionSearchMatch?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -311,6 +358,19 @@ private struct SessionRowView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(3)
 
+            if let transcriptMatch {
+                Label(transcriptMatchLabel(transcriptMatch.matchCount), systemImage: "text.magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
+
+                if let snippet = transcriptMatch.snippets.first {
+                    Text(snippet)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
             if let bestTimestamp = session.bestTimestamp {
                 Text(bestTimestamp.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
@@ -318,6 +378,10 @@ private struct SessionRowView: View {
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private func transcriptMatchLabel(_ count: Int) -> String {
+        count == 1 ? "1 transcript match" : "\(count) transcript matches"
     }
 }
 
@@ -469,6 +533,7 @@ private struct PathRow: View {
 private struct TranscriptViewerSheet: View {
     let transcript: TranscriptDocument
     @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -491,8 +556,17 @@ private struct TranscriptViewerSheet: View {
                             systemImage: "text.bubble",
                             description: Text("No readable conversation entries were found in this transcript.")
                         )
+                    } else if searchResult.isActive, searchResult.displayItems.isEmpty {
+                        ContentUnavailableView(
+                            "No Matching Messages",
+                            systemImage: "text.magnifyingglass",
+                            description: Text("Only user and assistant messages are searched in this view.")
+                        )
                     } else {
-                        TranscriptTimelineView(transcript: transcript)
+                        TranscriptTimelineView(
+                            items: searchResult.displayItems,
+                            highlightQuery: searchResult.highlightQuery
+                        )
                     }
                 }
                 .padding(24)
@@ -520,9 +594,21 @@ private struct TranscriptViewerSheet: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 10) {
-                Text("\(transcript.entries.count) items")
+                Text(itemSummary)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    TextField("Search chat messages", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 280)
+
+                    if !searchText.isEmpty {
+                        Button("Clear") {
+                            searchText = ""
+                        }
+                    }
+                }
 
                 HStack(spacing: 10) {
                     Button("Reveal Raw File") {
@@ -538,28 +624,42 @@ private struct TranscriptViewerSheet: View {
         }
         .padding(20)
     }
+
+    private var searchResult: TranscriptViewerSearchResult {
+        transcript.viewerSearchResult(for: searchText)
+    }
+
+    private var itemSummary: String {
+        if searchResult.isActive {
+            let messageNoun = searchResult.matchingEntryCount == 1 ? "message" : "messages"
+            let matchNoun = searchResult.totalMatchCount == 1 ? "match" : "matches"
+            return "\(searchResult.totalMatchCount) \(matchNoun) in \(searchResult.matchingEntryCount) \(messageNoun)"
+        }
+        return "\(transcript.entries.count) items"
+    }
 }
 
 private struct TranscriptTimelineView: View {
-    let transcript: TranscriptDocument
+    let items: [TranscriptDisplayItem]
+    let highlightQuery: String?
     private let calendar = Calendar.current
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(transcript.displayItems.enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 if shouldShowDateHeader(at: index) {
                     TranscriptDateHeader(date: item.timestamp!)
                 }
-                TranscriptTimelineItemView(item: item)
+                TranscriptTimelineItemView(item: item, highlightQuery: highlightQuery)
             }
         }
     }
 
     private func shouldShowDateHeader(at index: Int) -> Bool {
-        guard let timestamp = transcript.displayItems[index].timestamp else {
+        guard let timestamp = items[index].timestamp else {
             return false
         }
-        guard index > 0, let previousTimestamp = transcript.displayItems[index - 1].timestamp else {
+        guard index > 0, let previousTimestamp = items[index - 1].timestamp else {
             return true
         }
         return !calendar.isDate(previousTimestamp, inSameDayAs: timestamp)
@@ -582,6 +682,7 @@ private struct TranscriptDateHeader: View {
 
 private struct TranscriptEntryView: View {
     let entry: TranscriptEntry
+    let highlightQuery: String?
 
     var body: some View {
         switch entry.role {
@@ -617,7 +718,7 @@ private struct TranscriptEntryView: View {
             }
 
             if let body = entry.body {
-                MarkdownTextBlock(text: body)
+                MarkdownTextBlock(text: body, highlightQuery: highlightQuery)
             }
         }
         .padding(16)
@@ -638,7 +739,7 @@ private struct TranscriptEntryView: View {
             }
 
             if let body = entry.body {
-                MarkdownTextBlock(text: body)
+                MarkdownTextBlock(text: body, highlightQuery: highlightQuery)
             }
         }
         .padding(14)
@@ -660,11 +761,12 @@ private struct TranscriptEntryView: View {
 
 private struct TranscriptTimelineItemView: View {
     let item: TranscriptDisplayItem
+    let highlightQuery: String?
 
     var body: some View {
         switch item {
         case let .entry(entry):
-            TranscriptEntryView(entry: entry)
+            TranscriptEntryView(entry: entry, highlightQuery: highlightQuery)
         case let .collapsedEvents(_, entries):
             CollapsedTranscriptEventsView(entries: entries)
         }
@@ -679,7 +781,7 @@ private struct CollapsedTranscriptEventsView: View {
         DisclosureGroup(isExpanded: $isExpanded) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(entries) { entry in
-                    TranscriptEntryView(entry: entry)
+                    TranscriptEntryView(entry: entry, highlightQuery: nil)
                 }
             }
             .padding(.top, 12)
@@ -735,10 +837,13 @@ private struct CollapsedTranscriptEventsView: View {
 
 private struct MarkdownTextBlock: View {
     let text: String
+    let highlightQuery: String?
 
     var body: some View {
         Group {
-            if let attributedText = try? AttributedString(markdown: text) {
+            if SearchTextMatcher.normalizedQuery(highlightQuery) != nil {
+                Text(SearchTextMatcher.highlightedAttributedString(from: text, query: highlightQuery))
+            } else if let attributedText = try? AttributedString(markdown: text) {
                 Text(attributedText)
             } else {
                 Text(text)

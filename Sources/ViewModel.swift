@@ -6,10 +6,49 @@ enum RefreshActivity: Equatable {
     case rebuild
 }
 
+enum SessionFilterEvaluator {
+    static func filterSessions(_ sessions: [SessionRecord], filters: SessionFilterState) -> [SessionRecord] {
+        let parsedQuery = SessionSearchQueryParser.parse(filters.searchText)
+        return sessions.filter { record in
+            matches(record, filters: filters, parsedQuery: parsedQuery)
+        }
+    }
+
+    private static func matches(
+        _ record: SessionRecord,
+        filters: SessionFilterState,
+        parsedQuery: ParsedSessionSearchQuery
+    ) -> Bool {
+        if let source = filters.selectedSource, record.source != source {
+            return false
+        }
+        if filters.selectedProject != SessionFilterState.allProjectsToken, record.projectName != filters.selectedProject {
+            return false
+        }
+        if filters.selectedBranch != SessionFilterState.allBranchesToken, record.branch != filters.selectedBranch {
+            return false
+        }
+        if filters.newtonOnly, !record.isNewtonProject {
+            return false
+        }
+        if parsedQuery.isEmpty {
+            return true
+        }
+        if !parsedQuery.usesStructuredSyntax {
+            return record.matchesBroadSearch(parsedQuery.normalizedWholeText)
+        }
+        if !parsedQuery.fieldClauses.allSatisfy({ record.matchesFieldClause($0) }) {
+            return false
+        }
+        return parsedQuery.freeTextTerms.allSatisfy { record.matchesBroadSearch($0) }
+    }
+}
+
 @MainActor
 final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var allSessions: [SessionRecord] = []
     @Published var filters = SessionFilterState()
+    @Published var transcriptSearch = TranscriptSessionSearchState()
     @Published var selectedSessionID: String?
     @Published private(set) var refreshActivity: RefreshActivity = .idle
     @Published private(set) var hasCompletedInitialLoad = false
@@ -18,6 +57,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published var presentedTranscript: TranscriptDocument?
 
     private let catalog: SessionCatalog?
+    private let transcriptCache = TranscriptDocumentCache()
 
     init(catalog: SessionCatalog?) {
         self.catalog = catalog
@@ -103,47 +143,11 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     var displayedSessions: [SessionRecord] {
-        let filtered = allSessions.filter { record in
-            if let source = filters.selectedSource, record.source != source {
-                return false
-            }
-            if filters.selectedProject != SessionFilterState.allProjectsToken, record.projectName != filters.selectedProject {
-                return false
-            }
-            if filters.selectedBranch != SessionFilterState.allBranchesToken, record.branch != filters.selectedBranch {
-                return false
-            }
-            if filters.newtonOnly, !record.isNewtonProject {
-                return false
-            }
-
-            let query = filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if query.isEmpty {
-                return true
-            }
-
-            let haystack = [
-                record.title,
-                record.projectName,
-                record.branch,
-                record.conversationModel,
-                record.summary,
-                record.firstUserPreview,
-                record.firstAssistantPreview,
-                record.sourceSessionId
-            ]
-                .compactMap { $0?.lowercased() }
-                .joined(separator: "\n")
-
-            return haystack.contains(query.lowercased())
-        }
-
-        return filtered.sorted(by: sort(lhs:rhs:))
+        applyTranscriptSearch(to: baseFilteredSessions).sorted(by: sort(lhs:rhs:))
     }
 
     var selectedSession: SessionRecord? {
-        let sessions = displayedSessions.isEmpty ? allSessions : displayedSessions
-        return sessions.first(where: { $0.id == selectedSessionID }) ?? sessions.first
+        displayedSessions.first(where: { $0.id == selectedSessionID }) ?? displayedSessions.first
     }
 
     var availableProjects: [String] {
@@ -156,6 +160,49 @@ final class SessionBrowserViewModel: ObservableObject {
 
     var sessionCountSummary: String {
         "\(displayedSessions.count) of \(allSessions.count) sessions"
+    }
+
+    var emptyStateTitle: String {
+        if transcriptSearch.hasAppliedQuery, !transcriptSearchScopeNeedsRefresh {
+            return "No Transcript Matches"
+        }
+        return "No Sessions Found"
+    }
+
+    var emptyStateDescription: String {
+        if transcriptSearch.hasAppliedQuery, !transcriptSearchScopeNeedsRefresh {
+            return "No sessions in the current filter scope matched the transcript search."
+        }
+        return "Adjust the filters or refresh the local index."
+    }
+
+    var transcriptSearchScopeNeedsRefresh: Bool {
+        transcriptSearch.hasAppliedQuery &&
+            transcriptSearch.searchedScopeSignature != transcriptSearchScopeSignature(for: baseFilteredSessions)
+    }
+
+    var transcriptSearchStatusText: String? {
+        if let lastError = transcriptSearch.lastError {
+            return lastError
+        }
+        if transcriptSearch.isSearching {
+            let noun = transcriptSearch.searchedSessionCount == 1 ? "session" : "sessions"
+            return "Searching \(transcriptSearch.searchedSessionCount) \(noun)..."
+        }
+        if transcriptSearchScopeNeedsRefresh {
+            return "Filters changed. Run transcript search again for the current scope."
+        }
+        guard transcriptSearch.hasAppliedQuery else { return nil }
+
+        let sessionCount = transcriptSearch.resultsBySessionID.count
+        let sessionNoun = sessionCount == 1 ? "session" : "sessions"
+        let matchNoun = transcriptSearch.totalMatchCount == 1 ? "match" : "matches"
+        return "\(sessionCount) \(sessionNoun) matched, \(transcriptSearch.totalMatchCount) \(matchNoun)."
+    }
+
+    func transcriptSearchMatch(for record: SessionRecord) -> TranscriptSessionSearchMatch? {
+        guard transcriptSearch.hasAppliedQuery, !transcriptSearchScopeNeedsRefresh else { return nil }
+        return transcriptSearch.resultsBySessionID[record.id]
     }
 
     func primaryActionLabel(for record: SessionRecord) -> String {
@@ -194,16 +241,74 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func openTranscript(for record: SessionRecord) {
-        do {
-            presentedTranscript = try TranscriptPreviewExtractor.loadTranscript(for: record)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+        Task {
+            do {
+                presentedTranscript = try await transcriptCache.document(for: record)
+                errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
     func openPlan(for record: SessionRecord) {
         WorkspaceLauncher.openDocument(path: record.relatedPlanPath)
+    }
+
+    func submitTranscriptSearch() {
+        let query = transcriptSearch.queryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            clearTranscriptSearch()
+            return
+        }
+
+        let scope = baseFilteredSessions.sorted(by: sort(lhs:rhs:))
+        let scopeSignature = transcriptSearchScopeSignature(for: scope)
+
+        transcriptSearch.appliedQuery = query
+        transcriptSearch.searchedScopeSignature = scopeSignature
+        transcriptSearch.searchedSessionCount = scope.count
+        transcriptSearch.resultsBySessionID = [:]
+        transcriptSearch.totalMatchCount = 0
+        transcriptSearch.isSearching = true
+        transcriptSearch.lastError = nil
+        transcriptSearch.isExpanded = true
+
+        Task {
+            do {
+                let matches = try await transcriptCache.search(records: scope, query: query)
+                guard transcriptSearch.appliedQuery == query,
+                      transcriptSearch.searchedScopeSignature == scopeSignature else {
+                    return
+                }
+
+                transcriptSearch.resultsBySessionID = Dictionary(
+                    uniqueKeysWithValues: matches.map { ($0.sessionRecordID, $0) }
+                )
+                transcriptSearch.totalMatchCount = matches.reduce(0) { $0 + $1.matchCount }
+                transcriptSearch.isSearching = false
+            } catch {
+                guard transcriptSearch.appliedQuery == query,
+                      transcriptSearch.searchedScopeSignature == scopeSignature else {
+                    return
+                }
+                transcriptSearch.resultsBySessionID = [:]
+                transcriptSearch.totalMatchCount = 0
+                transcriptSearch.isSearching = false
+                transcriptSearch.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func clearTranscriptSearch() {
+        transcriptSearch.queryText = ""
+        transcriptSearch.appliedQuery = ""
+        transcriptSearch.searchedScopeSignature = ""
+        transcriptSearch.searchedSessionCount = 0
+        transcriptSearch.resultsBySessionID = [:]
+        transcriptSearch.totalMatchCount = 0
+        transcriptSearch.isSearching = false
+        transcriptSearch.lastError = nil
     }
 
     private func applySessions(_ sessions: [SessionRecord]) {
@@ -258,6 +363,23 @@ final class SessionBrowserViewModel: ObservableObject {
         return attributes?[.modificationDate] as? Date
     }
 
+    private var baseFilteredSessions: [SessionRecord] {
+        SessionFilterEvaluator.filterSessions(allSessions, filters: filters)
+    }
+
+    private func applyTranscriptSearch(to sessions: [SessionRecord]) -> [SessionRecord] {
+        guard transcriptSearch.hasAppliedQuery, !transcriptSearchScopeNeedsRefresh else {
+            return sessions
+        }
+
+        let matchingIDs = Set(transcriptSearch.resultsBySessionID.keys)
+        return sessions.filter { matchingIDs.contains($0.id) }
+    }
+
+    private func transcriptSearchScopeSignature(for sessions: [SessionRecord]) -> String {
+        sessions.map(\.id).sorted().joined(separator: "\u{1F}")
+    }
+
     private func performRefresh(
         activity: RefreshActivity,
         operation: () throws -> [SessionRecord],
@@ -292,4 +414,33 @@ final class SessionBrowserViewModel: ObservableObject {
         return catalog
     }
 
+}
+
+actor TranscriptDocumentCache {
+    private struct CachedTranscript {
+        let fingerprint: String
+        let document: TranscriptDocument
+    }
+
+    private var documentsBySessionID: [String: CachedTranscript] = [:]
+
+    func document(for record: SessionRecord) throws -> TranscriptDocument {
+        if let cached = documentsBySessionID[record.id],
+           cached.fingerprint == record.fingerprint {
+            return cached.document
+        }
+
+        let document = try TranscriptPreviewExtractor.loadTranscript(for: record)
+        documentsBySessionID[record.id] = CachedTranscript(
+            fingerprint: record.fingerprint,
+            document: document
+        )
+        return document
+    }
+
+    func search(records: [SessionRecord], query: String) throws -> [TranscriptSessionSearchMatch] {
+        try records.compactMap { record in
+            try document(for: record).sessionSearchMatch(for: query)
+        }
+    }
 }

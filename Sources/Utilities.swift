@@ -72,6 +72,130 @@ enum TextSanitizer {
     }
 }
 
+struct HighlightedTextSegment: Equatable, Sendable {
+    let text: String
+    let isMatch: Bool
+}
+
+enum SearchTextMatcher {
+    static func normalizedQuery(_ rawQuery: String?) -> String? {
+        guard let rawQuery else { return nil }
+        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed.lowercased()
+    }
+
+    static func visibleText(from rawText: String) -> String {
+        if let attributed = try? AttributedString(markdown: rawText) {
+            return String(attributed.characters)
+        }
+        return rawText
+    }
+
+    static func matchCount(in rawText: String?, query: String) -> Int {
+        guard let rawText else { return 0 }
+        return matchRanges(in: visibleText(from: rawText), query: query).count
+    }
+
+    static func segments(in rawText: String, query rawQuery: String?) -> [HighlightedTextSegment] {
+        guard let query = normalizedQuery(rawQuery) else {
+            return [HighlightedTextSegment(text: visibleText(from: rawText), isMatch: false)]
+        }
+
+        let visible = visibleText(from: rawText)
+        let ranges = matchRanges(in: visible, query: query)
+        guard !ranges.isEmpty else {
+            return [HighlightedTextSegment(text: visible, isMatch: false)]
+        }
+
+        var segments: [HighlightedTextSegment] = []
+        var cursor = visible.startIndex
+        for range in ranges {
+            if cursor < range.lowerBound {
+                segments.append(
+                    HighlightedTextSegment(
+                        text: String(visible[cursor..<range.lowerBound]),
+                        isMatch: false
+                    )
+                )
+            }
+            segments.append(
+                HighlightedTextSegment(
+                    text: String(visible[range]),
+                    isMatch: true
+                )
+            )
+            cursor = range.upperBound
+        }
+
+        if cursor < visible.endIndex {
+            segments.append(
+                HighlightedTextSegment(
+                    text: String(visible[cursor..<visible.endIndex]),
+                    isMatch: false
+                )
+            )
+        }
+
+        return segments
+    }
+
+    static func highlightedAttributedString(from rawText: String, query rawQuery: String?) -> AttributedString {
+        let visible = visibleText(from: rawText)
+        var attributed = AttributedString(visible)
+
+        guard let query = normalizedQuery(rawQuery) else {
+            return attributed
+        }
+
+        for range in matchRanges(in: visible, query: query) {
+            guard let lowerBound = AttributedString.Index(range.lowerBound, within: attributed),
+                  let upperBound = AttributedString.Index(range.upperBound, within: attributed) else {
+                continue
+            }
+            attributed[lowerBound..<upperBound].backgroundColor = .yellow.opacity(0.35)
+        }
+
+        return attributed
+    }
+
+    static func snippet(in rawText: String, query rawQuery: String?, limit: Int = 120) -> String? {
+        guard let query = normalizedQuery(rawQuery) else { return nil }
+        let visible = visibleText(from: rawText)
+        guard let range = matchRanges(in: visible, query: query).first else { return nil }
+
+        let prefixLength = max(0, limit / 2)
+        let suffixLength = max(0, limit - prefixLength)
+        let start = visible.index(range.lowerBound, offsetBy: -prefixLength, limitedBy: visible.startIndex) ?? visible.startIndex
+        let end = visible.index(range.upperBound, offsetBy: suffixLength, limitedBy: visible.endIndex) ?? visible.endIndex
+
+        var snippet = String(visible[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if start > visible.startIndex {
+            snippet = "..." + snippet
+        }
+        if end < visible.endIndex {
+            snippet += "..."
+        }
+        return snippet
+    }
+
+    static func matchRanges(in text: String, query rawQuery: String?) -> [Range<String.Index>] {
+        guard let query = normalizedQuery(rawQuery) else { return [] }
+
+        var ranges: [Range<String.Index>] = []
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let range = text.range(
+                of: query,
+                options: [.caseInsensitive, .diacriticInsensitive],
+                range: searchStart..<text.endIndex
+              ) {
+            ranges.append(range)
+            searchStart = range.upperBound
+        }
+        return ranges
+    }
+}
+
 enum PathUtilities {
     static func displayProjectName(workspacePath: String?, fallback: String) -> String {
         guard let workspacePath, !workspacePath.isEmpty else { return fallback }
