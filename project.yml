@@ -6,6 +6,9 @@ settings:
   base:
     SWIFT_VERSION: 6.0
     MACOSX_DEPLOYMENT_TARGET: 14.0
+    VERSIONING_SYSTEM: apple-generic
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 1.00000000
 targets:
   AgentSessionManager:
     type: application
