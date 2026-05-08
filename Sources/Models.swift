@@ -549,6 +549,12 @@ extension TranscriptDocument {
         return items
     }
 
+    var chatDisplayItems: [TranscriptDisplayItem] {
+        entries
+            .filter(\.isChatMessage)
+            .map(TranscriptDisplayItem.entry)
+    }
+
     func viewerSearchResult(for rawQuery: String) -> TranscriptViewerSearchResult {
         guard let query = SearchTextMatcher.normalizedQuery(rawQuery) else {
             return TranscriptViewerSearchResult(

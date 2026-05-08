@@ -219,6 +219,33 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(entry.id, "u1")
     }
 
+    func testChatDisplayItemsExcludeInternalEvents() {
+        let transcript = TranscriptDocument(
+            sessionID: "chat-only-display",
+            sessionTitle: "Chat Only Display",
+            source: .copilotCLI,
+            rawTranscriptPath: "/tmp/chat-only-display.jsonl",
+            entries: [
+                TranscriptEntry(id: "s1", role: .system, title: "Session Started", body: nil, timestamp: nil),
+                TranscriptEntry(id: "u1", role: .user, title: "User", body: "hello", timestamp: nil),
+                TranscriptEntry(id: "t1", role: .tool, title: "Started view", body: "tool body", timestamp: nil),
+                TranscriptEntry(id: "a1", role: .assistant, title: "Assistant", body: "world", timestamp: nil)
+            ],
+            timestampsAreComplete: false,
+            timestampNotice: nil
+        )
+
+        let items = transcript.chatDisplayItems
+
+        XCTAssertEqual(items.count, 2)
+        guard case let .entry(firstEntry) = items[0],
+              case let .entry(secondEntry) = items[1] else {
+            return XCTFail("Expected only chat entries in chat display items.")
+        }
+        XCTAssertEqual(firstEntry.id, "u1")
+        XCTAssertEqual(secondEntry.id, "a1")
+    }
+
     func testSearchTextMatcherProducesHighlightedSegments() {
         let segments = SearchTextMatcher.segments(in: "Refresh the refresh flow", query: "refresh")
 

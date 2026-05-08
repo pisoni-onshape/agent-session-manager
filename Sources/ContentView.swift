@@ -583,6 +583,7 @@ private struct TranscriptViewerSheet: View {
     let initialSearchText: String
     @Environment(\.dismiss) private var dismiss
     @State private var searchText: String
+    @State private var showInternalEvents = false
 
     init(transcript: TranscriptDocument, initialSearchText: String = "") {
         self.transcript = transcript
@@ -617,9 +618,15 @@ private struct TranscriptViewerSheet: View {
                             systemImage: "text.magnifyingglass",
                             description: Text("Only user and assistant messages are searched in this view.")
                         )
+                    } else if displayedItems.isEmpty {
+                        ContentUnavailableView(
+                            "No Chat Messages",
+                            systemImage: "text.bubble",
+                            description: Text("Turn on Show internal events to inspect non-chat transcript items.")
+                        )
                     } else {
                         TranscriptTimelineView(
-                            items: searchResult.displayItems,
+                            items: displayedItems,
                             highlightQuery: searchResult.highlightQuery
                         )
                     }
@@ -665,6 +672,10 @@ private struct TranscriptViewerSheet: View {
                     }
                 }
 
+                Toggle("Show internal events", isOn: $showInternalEvents)
+                    .toggleStyle(.checkbox)
+                    .disabled(searchResult.isActive)
+
                 HStack(spacing: 10) {
                     Button("Reveal Raw File") {
                         WorkspaceLauncher.reveal(path: transcript.rawTranscriptPath)
@@ -684,13 +695,25 @@ private struct TranscriptViewerSheet: View {
         transcript.viewerSearchResult(for: searchText)
     }
 
+    private var displayedItems: [TranscriptDisplayItem] {
+        if searchResult.isActive {
+            return searchResult.displayItems
+        }
+        return showInternalEvents ? transcript.displayItems : transcript.chatDisplayItems
+    }
+
     private var itemSummary: String {
         if searchResult.isActive {
             let itemNoun = searchResult.matchingEntryCount == 1 ? "message" : "messages"
             let matchNoun = searchResult.totalMatchCount == 1 ? "match" : "matches"
             return "\(searchResult.totalMatchCount) \(matchNoun) in \(searchResult.matchingEntryCount) \(itemNoun)"
         }
-        return "\(transcript.entries.count) items"
+        if showInternalEvents {
+            return "\(transcript.entries.count) items"
+        }
+        let chatCount = transcript.chatDisplayItems.count
+        let noun = chatCount == 1 ? "chat message" : "chat messages"
+        return "\(chatCount) \(noun)"
     }
 }
 
