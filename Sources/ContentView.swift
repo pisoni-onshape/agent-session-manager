@@ -13,13 +13,20 @@ struct ContentView: View {
                 List(viewModel.displayedSessions, selection: $viewModel.selectedSessionID) { session in
                     SessionRowView(
                         session: session,
+                        isSelected: viewModel.selectedSessionID == session.id,
                         transcriptMatch: viewModel.searchMatch(for: session),
                         onOpenTranscriptMatch: {
                             openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
                         }
                     )
-                        .tag(session.id)
+                    .tag(session.id)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .underPageBackgroundColor))
                 .overlay {
                     if viewModel.shouldShowLoadingPlaceholder {
                         LoadingStateView(
@@ -388,6 +395,7 @@ private final class SearchShortcutNSView: NSView {
 
 private struct SessionRowView: View {
     let session: SessionRecord
+    let isSelected: Bool
     let transcriptMatch: TranscriptSessionSearchMatch?
     let onOpenTranscriptMatch: () -> Void
 
@@ -447,7 +455,26 @@ private struct SessionRowView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color(nsColor: .controlBackgroundColor))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    isSelected ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08),
+                    lineWidth: isSelected ? 1.2 : 1
+                )
+        }
+        .shadow(
+            color: Color.black.opacity(isSelected ? 0.12 : 0.05),
+            radius: isSelected ? 8 : 3,
+            x: 0,
+            y: 1
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func transcriptMatchLabel(_ count: Int) -> String {
