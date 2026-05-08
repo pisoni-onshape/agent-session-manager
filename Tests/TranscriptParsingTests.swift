@@ -270,7 +270,7 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(matches.first?.snippets.count, 2)
     }
 
-    func testSearchableTranscriptEntriesOnlyIncludeChatMessages() throws {
+    func testSearchableTranscriptEntriesIncludeToolBodies() throws {
         let url = try temporaryFile(
             named: "searchable.jsonl",
             contents: """
@@ -289,8 +289,38 @@ final class TranscriptParsingTests: XCTestCase {
 
         let entries = try TranscriptPreviewExtractor.searchableEntries(for: record)
 
-        XCTAssertEqual(entries.map(\.entryIndex), [0, 2])
-        XCTAssertEqual(entries.map(\.text), ["Find the terminal drag bug.", "I’ll inspect the drag target next."])
+        XCTAssertEqual(entries.map(\.entryIndex), [0, 1, 2])
+        XCTAssertEqual(
+            entries.map(\.text),
+            [
+                "Find the terminal drag bug.",
+                "view\n/tmp/file.swift",
+                "I’ll inspect the drag target next."
+            ]
+        )
+    }
+
+    func testSearchableTranscriptEntriesKeepLongToolResultContent() throws {
+        let longContent = String(repeating: "prefix ", count: 40) + "pickDefaultInferenceId" + String(repeating: " suffix", count: 40)
+        let url = try temporaryFile(
+            named: "tool-result.jsonl",
+            contents: """
+            {"type":"tool.execution_start","data":{"toolCallId":"call-1","toolName":"rg","arguments":{"pattern":"pickDefaultInferenceId"}},"id":"evt-1","timestamp":"2026-05-07T06:19:05.000Z"}
+            {"type":"tool.execution_complete","data":{"toolCallId":"call-1","success":true,"result":{"content":"\(longContent)"}},"id":"evt-2","timestamp":"2026-05-07T06:19:06.000Z"}
+            """
+        )
+
+        let record = makeRecord(
+            sessionID: "tool-result",
+            title: "Tool result transcript",
+            summary: nil,
+            rawTranscriptPath: url.path
+        )
+
+        let entries = try TranscriptPreviewExtractor.searchableEntries(for: record)
+
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertTrue(entries[1].text.contains("pickDefaultInferenceId"))
     }
 
     private func temporaryFile(named name: String, contents: String) throws -> URL {

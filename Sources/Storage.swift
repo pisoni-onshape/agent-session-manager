@@ -222,6 +222,38 @@ final class SQLiteSessionStore {
         return hits
     }
 
+    func indexedSessionIDs(for sessionIDs: [String]) throws -> Set<String> {
+        guard !sessionIDs.isEmpty else {
+            return []
+        }
+
+        let placeholders = Array(repeating: "?", count: sessionIDs.count).joined(separator: ", ")
+        let sql = """
+        SELECT DISTINCT session_id
+        FROM transcript_entries
+        WHERE session_id IN (\(placeholders));
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        for (index, sessionID) in sessionIDs.enumerated() {
+            bind(sessionID, to: statement, index: Int32(index + 1))
+        }
+
+        var indexedIDs: Set<String> = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let sessionID = string(from: statement, column: 0) {
+                indexedIDs.insert(sessionID)
+            }
+        }
+
+        return indexedIDs
+    }
+
     private func migrate() throws {
         try execute(
             """

@@ -446,18 +446,20 @@ enum TranscriptPreviewExtractor {
     }
 
     static func searchableEntries(for record: SessionRecord) throws -> [TranscriptIndexEntry] {
-        let transcript = try loadTranscript(for: record)
-        return transcript.entries.enumerated().compactMap { index, entry in
-            guard entry.isChatMessage,
-                  let body = TextSanitizer.clean(entry.body) else {
-                return nil
-            }
+        guard let transcriptPath = record.rawTranscriptPath else {
+            throw TranscriptLoadingError.transcriptUnavailable
+        }
 
-            return TranscriptIndexEntry(
-                sessionRecordID: record.id,
-                entryIndex: index,
-                text: body
-            )
+        let url = URL(fileURLWithPath: transcriptPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw TranscriptLoadingError.transcriptUnreadable(url.path)
+        }
+
+        switch record.source {
+        case .copilotCLI, .vscodeCopilot:
+            return try extractEventTranscriptSearchableEntries(from: url, sessionRecordID: record.id)
+        case .cursor:
+            return try extractCursorTranscriptSearchableEntries(from: url, sessionRecordID: record.id)
         }
     }
 
@@ -650,6 +652,75 @@ enum TranscriptPreviewExtractor {
         )
     }
 
+    private static func extractEventTranscriptSearchableEntries(
+        from url: URL,
+        sessionRecordID: String
+    ) throws -> [TranscriptIndexEntry] {
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        var toolNamesByCallID: [String: String] = [:]
+        var entries: [TranscriptIndexEntry] = []
+
+        for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
+            guard let data = line.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = object["type"] as? String else {
+                continue
+            }
+
+            let payload = object["data"] as? [String: Any]
+            if type == "tool.execution_start",
+               let toolCallId = payload?["toolCallId"] as? String,
+               let toolName = payload?["toolName"] as? String {
+                toolNamesByCallID[toolCallId] = toolName
+            }
+
+            guard let text = searchableEventText(
+                type: type,
+                payload: payload,
+                toolNamesByCallID: toolNamesByCallID
+            ) else {
+                continue
+            }
+
+            entries.append(
+                TranscriptIndexEntry(
+                    sessionRecordID: sessionRecordID,
+                    entryIndex: index,
+                    text: text
+                )
+            )
+        }
+
+        return entries
+    }
+
+    private static func extractCursorTranscriptSearchableEntries(
+        from url: URL,
+        sessionRecordID: String
+    ) throws -> [TranscriptIndexEntry] {
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        var entries: [TranscriptIndexEntry] = []
+
+        for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
+            guard let data = line.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let text = extractCursorText(from: object),
+                  !text.isEmpty else {
+                continue
+            }
+
+            entries.append(
+                TranscriptIndexEntry(
+                    sessionRecordID: sessionRecordID,
+                    entryIndex: index,
+                    text: text
+                )
+            )
+        }
+
+        return entries
+    }
+
     static func extractMarkdownSummary(from url: URL) throws -> String? {
         let text = try String(contentsOf: url, encoding: .utf8)
         let cleaned = text
@@ -774,6 +845,37 @@ enum TranscriptPreviewExtractor {
         }
     }
 
+    private static func searchableEventText(
+        type: String,
+        payload: [String: Any]?,
+        toolNamesByCallID: [String: String]
+    ) -> String? {
+        switch type {
+        case "user.message", "assistant.message":
+            return TextSanitizer.clean(payload?["content"] as? String)
+        case "session.model_change":
+            return normalizeModelIdentifier(payload?["newModel"] as? String)
+        case "session.info":
+            return TextSanitizer.clean(payload?["message"] as? String)
+        case "tool.execution_start":
+            let toolName = payload?["toolName"] as? String
+            let details = flattenedSearchText(from: payload?["arguments"])
+            return combinedSearchText(parts: [toolName, details])
+        case "tool.execution_complete":
+            let toolCallId = payload?["toolCallId"] as? String
+            let toolName = toolCallId.flatMap { toolNamesByCallID[$0] }
+            let details = combinedSearchText(
+                parts: [
+                    flattenedSearchText(from: payload?["result"]),
+                    TextSanitizer.clean(payload?["error"] as? String)
+                ]
+            )
+            return combinedSearchText(parts: [toolName, details])
+        default:
+            return nil
+        }
+    }
+
     private static func eventTimestamp(in object: [String: Any], payload: [String: Any]?) -> Date? {
         ISO8601DateCoding.parse(object["timestamp"] as? String)
             ?? ISO8601DateCoding.parse(payload?["startTime"] as? String)
@@ -834,6 +936,42 @@ enum TranscriptPreviewExtractor {
         }
 
         return nil
+    }
+
+    private static func flattenedSearchText(from value: Any?) -> String? {
+        let flattened = flattenedSearchStrings(from: value)
+        guard !flattened.isEmpty else { return nil }
+        return combinedSearchText(parts: flattened.map { Optional($0) })
+    }
+
+    private static func flattenedSearchStrings(from value: Any?) -> [String] {
+        switch value {
+        case let string as String:
+            return TextSanitizer.clean(SearchTextMatcher.visibleText(from: string)).map { [$0] } ?? []
+        case let array as [Any]:
+            return array.flatMap(flattenedSearchStrings)
+        case let dictionary as [String: Any]:
+            return dictionary.keys.sorted().flatMap { key in
+                flattenedSearchStrings(from: dictionary[key])
+            }
+        default:
+            return []
+        }
+    }
+
+    private static func combinedSearchText(parts: [String?]) -> String? {
+        var normalizedParts: [String] = []
+        for part in parts {
+            guard let cleaned = TextSanitizer.clean(part),
+                  !cleaned.isEmpty else {
+                continue
+            }
+            normalizedParts.append(cleaned)
+        }
+        guard !normalizedParts.isEmpty else {
+            return nil
+        }
+        return normalizedParts.joined(separator: "\n")
     }
 }
 

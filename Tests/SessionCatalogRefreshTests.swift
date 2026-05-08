@@ -101,6 +101,44 @@ final class SessionCatalogRefreshTests: XCTestCase {
         XCTAssertEqual(Set(transcriptHits.map(\.sessionRecordID)), [changedNewRecord.id])
     }
 
+    func testIncrementalRefreshBackfillsMissingTranscriptIndexForUnchangedSession() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        let record = try makeRecord(
+            sessionID: "unchanged",
+            title: "Unchanged",
+            fingerprint: "same",
+            directory: directory,
+            transcriptText: "pickDefaultInferenceId should be indexed."
+        )
+        try store.replaceAll(records: [record])
+
+        var parseCount = 0
+        let adapter = FakeSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: record.id,
+                    fingerprint: record.fingerprint,
+                    loadRecord: {
+                        parseCount += 1
+                        return record
+                    }
+                )
+            ]
+        )
+
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        _ = try catalog.refreshSessions()
+
+        let hits = try store.searchTranscriptEntries(sessionIDs: [record.id], query: "pickDefaultInferenceId")
+
+        XCTAssertEqual(parseCount, 1)
+        XCTAssertEqual(hits.map(\.sessionRecordID), [record.id])
+    }
+
     private func makeRecord(
         sessionID: String,
         title: String,

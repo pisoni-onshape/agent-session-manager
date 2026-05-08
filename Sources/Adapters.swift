@@ -44,6 +44,7 @@ final class SessionCatalog {
     func refreshSessions() throws -> [SessionRecord] {
         let existingRecords = try store.fetchAll()
         let existingByID = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.id, $0) })
+        let indexedSessionIDs = try store.indexedSessionIDs(for: Array(existingByID.keys))
         let candidates = try adapters.flatMap { try $0.scanCandidates() }
 
         var refreshedRecordsByID: [String: SessionRecord] = [:]
@@ -52,7 +53,8 @@ final class SessionCatalog {
 
         for candidate in candidates {
             if let existingRecord = existingByID[candidate.id],
-               existingRecord.fingerprint == candidate.fingerprint {
+               existingRecord.fingerprint == candidate.fingerprint,
+               indexedSessionIDs.contains(candidate.id) {
                 refreshedRecordsByID[candidate.id] = existingRecord
                 continue
             }
@@ -61,6 +63,8 @@ final class SessionCatalog {
                 refreshedRecordsByID[record.id] = record
                 changedRecords.append(record)
                 transcriptEntriesBySessionID[record.id] = try TranscriptPreviewExtractor.searchableEntries(for: record)
+            } else if let existingRecord = existingByID[candidate.id] {
+                refreshedRecordsByID[candidate.id] = existingRecord
             }
         }
 
