@@ -7,6 +7,10 @@ enum AppPaths {
         return base.appendingPathComponent("AgentSessionManager", isDirectory: true)
     }
 
+    static var catalogDirectoryURL: URL {
+        catalogDatabaseURL.deletingLastPathComponent()
+    }
+
     static var catalogDatabaseURL: URL {
         applicationSupportDirectory.appendingPathComponent("catalog.sqlite3")
     }

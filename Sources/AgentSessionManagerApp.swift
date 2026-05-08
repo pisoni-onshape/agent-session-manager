@@ -26,6 +26,10 @@ struct AgentSessionManagerApp: App {
 
                 Divider()
 
+                Button("Open Index Folder") {
+                    WorkspaceLauncher.openDocument(path: AppPaths.catalogDirectoryURL.path)
+                }
+
                 Button("Rebuild Session Index") {
                     Task { await viewModel.rebuildSessions() }
                 }
