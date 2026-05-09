@@ -245,6 +245,19 @@ final class SessionBrowserViewModel: ObservableObject {
         }
     }
 
+    func canStartNewConversation(for record: SessionRecord) -> Bool {
+        record.workspacePath != nil
+    }
+
+    func startNewConversation(for record: SessionRecord) {
+        do {
+            try WorkspaceLauncher.startNewConversation(in: record.workspacePath)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func copySessionID(_ record: SessionRecord) {
         WorkspaceLauncher.copyToPasteboard(record.sourceSessionId)
     }

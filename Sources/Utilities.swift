@@ -284,6 +284,19 @@ enum WorkspaceLauncher {
         }
     }
 
+    static func startNewConversation(in workingDirectory: String?) throws {
+        guard let workingDirectory else {
+            throw NSError(domain: "WorkspaceLauncher", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "This session does not include a project workspace path."
+            ])
+        }
+
+        try runTerminalCommand(
+            copilotNewConversationCommand(workingDirectory: workingDirectory),
+            failureDescription: "Terminal failed to launch a new Copilot conversation."
+        )
+    }
+
     static func reveal(path: String?) {
         guard let path else { return }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -309,14 +322,29 @@ enum WorkspaceLauncher {
         return components.joined(separator: " && ")
     }
 
+    static func copilotNewConversationCommand(workingDirectory: String) -> String {
+        "cd \(shellQuote(workingDirectory)) && copilot"
+    }
+
     private static func resumeCopilotCLI(sessionId: String, workingDirectory: String?) throws {
+        let shellCommand = copilotResumeShellCommand(sessionId: sessionId, workingDirectory: workingDirectory)
+
+        try runTerminalCommand(
+            shellCommand,
+            failureDescription: "Terminal failed to launch the Copilot resume command."
+        )
+    }
+
+    private static func copilotResumeShellCommand(sessionId: String, workingDirectory: String?) -> String {
         var commandComponents: [String] = []
         if let workingDirectory {
             commandComponents.append("cd \(shellQuote(workingDirectory))")
         }
         commandComponents.append("copilot --resume \(shellQuote(sessionId))")
-        let shellCommand = commandComponents.joined(separator: " && ")
+        return commandComponents.joined(separator: " && ")
+    }
 
+    private static func runTerminalCommand(_ shellCommand: String, failureDescription: String) throws {
         let script = """
         tell application "Terminal"
           activate
@@ -331,7 +359,7 @@ enum WorkspaceLauncher {
         process.waitUntilExit()
         if process.terminationStatus != 0 {
             throw NSError(domain: "WorkspaceLauncher", code: Int(process.terminationStatus), userInfo: [
-                NSLocalizedDescriptionKey: "Terminal failed to launch the Copilot resume command."
+                NSLocalizedDescriptionKey: failureDescription
             ])
         }
     }

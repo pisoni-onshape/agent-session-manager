@@ -509,36 +509,84 @@ private struct SessionDetailView: View {
 
     private var actionBar: some View {
         HStack(spacing: 12) {
-            Button(viewModel.primaryActionLabel(for: session)) {
+            Button {
                 viewModel.performPrimaryAction(for: session)
+            } label: {
+                Label(viewModel.primaryActionLabel(for: session), systemImage: primaryActionSystemImageName)
             }
             .buttonStyle(.borderedProminent)
+            .help(primaryActionHelpText)
 
-            Button("Copy Session ID") {
-                viewModel.copySessionID(session)
-            }
-
-            if session.relatedPlanPath != nil {
-                Button("Open Plan") {
-                    viewModel.openPlan(for: session)
+            if viewModel.canStartNewConversation(for: session) {
+                Button {
+                    viewModel.startNewConversation(for: session)
+                } label: {
+                    Label("New Chat", systemImage: "plus.bubble")
                 }
+                .help("Start a fresh Copilot CLI conversation in this project's workspace.")
             }
 
-            Button("View Transcript") {
+            Button {
                 onOpenTranscript()
+            } label: {
+                Label("Transcript", systemImage: "text.bubble")
             }
             .disabled(session.rawTranscriptPath == nil)
+            .help("Open the transcript viewer for this session.")
 
-            if session.source == .copilotCLI {
-                Button("Copy Resume Command") {
-                    viewModel.copyPrimaryCommand(session)
+            Menu {
+                Button("Copy Session ID") {
+                    viewModel.copySessionID(session)
                 }
-            }
 
-            Button("Reveal Raw File") {
-                viewModel.revealTranscript(for: session)
+                if session.relatedPlanPath != nil {
+                    Button("Open Plan") {
+                        viewModel.openPlan(for: session)
+                    }
+                }
+
+                if session.source == .copilotCLI {
+                    Button("Copy Resume Command") {
+                        viewModel.copyPrimaryCommand(session)
+                    }
+                }
+
+                Button("Reveal Raw File") {
+                    viewModel.revealTranscript(for: session)
+                }
+                .disabled(session.rawTranscriptPath == nil && session.rawMetadataPath == nil)
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
             }
-            .disabled(session.rawTranscriptPath == nil && session.rawMetadataPath == nil)
+            .help("Open less-common session actions.")
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var primaryActionSystemImageName: String {
+        switch session.resumeKind {
+        case .copilotConnect:
+            return "play.circle"
+        case .openInCursor:
+            return "cursorarrow.rays"
+        case .openInVSCode:
+            return "chevron.left.forwardslash.chevron.right"
+        case .revealPath:
+            return "folder"
+        }
+    }
+
+    private var primaryActionHelpText: String {
+        switch session.resumeKind {
+        case .copilotConnect:
+            return "Resume this Copilot CLI conversation."
+        case .openInCursor:
+            return "Open this workspace in Cursor."
+        case .openInVSCode:
+            return "Open this workspace in VS Code."
+        case .revealPath:
+            return "Reveal the stored session files in Finder."
         }
     }
 
