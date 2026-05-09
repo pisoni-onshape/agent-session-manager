@@ -64,7 +64,7 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
 - The app now stores its own **local-only starred session preferences** alongside the catalog so stars survive refreshes and app relaunches without modifying the original session sources.
 - The app now runs an **incremental refresh automatically on launch** and the main **Refresh** button uses that same incremental path.
 - Incremental refresh still scans the source directories, but it only reparses sessions whose transcript/metadata files changed and only upserts/deletes affected rows in SQLite, including the persisted transcript search index.
-- The main session browser now exposes first-class **Open Plan**, persistent metadata **copy buttons**, and a **Starred / Unstarred / All** filter with starred sessions grouped ahead of unstarred ones.
+- The main session browser now exposes first-class **Open Plan**, persistent metadata **copy buttons**, a **Starred / Unstarred / All** filter with starred sessions grouped ahead of unstarred ones, wider multi-row **Project/Branch** filters, and the conversation **workspace path** directly in metadata.
 - The main toolbar search supports the existing metadata labels plus a new **`transcript:`** label for transcript-only matching; unlabeled searches can match either metadata or indexed transcript text.
 - **Catalog** menu actions now include **Open Index Folder** for quickly revealing the directory that contains `catalog.sqlite3`.
 - A **Rebuild Session Index** command remains available under the **Catalog** menu as a recovery/debug path.

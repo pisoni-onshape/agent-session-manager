@@ -215,6 +215,22 @@ enum PathUtilities {
         return URL(fileURLWithPath: workspacePath).lastPathComponent
     }
 
+    static func cursorFallbackProjectName(from encodedDirectoryName: String) -> String {
+        let knownPrefixes = [
+            "Users-pisoni-repos-",
+            "Users-pisoni-Development-LocalProjects-"
+        ]
+
+        for prefix in knownPrefixes where encodedDirectoryName.hasPrefix(prefix) {
+            let suffix = encodedDirectoryName.dropFirst(prefix.count)
+            if !suffix.isEmpty {
+                return String(suffix)
+            }
+        }
+
+        return encodedDirectoryName
+    }
+
     static func isNewtonProject(_ workspacePath: String?) -> Bool {
         guard let workspacePath else { return false }
         let normalized = workspacePath.lowercased()

@@ -214,43 +214,50 @@ struct ContentView: View {
                         )
                     }
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                FilterMenuChip(
-                    title: "Project",
-                    valueText: viewModel.filters.selectedProject == SessionFilterState.allProjectsToken ? "All Projects" : viewModel.filters.selectedProject,
-                    systemImage: "folder",
-                    isActive: viewModel.filters.hasCustomProjectSelection,
-                    items: viewModel.availableProjects.map { project in
-                        let isDefault = project == SessionFilterState.allProjectsToken
-                        let title = isDefault ? "All Projects" : project
-                        return FilterMenuItem(
-                            id: project,
-                            title: title,
-                            isSelected: viewModel.filters.selectedProject == project,
-                            highlightsSelection: !isDefault,
-                            action: { viewModel.filters.selectedProject = project }
-                        )
-                    }
-                )
-
-                FilterMenuChip(
-                    title: "Branch",
-                    valueText: viewModel.filters.selectedBranch == SessionFilterState.allBranchesToken ? "All Branches" : viewModel.filters.selectedBranch,
-                    systemImage: "arrow.triangle.branch",
-                    isActive: viewModel.filters.hasCustomBranchSelection,
-                    items: viewModel.availableBranches.map { branch in
-                        let isDefault = branch == SessionFilterState.allBranchesToken
-                        let title = isDefault ? "All Branches" : branch
-                        return FilterMenuItem(
-                            id: branch,
-                            title: title,
-                            isSelected: viewModel.filters.selectedBranch == branch,
-                            highlightsSelection: !isDefault,
-                            action: { viewModel.filters.selectedBranch = branch }
-                        )
-                    }
-                )
+                Toggle("newton* only", isOn: $viewModel.filters.newtonOnly)
+                    .toggleStyle(.switch)
+                    .fixedSize()
             }
+
+            FilterMenuChip(
+                title: "Project",
+                valueText: viewModel.filters.selectedProject == SessionFilterState.allProjectsToken ? "All Projects" : viewModel.filters.selectedProject,
+                systemImage: "folder",
+                isActive: viewModel.filters.hasCustomProjectSelection,
+                prominence: .expanded,
+                items: viewModel.availableProjects.map { project in
+                    let isDefault = project == SessionFilterState.allProjectsToken
+                    let title = isDefault ? "All Projects" : project
+                    return FilterMenuItem(
+                        id: project,
+                        title: title,
+                        isSelected: viewModel.filters.selectedProject == project,
+                        highlightsSelection: !isDefault,
+                        action: { viewModel.filters.selectedProject = project }
+                    )
+                }
+            )
+
+            FilterMenuChip(
+                title: "Branch",
+                valueText: viewModel.filters.selectedBranch == SessionFilterState.allBranchesToken ? "All Branches" : viewModel.filters.selectedBranch,
+                systemImage: "arrow.triangle.branch",
+                isActive: viewModel.filters.hasCustomBranchSelection,
+                prominence: .expanded,
+                items: viewModel.availableBranches.map { branch in
+                    let isDefault = branch == SessionFilterState.allBranchesToken
+                    let title = isDefault ? "All Branches" : branch
+                    return FilterMenuItem(
+                        id: branch,
+                        title: title,
+                        isSelected: viewModel.filters.selectedBranch == branch,
+                        highlightsSelection: !isDefault,
+                        action: { viewModel.filters.selectedBranch = branch }
+                    )
+                }
+            )
 
             HStack(spacing: 10) {
                 FilterMenuChip(
@@ -268,11 +275,7 @@ struct ContentView: View {
                         )
                     }
                 )
-
-                Toggle("newton* only", isOn: $viewModel.filters.newtonOnly)
-                    .toggleStyle(.switch)
-
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 FilterMenuChip(
                     title: "Sort",
@@ -289,6 +292,7 @@ struct ContentView: View {
                         )
                     }
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(16)
@@ -682,6 +686,7 @@ private struct SessionDetailView: View {
                 metadataRow(title: "Source", value: session.source.displayName, copyValue: session.source.displayName)
                 metadataRow(title: "Session ID", value: session.sourceSessionId, copyValue: session.sourceSessionId)
                 metadataRow(title: "Project", value: session.projectName, copyValue: session.projectName)
+                metadataRow(title: "Workspace", value: session.workspacePath ?? "—", copyValue: session.workspacePath)
                 metadataRow(title: "Branch", value: session.branch ?? "—", copyValue: session.branch)
                 metadataRow(title: "Model", value: session.conversationModel ?? "—", copyValue: session.conversationModel)
                 metadataRow(
@@ -757,11 +762,17 @@ private struct FilterMenuItem: Identifiable {
     let action: () -> Void
 }
 
+private enum FilterMenuChipProminence {
+    case compact
+    case expanded
+}
+
 private struct FilterMenuChip: View {
     let title: String
     let valueText: String
     let systemImage: String
     let isActive: Bool
+    var prominence: FilterMenuChipProminence = .compact
     let items: [FilterMenuItem]
 
     var body: some View {
@@ -786,25 +797,28 @@ private struct FilterMenuChip: View {
                     .imageScale(.small)
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: prominence == .expanded ? 2 : 1) {
                     Text(valueText)
-                        .font(.callout.weight(.semibold))
+                        .font(valueFont)
                         .foregroundStyle(isActive ? Color.accentColor : Color.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
 
                     Text(title)
-                        .font(.caption2)
+                        .font(titleFont)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+
+                Spacer(minLength: 0)
 
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, verticalPadding)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(isActive ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.08))
@@ -815,6 +829,33 @@ private struct FilterMenuChip: View {
             }
         }
         .menuStyle(.borderlessButton)
+    }
+
+    private var valueFont: Font {
+        switch prominence {
+        case .compact:
+            return .callout.weight(.semibold)
+        case .expanded:
+            return .body.weight(.semibold)
+        }
+    }
+
+    private var titleFont: Font {
+        switch prominence {
+        case .compact:
+            return .caption2
+        case .expanded:
+            return .caption
+        }
+    }
+
+    private var verticalPadding: CGFloat {
+        switch prominence {
+        case .compact:
+            return 8
+        case .expanded:
+            return 10
+        }
     }
 }
 

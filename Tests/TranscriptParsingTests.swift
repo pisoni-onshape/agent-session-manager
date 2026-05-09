@@ -122,6 +122,24 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(sorted.map(\.sourceSessionId), ["starred", "unstarred"])
     }
 
+    func testCursorFallbackProjectNamePreservesKnownProjectName() {
+        XCTAssertEqual(
+            PathUtilities.cursorFallbackProjectName(from: "Users-pisoni-repos-newton-env-manager"),
+            "newton-env-manager"
+        )
+        XCTAssertEqual(
+            PathUtilities.cursorFallbackProjectName(from: "Users-pisoni-Development-LocalProjects-agent-session-manager"),
+            "agent-session-manager"
+        )
+    }
+
+    func testCursorFallbackProjectNameDoesNotInventSlashSeparatedPseudoPath() {
+        XCTAssertEqual(
+            PathUtilities.cursorFallbackProjectName(from: "some-arbitrary-encoded-project-name"),
+            "some-arbitrary-encoded-project-name"
+        )
+    }
+
     func testEventTranscriptExtractionFindsSessionAndPreview() throws {
         let url = try temporaryFile(
             named: "event.jsonl",

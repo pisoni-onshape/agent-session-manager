@@ -230,7 +230,7 @@ struct CursorAdapter: SessionSourceAdapter {
             guard FileManager.default.fileExists(atPath: transcriptRoot.path) else { return [] }
 
             let workspacePath = PathUtilities.decodeCursorWorkspacePath(from: projectDirectory.lastPathComponent)
-            let fallbackProjectName = projectDirectory.lastPathComponent.replacingOccurrences(of: "-", with: "/")
+            let fallbackProjectName = PathUtilities.cursorFallbackProjectName(from: projectDirectory.lastPathComponent)
             let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName)
 
             let sessionDirectories = try FileManager.default.contentsOfDirectory(at: transcriptRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
