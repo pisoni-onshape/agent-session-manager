@@ -66,6 +66,62 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertTrue(matches)
     }
 
+    func testScopeFiltersRespectStarredState() {
+        let starred = makeRecord(sessionID: "starred", title: "Starred Session", summary: nil)
+        let unstarred = makeRecord(sessionID: "plain", title: "Plain Session", summary: nil)
+
+        var filters = SessionFilterState()
+        filters.starFilter = .starred
+        XCTAssertEqual(
+            SessionFilterEvaluator
+                .applyScopeFilters([starred, unstarred], filters: filters, starredSessionIDs: [starred.id])
+                .map(\.sourceSessionId),
+            ["starred"]
+        )
+
+        filters.starFilter = .unstarred
+        XCTAssertEqual(
+            SessionFilterEvaluator
+                .applyScopeFilters([starred, unstarred], filters: filters, starredSessionIDs: [starred.id])
+                .map(\.sourceSessionId)
+                .sorted(),
+            ["plain"]
+        )
+    }
+
+    func testSessionListOrderingKeepsStarredSessionsAtTop() {
+        let olderStarred = makeRecord(sessionID: "starred", title: "Zebra", summary: nil)
+        let newerUnstarred = SessionRecord(
+            source: .copilotCLI,
+            sourceSessionId: "unstarred",
+            workspacePath: "/Users/pisoni/Development/LocalProjects/agent-session-manager",
+            projectName: "agent-session-manager",
+            branch: "main",
+            conversationModel: "gpt-5.4",
+            startedAt: ISO8601DateCoding.parse("2026-05-07T06:18:14.516Z"),
+            updatedAt: ISO8601DateCoding.parse("2026-05-08T06:30:14.516Z"),
+            title: "Alpha",
+            summary: nil,
+            firstUserPreview: "Prompt",
+            firstAssistantPreview: "Response",
+            rawTranscriptPath: "/tmp/test.jsonl",
+            rawMetadataPath: nil,
+            relatedPlanPath: nil,
+            fingerprint: "fingerprint-unstarred",
+            resumeKind: .copilotConnect,
+            resumePayload: "unstarred",
+            isNewtonProject: false
+        )
+
+        let sorted = SessionListOrdering.sort(
+            [newerUnstarred, olderStarred],
+            filters: SessionFilterState(),
+            starredSessionIDs: [olderStarred.id]
+        )
+
+        XCTAssertEqual(sorted.map(\.sourceSessionId), ["starred", "unstarred"])
+    }
+
     func testEventTranscriptExtractionFindsSessionAndPreview() throws {
         let url = try temporaryFile(
             named: "event.jsonl",

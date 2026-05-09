@@ -139,6 +139,48 @@ final class SessionCatalogRefreshTests: XCTestCase {
         XCTAssertEqual(hits.map(\.sessionRecordID), [record.id])
     }
 
+    func testIncrementalRefreshPreservesStarredPreferences() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        let original = try makeRecord(
+            sessionID: "starred",
+            title: "Original",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Original transcript contents."
+        )
+        try store.replaceAll(
+            records: [original],
+            transcriptEntriesBySessionID: [original.id: try TranscriptPreviewExtractor.searchableEntries(for: original)]
+        )
+        try store.setSessionStarred(true, for: original.id)
+
+        let refreshed = try makeRecord(
+            sessionID: "starred",
+            title: "Updated",
+            fingerprint: "v2",
+            directory: directory,
+            transcriptText: "Updated transcript contents."
+        )
+        let adapter = FakeSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: original.id,
+                    fingerprint: refreshed.fingerprint,
+                    loadRecord: { refreshed }
+                )
+            ]
+        )
+
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        _ = try catalog.refreshSessions()
+
+        XCTAssertEqual(try catalog.starredSessionIDs(), Set([original.id]))
+    }
+
     private func makeRecord(
         sessionID: String,
         title: String,

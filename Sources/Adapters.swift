@@ -37,6 +37,14 @@ final class SessionCatalog {
         try store.fetchAll()
     }
 
+    func starredSessionIDs() throws -> Set<String> {
+        try store.fetchStarredSessionIDs()
+    }
+
+    func setSessionStarred(_ isStarred: Bool, for sessionID: String) throws {
+        try store.setSessionStarred(isStarred, for: sessionID)
+    }
+
     func searchTranscriptIndex(sessionIDs: [String], query: String) throws -> [TranscriptIndexSearchHit] {
         try store.searchTranscriptEntries(sessionIDs: sessionIDs, query: query)
     }

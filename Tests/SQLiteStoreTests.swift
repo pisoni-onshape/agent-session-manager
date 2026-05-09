@@ -95,6 +95,30 @@ final class SQLiteStoreTests: XCTestCase {
         XCTAssertEqual(hits.map(\.entryIndex), [0, 1])
     }
 
+    func testStarredSessionPreferencesPersistAcrossStoreReloads() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+        let record = makeRecord(sessionID: "session-1", title: "Star me", fingerprint: "v1")
+
+        do {
+            let store = try SQLiteSessionStore(databaseURL: databaseURL)
+            try store.replaceAll(records: [record])
+            try store.setSessionStarred(true, for: record.id)
+        }
+
+        do {
+            let reopenedStore = try SQLiteSessionStore(databaseURL: databaseURL)
+            XCTAssertEqual(try reopenedStore.fetchStarredSessionIDs(), Set([record.id]))
+
+            try reopenedStore.replaceAll(records: [record])
+            XCTAssertEqual(try reopenedStore.fetchStarredSessionIDs(), Set([record.id]))
+
+            try reopenedStore.setSessionStarred(false, for: record.id)
+            XCTAssertTrue(try reopenedStore.fetchStarredSessionIDs().isEmpty)
+        }
+    }
+
     private func makeRecord(sessionID: String, title: String, fingerprint: String) -> SessionRecord {
         SessionRecord(
             source: .copilotCLI,

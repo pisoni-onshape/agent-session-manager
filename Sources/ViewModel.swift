@@ -7,7 +7,11 @@ enum RefreshActivity: Equatable {
 }
 
 enum SessionFilterEvaluator {
-    static func applyScopeFilters(_ sessions: [SessionRecord], filters: SessionFilterState) -> [SessionRecord] {
+    static func applyScopeFilters(
+        _ sessions: [SessionRecord],
+        filters: SessionFilterState,
+        starredSessionIDs: Set<String> = []
+    ) -> [SessionRecord] {
         sessions.filter { record in
             if let source = filters.selectedSource, record.source != source {
                 return false
@@ -17,6 +21,18 @@ enum SessionFilterEvaluator {
             }
             if filters.selectedBranch != SessionFilterState.allBranchesToken, record.branch != filters.selectedBranch {
                 return false
+            }
+            switch filters.starFilter {
+            case .all:
+                break
+            case .starred:
+                guard starredSessionIDs.contains(record.id) else {
+                    return false
+                }
+            case .unstarred:
+                guard !starredSessionIDs.contains(record.id) else {
+                    return false
+                }
             }
             if filters.newtonOnly, !record.isNewtonProject {
                 return false
@@ -46,9 +62,73 @@ enum SessionFilterEvaluator {
     }
 }
 
+enum SessionListOrdering {
+    static func sort(
+        _ sessions: [SessionRecord],
+        filters: SessionFilterState,
+        starredSessionIDs: Set<String>
+    ) -> [SessionRecord] {
+        sessions.sorted { lhs, rhs in
+            compare(lhs, rhs, filters: filters, starredSessionIDs: starredSessionIDs)
+        }
+    }
+
+    private static func compare(
+        _ lhs: SessionRecord,
+        _ rhs: SessionRecord,
+        filters: SessionFilterState,
+        starredSessionIDs: Set<String>
+    ) -> Bool {
+        let lhsIsStarred = starredSessionIDs.contains(lhs.id)
+        let rhsIsStarred = starredSessionIDs.contains(rhs.id)
+        if lhsIsStarred != rhsIsStarred {
+            return lhsIsStarred && !rhsIsStarred
+        }
+
+        switch filters.sortMode {
+        case .recentlyUpdated:
+            return compareDates(lhs.updatedAt ?? lhs.startedAt, rhs.updatedAt ?? rhs.startedAt, fallback: {
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            })
+        case .startedAt:
+            return compareDates(lhs.startedAt, rhs.startedAt, fallback: {
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            })
+        case .project:
+            if lhs.projectName != rhs.projectName {
+                return lhs.projectName.localizedCaseInsensitiveCompare(rhs.projectName) == .orderedAscending
+            }
+            return compareDates(lhs.updatedAt ?? lhs.startedAt, rhs.updatedAt ?? rhs.startedAt, fallback: {
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            })
+        case .source:
+            if lhs.source.displayName != rhs.source.displayName {
+                return lhs.source.displayName.localizedCaseInsensitiveCompare(rhs.source.displayName) == .orderedAscending
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        case .title:
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    private static func compareDates(_ lhs: Date?, _ rhs: Date?, fallback: () -> Bool) -> Bool {
+        switch (lhs, rhs) {
+        case let (left?, right?) where left != right:
+            return left > right
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            return fallback()
+        }
+    }
+}
+
 @MainActor
 final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var allSessions: [SessionRecord] = []
+    @Published private(set) var starredSessionIDs: Set<String> = []
     @Published var filters = SessionFilterState() {
         didSet {
             scheduleSearch()
@@ -86,6 +166,7 @@ final class SessionBrowserViewModel: ObservableObject {
             return
         }
         do {
+            starredSessionIDs = try catalog.starredSessionIDs()
             let persisted = try catalog.loadPersistedSessions()
             applySessions(persisted)
             lastRefreshDate = catalogModifiedDate()
@@ -150,13 +231,15 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     var displayedSessions: [SessionRecord] {
-        SessionSearchEvaluator
-            .filterSessions(
+        SessionListOrdering.sort(
+            SessionSearchEvaluator.filterSessions(
                 scopeFilteredSessions,
                 parsedQuery: parsedSearchQuery,
                 transcriptSessionIDsByQuery: searchState.sessionIDsByQuery
-            )
-            .sorted(by: sort(lhs:rhs:))
+            ),
+            filters: filters,
+            starredSessionIDs: starredSessionIDs
+        )
     }
 
     var selectedSession: SessionRecord? {
@@ -258,8 +341,8 @@ final class SessionBrowserViewModel: ObservableObject {
         }
     }
 
-    func copySessionID(_ record: SessionRecord) {
-        WorkspaceLauncher.copyToPasteboard(record.sourceSessionId)
+    func copyToClipboard(_ value: String) {
+        WorkspaceLauncher.copyToPasteboard(value)
     }
 
     func copyPrimaryCommand(_ record: SessionRecord) {
@@ -294,6 +377,28 @@ final class SessionBrowserViewModel: ObservableObject {
         WorkspaceLauncher.openDocument(path: record.relatedPlanPath)
     }
 
+    func isStarred(_ record: SessionRecord) -> Bool {
+        starredSessionIDs.contains(record.id)
+    }
+
+    func toggleStar(for record: SessionRecord) {
+        let updatedValue = !isStarred(record)
+
+        do {
+            try catalogOrThrow().setSessionStarred(updatedValue, for: record.id)
+            var updatedStarredSessionIDs = starredSessionIDs
+            if updatedValue {
+                updatedStarredSessionIDs.insert(record.id)
+            } else {
+                updatedStarredSessionIDs.remove(record.id)
+            }
+            starredSessionIDs = updatedStarredSessionIDs
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func applySessions(_ sessions: [SessionRecord]) {
         allSessions = sessions
         if selectedSessionID == nil || !sessions.contains(where: { $0.id == selectedSessionID }) {
@@ -302,53 +407,17 @@ final class SessionBrowserViewModel: ObservableObject {
         scheduleSearch()
     }
 
-    private func sort(lhs: SessionRecord, rhs: SessionRecord) -> Bool {
-        switch filters.sortMode {
-        case .recentlyUpdated:
-            return compareDates(lhs.updatedAt ?? lhs.startedAt, rhs.updatedAt ?? rhs.startedAt, fallback: {
-                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            })
-        case .startedAt:
-            return compareDates(lhs.startedAt, rhs.startedAt, fallback: {
-                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            })
-        case .project:
-            if lhs.projectName != rhs.projectName {
-                return lhs.projectName.localizedCaseInsensitiveCompare(rhs.projectName) == .orderedAscending
-            }
-            return compareDates(lhs.updatedAt ?? lhs.startedAt, rhs.updatedAt ?? rhs.startedAt, fallback: {
-                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            })
-        case .source:
-            if lhs.source.displayName != rhs.source.displayName {
-                return lhs.source.displayName.localizedCaseInsensitiveCompare(rhs.source.displayName) == .orderedAscending
-            }
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-        case .title:
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-        }
-    }
-
-    private func compareDates(_ lhs: Date?, _ rhs: Date?, fallback: () -> Bool) -> Bool {
-        switch (lhs, rhs) {
-        case let (left?, right?) where left != right:
-            return left > right
-        case (_?, nil):
-            return true
-        case (nil, _?):
-            return false
-        default:
-            return fallback()
-        }
-    }
-
     private func catalogModifiedDate() -> Date? {
         let attributes = try? FileManager.default.attributesOfItem(atPath: AppPaths.catalogDatabaseURL.path)
         return attributes?[.modificationDate] as? Date
     }
 
     private var scopeFilteredSessions: [SessionRecord] {
-        SessionFilterEvaluator.applyScopeFilters(allSessions, filters: filters)
+        SessionFilterEvaluator.applyScopeFilters(
+            allSessions,
+            filters: filters,
+            starredSessionIDs: starredSessionIDs
+        )
     }
 
     private var parsedSearchQuery: ParsedSessionSearchQuery {

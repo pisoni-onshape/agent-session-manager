@@ -14,7 +14,11 @@ struct ContentView: View {
                     SessionRowView(
                         session: session,
                         isSelected: viewModel.selectedSessionID == session.id,
+                        isStarred: viewModel.isStarred(session),
                         transcriptMatch: viewModel.searchMatch(for: session),
+                        onToggleStar: {
+                            viewModel.toggleStar(for: session)
+                        },
                         onOpenTranscriptMatch: {
                             openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
                         }
@@ -47,6 +51,8 @@ struct ContentView: View {
                 SessionDetailView(
                     session: session,
                     viewModel: viewModel,
+                    isStarred: viewModel.isStarred(session),
+                    onToggleStar: { viewModel.toggleStar(for: session) },
                     onOpenTranscript: { openTranscript(for: session) }
                 )
                     .padding(24)
@@ -184,44 +190,105 @@ struct ContentView: View {
 
     private var filterBar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Picker("Source", selection: $viewModel.filters.selectedSourceRawValue) {
-                    Text("All Sources").tag(SessionFilterState.allSourcesToken)
-                    ForEach(SessionSource.allCases) { source in
-                        Text(source.displayName).tag(source.rawValue)
+            HStack(spacing: 10) {
+                FilterMenuChip(
+                    title: "Source",
+                    valueText: viewModel.filters.selectedSource?.displayName ?? "All Sources",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    isActive: viewModel.filters.hasCustomSourceSelection,
+                    items: [
+                        FilterMenuItem(
+                            id: SessionFilterState.allSourcesToken,
+                            title: "All Sources",
+                            isSelected: viewModel.filters.selectedSourceRawValue == SessionFilterState.allSourcesToken,
+                            highlightsSelection: false,
+                            action: { viewModel.filters.selectedSourceRawValue = SessionFilterState.allSourcesToken }
+                        )
+                    ] + SessionSource.allCases.map { source in
+                        FilterMenuItem(
+                            id: source.rawValue,
+                            title: source.displayName,
+                            isSelected: viewModel.filters.selectedSourceRawValue == source.rawValue,
+                            highlightsSelection: true,
+                            action: { viewModel.filters.selectedSourceRawValue = source.rawValue }
+                        )
                     }
-                }
-                .pickerStyle(.menu)
+                )
 
-                Picker("Project", selection: $viewModel.filters.selectedProject) {
-                    Text("All Projects").tag(SessionFilterState.allProjectsToken)
-                    ForEach(viewModel.availableProjects.dropFirst(), id: \.self) { project in
-                        Text(project).tag(project)
+                FilterMenuChip(
+                    title: "Project",
+                    valueText: viewModel.filters.selectedProject == SessionFilterState.allProjectsToken ? "All Projects" : viewModel.filters.selectedProject,
+                    systemImage: "folder",
+                    isActive: viewModel.filters.hasCustomProjectSelection,
+                    items: viewModel.availableProjects.map { project in
+                        let isDefault = project == SessionFilterState.allProjectsToken
+                        let title = isDefault ? "All Projects" : project
+                        return FilterMenuItem(
+                            id: project,
+                            title: title,
+                            isSelected: viewModel.filters.selectedProject == project,
+                            highlightsSelection: !isDefault,
+                            action: { viewModel.filters.selectedProject = project }
+                        )
                     }
-                }
-                .pickerStyle(.menu)
+                )
 
-                Picker("Branch", selection: $viewModel.filters.selectedBranch) {
-                    Text("All Branches").tag(SessionFilterState.allBranchesToken)
-                    ForEach(viewModel.availableBranches.dropFirst(), id: \.self) { branch in
-                        Text(branch).tag(branch)
+                FilterMenuChip(
+                    title: "Branch",
+                    valueText: viewModel.filters.selectedBranch == SessionFilterState.allBranchesToken ? "All Branches" : viewModel.filters.selectedBranch,
+                    systemImage: "arrow.triangle.branch",
+                    isActive: viewModel.filters.hasCustomBranchSelection,
+                    items: viewModel.availableBranches.map { branch in
+                        let isDefault = branch == SessionFilterState.allBranchesToken
+                        let title = isDefault ? "All Branches" : branch
+                        return FilterMenuItem(
+                            id: branch,
+                            title: title,
+                            isSelected: viewModel.filters.selectedBranch == branch,
+                            highlightsSelection: !isDefault,
+                            action: { viewModel.filters.selectedBranch = branch }
+                        )
                     }
-                }
-                .pickerStyle(.menu)
+                )
             }
 
-            HStack {
+            HStack(spacing: 10) {
+                FilterMenuChip(
+                    title: "Starred",
+                    valueText: viewModel.filters.starFilter.displayName,
+                    systemImage: "star",
+                    isActive: viewModel.filters.hasCustomStarFilter,
+                    items: SessionStarFilter.allCases.map { starFilter in
+                        FilterMenuItem(
+                            id: starFilter.rawValue,
+                            title: starFilter.displayName,
+                            isSelected: viewModel.filters.starFilter == starFilter,
+                            highlightsSelection: starFilter != .all,
+                            action: { viewModel.filters.starFilter = starFilter }
+                        )
+                    }
+                )
+
                 Toggle("newton* only", isOn: $viewModel.filters.newtonOnly)
                     .toggleStyle(.switch)
 
                 Spacer()
 
-                Picker("Sort", selection: $viewModel.filters.sortMode) {
-                    ForEach(SessionSortMode.allCases) { sortMode in
-                        Text(sortMode.displayName).tag(sortMode)
+                FilterMenuChip(
+                    title: "Sort",
+                    valueText: viewModel.filters.sortMode.displayName,
+                    systemImage: "arrow.up.arrow.down",
+                    isActive: viewModel.filters.hasCustomSortMode,
+                    items: SessionSortMode.allCases.map { sortMode in
+                        FilterMenuItem(
+                            id: sortMode.rawValue,
+                            title: sortMode.displayName,
+                            isSelected: viewModel.filters.sortMode == sortMode,
+                            highlightsSelection: sortMode != .recentlyUpdated,
+                            action: { viewModel.filters.sortMode = sortMode }
+                        )
                     }
-                }
-                .pickerStyle(.menu)
+                )
             }
         }
         .padding(16)
@@ -395,7 +462,9 @@ private final class SearchShortcutNSView: NSView {
 private struct SessionRowView: View {
     let session: SessionRecord
     let isSelected: Bool
+    let isStarred: Bool
     let transcriptMatch: TranscriptSessionSearchMatch?
+    let onToggleStar: () -> Void
     let onOpenTranscriptMatch: () -> Void
 
     var body: some View {
@@ -415,9 +484,17 @@ private struct SessionRowView: View {
                 }
             }
 
-            Text(session.title)
-                .font(.headline)
-                .lineLimit(2)
+            HStack(alignment: .top, spacing: 8) {
+                SessionStarButton(
+                    isStarred: isStarred,
+                    size: 14,
+                    action: onToggleStar
+                )
+
+                Text(session.title)
+                    .font(.headline)
+                    .lineLimit(2)
+            }
 
             if !session.subtitle.isEmpty {
                 Text(session.subtitle)
@@ -484,17 +561,28 @@ private struct SessionRowView: View {
 private struct SessionDetailView: View {
     let session: SessionRecord
     @ObservedObject var viewModel: SessionBrowserViewModel
+    let isStarred: Bool
+    let onToggleStar: () -> Void
     let onOpenTranscript: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(session.title)
-                        .font(.largeTitle.weight(.semibold))
-                    Text(session.detailSummary)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 12) {
+                    SessionStarButton(
+                        isStarred: isStarred,
+                        size: 22,
+                        action: onToggleStar
+                    )
+                    .padding(.top, 4)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(session.title)
+                            .font(.largeTitle.weight(.semibold))
+                        Text(session.detailSummary)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 actionBar
@@ -533,17 +621,16 @@ private struct SessionDetailView: View {
             .disabled(session.rawTranscriptPath == nil)
             .help("Open the transcript viewer for this session.")
 
+            if session.relatedPlanPath != nil {
+                Button {
+                    viewModel.openPlan(for: session)
+                } label: {
+                    Label("Open Plan", systemImage: "doc.text")
+                }
+                .help("Open the related planning document for this session.")
+            }
+
             Menu {
-                Button("Copy Session ID") {
-                    viewModel.copySessionID(session)
-                }
-
-                if session.relatedPlanPath != nil {
-                    Button("Open Plan") {
-                        viewModel.openPlan(for: session)
-                    }
-                }
-
                 if session.source == .copilotCLI {
                     Button("Copy Resume Command") {
                         viewModel.copyPrimaryCommand(session)
@@ -592,14 +679,26 @@ private struct SessionDetailView: View {
     private var metadataSection: some View {
         GroupBox("Metadata") {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
-                metadataRow(title: "Source", value: session.source.displayName)
-                metadataRow(title: "Session ID", value: session.sourceSessionId)
-                metadataRow(title: "Project", value: session.projectName)
-                metadataRow(title: "Branch", value: session.branch ?? "—")
-                metadataRow(title: "Model", value: session.conversationModel ?? "—")
-                metadataRow(title: "Started", value: session.startedAt?.formatted(date: .abbreviated, time: .shortened) ?? "—")
-                metadataRow(title: "Updated", value: session.updatedAt?.formatted(date: .abbreviated, time: .shortened) ?? "—")
-                metadataRow(title: "Newton Project", value: session.isNewtonProject ? "Yes" : "No")
+                metadataRow(title: "Source", value: session.source.displayName, copyValue: session.source.displayName)
+                metadataRow(title: "Session ID", value: session.sourceSessionId, copyValue: session.sourceSessionId)
+                metadataRow(title: "Project", value: session.projectName, copyValue: session.projectName)
+                metadataRow(title: "Branch", value: session.branch ?? "—", copyValue: session.branch)
+                metadataRow(title: "Model", value: session.conversationModel ?? "—", copyValue: session.conversationModel)
+                metadataRow(
+                    title: "Started",
+                    value: session.startedAt?.formatted(date: .abbreviated, time: .shortened) ?? "—",
+                    copyValue: session.startedAt?.formatted(date: .abbreviated, time: .shortened)
+                )
+                metadataRow(
+                    title: "Updated",
+                    value: session.updatedAt?.formatted(date: .abbreviated, time: .shortened) ?? "—",
+                    copyValue: session.updatedAt?.formatted(date: .abbreviated, time: .shortened)
+                )
+                metadataRow(
+                    title: "Newton Project",
+                    value: session.isNewtonProject ? "Yes" : "No",
+                    copyValue: session.isNewtonProject ? "Yes" : "No"
+                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -628,14 +727,130 @@ private struct SessionDetailView: View {
     }
 
     @ViewBuilder
-    private func metadataRow(title: String, value: String) -> some View {
+    private func metadataRow(title: String, value: String, copyValue: String?) -> some View {
         GridRow {
             Text(title)
                 .foregroundStyle(.secondary)
-            Text(value)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 10) {
+                CopyValueButton(
+                    value: copyValue,
+                    label: "Copy \(title)"
+                ) {
+                    if let copyValue {
+                        viewModel.copyToClipboard(copyValue)
+                    }
+                }
+
+                Text(value)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+    }
+}
+
+private struct FilterMenuItem: Identifiable {
+    let id: String
+    let title: String
+    let isSelected: Bool
+    let highlightsSelection: Bool
+    let action: () -> Void
+}
+
+private struct FilterMenuChip: View {
+    let title: String
+    let valueText: String
+    let systemImage: String
+    let isActive: Bool
+    let items: [FilterMenuItem]
+
+    var body: some View {
+        Menu {
+            ForEach(items) { item in
+                Button(action: item.action) {
+                    HStack(spacing: 10) {
+                        Text(item.title)
+                            .foregroundStyle(item.isSelected && item.highlightsSelection ? Color.accentColor : Color.primary)
+
+                        if item.isSelected {
+                            Spacer(minLength: 8)
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(item.highlightsSelection ? Color.accentColor : Color.secondary)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .imageScale(.small)
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+
+                Text(title)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                Text(valueText)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isActive ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.08))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isActive ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06))
+            }
+        }
+        .menuStyle(.borderlessButton)
+    }
+}
+
+private struct SessionStarButton: View {
+    let isStarred: Bool
+    let size: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isStarred ? "star.fill" : "star")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(isStarred ? Color.yellow : Color.secondary)
+                .frame(width: size + 10, height: size + 10)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isStarred ? "Remove star" : "Star this session")
+        .pointingHandCursor()
+    }
+}
+
+private struct CopyValueButton: View {
+    let value: String?
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "doc.on.doc")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(value == nil ? Color.secondary.opacity(0.6) : Color.accentColor)
+                .frame(width: 24, height: 24)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(value == nil)
+        .help(label)
+        .pointingHandCursor()
     }
 }
 

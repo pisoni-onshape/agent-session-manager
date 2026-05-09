@@ -62,6 +62,25 @@ enum SessionSortMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum SessionStarFilter: String, CaseIterable, Identifiable, Sendable {
+    case all
+    case starred
+    case unstarred
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .all:
+            return "All Sessions"
+        case .starred:
+            return "Starred"
+        case .unstarred:
+            return "Unstarred"
+        }
+    }
+}
+
 struct SessionRecord: Identifiable, Equatable, Sendable {
     let source: SessionSource
     let sourceSessionId: String
@@ -346,11 +365,32 @@ struct SessionFilterState: Equatable, Sendable {
     var selectedSourceRawValue = allSourcesToken
     var selectedProject = allProjectsToken
     var selectedBranch = allBranchesToken
+    var starFilter: SessionStarFilter = .all
     var newtonOnly = false
     var sortMode: SessionSortMode = .recentlyUpdated
 
     var selectedSource: SessionSource? {
         SessionSource(rawValue: selectedSourceRawValue)
+    }
+
+    var hasCustomSourceSelection: Bool {
+        selectedSourceRawValue != Self.allSourcesToken
+    }
+
+    var hasCustomProjectSelection: Bool {
+        selectedProject != Self.allProjectsToken
+    }
+
+    var hasCustomBranchSelection: Bool {
+        selectedBranch != Self.allBranchesToken
+    }
+
+    var hasCustomStarFilter: Bool {
+        starFilter != .all
+    }
+
+    var hasCustomSortMode: Bool {
+        sortMode != .recentlyUpdated
     }
 }
 

@@ -116,6 +116,53 @@ final class SQLiteSessionStore {
         return records
     }
 
+    func fetchStarredSessionIDs() throws -> Set<String> {
+        let sql = """
+        SELECT session_id
+        FROM session_preferences
+        WHERE is_starred = 1;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var sessionIDs: Set<String> = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let sessionID = string(from: statement, column: 0) {
+                sessionIDs.insert(sessionID)
+            }
+        }
+
+        return sessionIDs
+    }
+
+    func setSessionStarred(_ isStarred: Bool, for sessionID: String) throws {
+        let sql: String
+        if isStarred {
+            sql = """
+            INSERT INTO session_preferences (session_id, is_starred)
+            VALUES (?, 1)
+            ON CONFLICT(session_id) DO UPDATE SET is_starred = excluded.is_starred;
+            """
+        } else {
+            sql = "DELETE FROM session_preferences WHERE session_id = ?;"
+        }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bind(sessionID, to: statement, index: 1)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+        }
+    }
+
     func replaceAll(
         records: [SessionRecord],
         transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
@@ -287,6 +334,14 @@ final class SQLiteSessionStore {
             CREATE TABLE IF NOT EXISTS catalog_metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+            """
+        )
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS session_preferences (
+                session_id TEXT PRIMARY KEY,
+                is_starred INTEGER NOT NULL DEFAULT 0
             );
             """
         )
