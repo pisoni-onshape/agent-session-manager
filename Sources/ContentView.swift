@@ -786,15 +786,18 @@ private struct FilterMenuChip: View {
                     .imageScale(.small)
                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
 
-                Text(title)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(valueText)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
-                Text(valueText)
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    Text(title)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
