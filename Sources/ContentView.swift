@@ -20,13 +20,12 @@ struct ContentView: View {
                         }
                     )
                     .tag(session.id)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
+                    .listRowInsets(EdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(Color(nsColor: .underPageBackgroundColor))
                 .overlay {
                     if viewModel.shouldShowLoadingPlaceholder {
                         LoadingStateView(
@@ -459,18 +458,18 @@ private struct SessionRowView: View {
         .padding(14)
         .background {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color(nsColor: .controlBackgroundColor))
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.035))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
-                    isSelected ? Color.accentColor.opacity(0.45) : Color.primary.opacity(0.08),
+                    isSelected ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.06),
                     lineWidth: isSelected ? 1.2 : 1
                 )
         }
         .shadow(
-            color: Color.black.opacity(isSelected ? 0.12 : 0.05),
-            radius: isSelected ? 8 : 3,
+            color: Color.black.opacity(isSelected ? 0.08 : 0.025),
+            radius: isSelected ? 6 : 2,
             x: 0,
             y: 1
         )
