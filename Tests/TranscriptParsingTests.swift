@@ -401,6 +401,49 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(matches.first?.snippets.count, 2)
     }
 
+    func testSessionSearchServiceReturnsTranscriptMatchesForStructuredQueries() throws {
+        var filters = SessionFilterState()
+        filters.searchText = "project:agent drag"
+
+        let matching = makeRecord(sessionID: "matching", title: "Investigate drag", summary: "No direct metadata hit here.")
+        let other = makeRecord(sessionID: "other", title: "Other session", summary: "Also in the same project.")
+        let snapshot = SessionCatalogSnapshot(sessions: [matching, other], starredSessionIDs: [])
+
+        let execution = try SessionSearchService.search(snapshot: snapshot, request: SessionSearchRequest(filters: filters)) { sessionIDs, query in
+            XCTAssertEqual(Set(sessionIDs), Set([matching.id, other.id]))
+            XCTAssertEqual(query, "drag")
+            return [
+                TranscriptIndexSearchHit(
+                    sessionRecordID: matching.id,
+                    entryIndex: 0,
+                    text: "Find the terminal drag bug."
+                )
+            ]
+        }
+
+        XCTAssertEqual(execution.displayedSessions.map(\.sourceSessionId), ["matching"])
+        XCTAssertEqual(execution.searchState.searchedSessionCount, 2)
+        XCTAssertEqual(execution.searchState.totalMatchCount, 1)
+        XCTAssertEqual(execution.searchState.mergedResultsBySessionID[matching.id]?.snippets.count, 1)
+    }
+
+    func testSessionSearchServiceSkipsTranscriptSearchForMetadataOnlyQueries() throws {
+        var filters = SessionFilterState()
+        filters.searchText = "project:agent"
+
+        let matching = makeRecord(sessionID: "matching", title: "Agent session", summary: nil)
+        let other = makeRecord(sessionID: "other", title: "Different project", summary: nil).withProjectName("other-project")
+        let snapshot = SessionCatalogSnapshot(sessions: [matching, other], starredSessionIDs: [])
+
+        let execution = try SessionSearchService.search(snapshot: snapshot, request: SessionSearchRequest(filters: filters)) { _, _ in
+            XCTFail("Metadata-only searches should not hit the transcript index.")
+            return []
+        }
+
+        XCTAssertEqual(execution.displayedSessions.map(\.sourceSessionId), ["matching"])
+        XCTAssertFalse(execution.searchState.hasRequestedQuery)
+    }
+
     func testSearchableTranscriptEntriesOnlyIncludeChatMessages() throws {
         let url = try temporaryFile(
             named: "searchable.jsonl",
@@ -503,6 +546,32 @@ final class TranscriptParsingTests: XCTestCase {
             resumeKind: .copilotConnect,
             resumePayload: sessionID,
             isNewtonProject: false
+        )
+    }
+}
+
+private extension SessionRecord {
+    func withProjectName(_ projectName: String) -> SessionRecord {
+        SessionRecord(
+            source: source,
+            sourceSessionId: sourceSessionId,
+            workspacePath: workspacePath,
+            projectName: projectName,
+            branch: branch,
+            conversationModel: conversationModel,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            title: title,
+            summary: summary,
+            firstUserPreview: firstUserPreview,
+            firstAssistantPreview: firstAssistantPreview,
+            rawTranscriptPath: rawTranscriptPath,
+            rawMetadataPath: rawMetadataPath,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: resumeKind,
+            resumePayload: resumePayload,
+            isNewtonProject: isNewtonProject
         )
     }
 }

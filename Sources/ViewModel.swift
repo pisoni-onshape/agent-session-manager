@@ -470,38 +470,29 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     private func searchScopeSignature(for sessions: [SessionRecord]) -> String {
-        sessions.map(\.id).sorted().joined(separator: "\u{1F}")
+        SessionSearchService.scopeSignature(for: sessions)
     }
 
     private func scheduleSearch() {
         searchTask?.cancel()
 
-        let requestedQuery = filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedQuery = SessionSearchQueryParser.parse(requestedQuery)
-        let transcriptQueries = parsedQuery.transcriptQueries
-        let scope = scopeFilteredSessions
-        let scopeSignature = searchScopeSignature(for: scope)
+        let request = SessionSearchRequest(filters: filters)
+        let snapshot = SessionCatalogSnapshot(
+            sessions: allSessions,
+            starredSessionIDs: starredSessionIDs
+        )
+        let pendingState = SessionSearchService.makePendingSearchState(snapshot: snapshot, request: request)
+        let requestedQuery = pendingState.requestedQuery
+        let scopeSignature = pendingState.searchedScopeSignature
 
-        guard !requestedQuery.isEmpty, !transcriptQueries.isEmpty else {
-            searchState = SessionSearchState()
+        searchState = pendingState
+
+        guard pendingState.hasRequestedQuery, pendingState.searchedSessionCount > 0 else {
             return
         }
 
         guard let catalog else {
             searchState = SessionSearchState()
-            return
-        }
-
-        let sessionIDs = scope.map(\.id)
-        searchState.requestedQuery = requestedQuery
-        searchState.searchedScopeSignature = scopeSignature
-        searchState.searchedSessionCount = scope.count
-        searchState.resultsByQuery = [:]
-        searchState.mergedResultsBySessionID = [:]
-        searchState.isSearching = !sessionIDs.isEmpty
-        searchState.lastError = nil
-
-        guard !sessionIDs.isEmpty else {
             return
         }
 
@@ -512,9 +503,8 @@ final class SessionBrowserViewModel: ObservableObject {
                     return
                 }
 
-                var resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:]
-                for query in transcriptQueries {
-                    resultsByQuery[query] = try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query)
+                let execution = try SessionSearchService.search(snapshot: snapshot, request: request) { sessionIDs, query in
+                    try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query)
                 }
 
                 if Task.isCancelled {
@@ -522,35 +512,23 @@ final class SessionBrowserViewModel: ObservableObject {
                 }
 
                 guard filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == requestedQuery,
-                      searchScopeSignature(for: scopeFilteredSessions) == scopeSignature else {
+                       searchScopeSignature(for: scopeFilteredSessions) == scopeSignature else {
                     return
                 }
 
-                searchState.requestedQuery = requestedQuery
-                searchState.searchedScopeSignature = scopeSignature
-                searchState.searchedSessionCount = scope.count
-                searchState.resultsByQuery = resultsByQuery
-                searchState.mergedResultsBySessionID = makeMergedSearchMatches(
-                    from: resultsByQuery,
-                    queries: transcriptQueries
-                )
-                searchState.isSearching = false
-                searchState.lastError = nil
+                searchState = execution.searchState
             } catch is CancellationError {
                 return
             } catch {
                 guard filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == requestedQuery,
-                      searchScopeSignature(for: scopeFilteredSessions) == scopeSignature else {
+                       searchScopeSignature(for: scopeFilteredSessions) == scopeSignature else {
                     return
                 }
 
-                searchState.requestedQuery = requestedQuery
-                searchState.searchedScopeSignature = scopeSignature
-                searchState.searchedSessionCount = scope.count
-                searchState.resultsByQuery = [:]
-                searchState.mergedResultsBySessionID = [:]
-                searchState.isSearching = false
-                searchState.lastError = error.localizedDescription
+                var failedState = pendingState
+                failedState.isSearching = false
+                failedState.lastError = error.localizedDescription
+                searchState = failedState
             }
         }
     }
@@ -617,41 +595,6 @@ final class SessionBrowserViewModel: ObservableObject {
     private func refreshSessionsIfIdle() async {
         guard hasCompletedInitialLoad, !isRefreshing else { return }
         await refreshSessions()
-    }
-
-    private func makeMergedSearchMatches(
-        from resultsByQuery: [String: [TranscriptIndexSearchHit]],
-        queries: [String]
-    ) -> [String: TranscriptSessionSearchMatch] {
-        let orderedHits = queries.flatMap { resultsByQuery[$0] ?? [] }
-        var groupedBySession: [String: [Int: TranscriptIndexSearchHit]] = [:]
-
-        for hit in orderedHits {
-            groupedBySession[hit.sessionRecordID, default: [:]][hit.entryIndex] = hit
-        }
-
-        return Dictionary(
-            uniqueKeysWithValues: groupedBySession.map { sessionID, hitsByIndex in
-                let orderedEntries = hitsByIndex.values.sorted { $0.entryIndex < $1.entryIndex }
-                let snippets = orderedEntries.compactMap { hit in
-                    SearchTextMatcher.snippet(in: hit.text, queries: queries) ?? TextSanitizer.summarize(hit.text, limit: 120)
-                }
-                let uniqueSnippets = snippets.reduce(into: [String]()) { partialResult, snippet in
-                    if !partialResult.contains(snippet) {
-                        partialResult.append(snippet)
-                    }
-                }
-
-                return (
-                    sessionID,
-                    TranscriptSessionSearchMatch(
-                        sessionRecordID: sessionID,
-                        matchCount: orderedEntries.count,
-                        snippets: Array(uniqueSnippets.prefix(2))
-                    )
-                )
-            }
-        )
     }
 
     private func performRefresh(

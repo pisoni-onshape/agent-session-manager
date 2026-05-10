@@ -21,6 +21,7 @@
 		84A9C7B5FF6CE384E094168C /* Storage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EBC35DE3C94D9B0C3A4728 /* Storage.swift */; };
 		99013BA95FBFE1C2F4D73C18 /* WorkspaceLauncherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E94A3ED57E602E84C177D3A1 /* WorkspaceLauncherTests.swift */; };
 		A8691C46379AB4B8DFE6D842 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC6FF5831403EEB1D0CAFAC /* Utilities.swift */; };
+		B6F54C5414AB72238DC301E5 /* SessionSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EBA05369BC1A5053511E16 /* SessionSearchService.swift */; };
 		B8B334283D193C15934B224F /* AgentSessionManagerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC01673AC71F156041BD76F /* AgentSessionManagerApp.swift */; };
 		CDFEE81802EC2892E50ECC79 /* NewtonProjectMatchingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF76D7F25639A165DE9268AC /* NewtonProjectMatchingTests.swift */; };
 		D15892D1CCA981D256988BB4 /* TranscriptParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 618F620A1984E0955FBD39D1 /* TranscriptParsingTests.swift */; };
@@ -41,6 +42,7 @@
 
 /* Begin PBXFileReference section */
 		0DC6FF5831403EEB1D0CAFAC /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
+		26EBA05369BC1A5053511E16 /* SessionSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchService.swift; sourceTree = "<group>"; };
 		28283EED08D30CE6A10381E5 /* AgentSessionManager-Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AgentSessionManager-Icon.png"; sourceTree = "<group>"; };
 		2BE74D318718590BE9CACF18 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3B1087C9289C144190B61B3C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -84,6 +86,7 @@
 				D2C27AD6AF2454C65F2D1A90 /* AppSettings.swift */,
 				2BE74D318718590BE9CACF18 /* ContentView.swift */,
 				CEA1E8ACE6592728373C134F /* Models.swift */,
+				26EBA05369BC1A5053511E16 /* SessionSearchService.swift */,
 				3B1087C9289C144190B61B3C /* SettingsView.swift */,
 				46EBC35DE3C94D9B0C3A4728 /* Storage.swift */,
 				0DC6FF5831403EEB1D0CAFAC /* Utilities.swift */,
@@ -245,6 +248,7 @@
 				1A6B847794CA7B44F8C9B081 /* AppSettings.swift in Sources */,
 				2686696D7E0B57A714094702 /* ContentView.swift in Sources */,
 				DEB817FCB24A093F658A0DC5 /* Models.swift in Sources */,
+				B6F54C5414AB72238DC301E5 /* SessionSearchService.swift in Sources */,
 				374323A3CA71944A86173593 /* SettingsView.swift in Sources */,
 				84A9C7B5FF6CE384E094168C /* Storage.swift in Sources */,
 				A8691C46379AB4B8DFE6D842 /* Utilities.swift in Sources */,
