@@ -16,7 +16,7 @@ struct ContentView: View {
                     }
 
                     if viewModel.displayedSessionSections.showsUnstarredDivider {
-                        SessionListDividerView(title: "Unstarred")
+                        SessionListDividerView()
                             .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -319,16 +319,8 @@ struct ContentView: View {
 }
 
 private struct SessionListDividerView: View {
-    let title: String
-
     var body: some View {
-        HStack(spacing: 12) {
-            Divider()
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Divider()
-        }
+        Divider()
         .padding(.vertical, 4)
     }
 }
