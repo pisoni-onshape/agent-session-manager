@@ -3,6 +3,8 @@ import SwiftUI
 import AgentSessionManagerCore
 
 struct ContentView: View {
+    private let sessionListTopAnchorID = "session-list-top-anchor"
+
     @ObservedObject var viewModel: SessionBrowserViewModel
     @Environment(\.openWindow) private var openWindow
     @StateObject private var searchFieldController = ToolbarSearchFieldController()
@@ -11,37 +13,51 @@ struct ContentView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 filterBar
-                List(selection: $viewModel.selectedSessionID) {
-                    ForEach(viewModel.displayedSessionSections.starred) { session in
-                        sessionListRow(for: session)
-                    }
-
-                    if viewModel.displayedSessionSections.showsUnstarredDivider {
-                        SessionListDividerView()
-                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                ScrollViewReader { proxy in
+                    List(selection: $viewModel.selectedSessionID) {
+                        Color.clear
+                            .frame(height: 1)
+                            .id(sessionListTopAnchorID)
+                            .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                             .allowsHitTesting(false)
-                    }
+                            .accessibilityHidden(true)
 
-                    ForEach(viewModel.displayedSessionSections.unstarred) { session in
-                        sessionListRow(for: session)
+                        ForEach(viewModel.displayedSessionSections.starred) { session in
+                            sessionListRow(for: session)
+                        }
+
+                        if viewModel.displayedSessionSections.showsUnstarredDivider {
+                            SessionListDividerView()
+                                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .allowsHitTesting(false)
+                        }
+
+                        ForEach(viewModel.displayedSessionSections.unstarred) { session in
+                            sessionListRow(for: session)
+                        }
                     }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .overlay {
-                    if viewModel.shouldShowLoadingPlaceholder {
-                        LoadingStateView(
-                            title: viewModel.startupLoadingText,
-                            detail: viewModel.startupLoadingDetailText
-                        )
-                    } else if viewModel.displayedSessions.isEmpty {
-                        ContentUnavailableView(
-                            viewModel.emptyStateTitle,
-                            systemImage: viewModel.filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "tray" : "magnifyingglass",
-                            description: Text(viewModel.emptyStateDescription)
-                        )
+                    .onChange(of: viewModel.filters) { _, _ in
+                        scrollSessionListToTop(with: proxy)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .overlay {
+                        if viewModel.shouldShowLoadingPlaceholder {
+                            LoadingStateView(
+                                title: viewModel.startupLoadingText,
+                                detail: viewModel.startupLoadingDetailText
+                            )
+                        } else if viewModel.displayedSessions.isEmpty {
+                            ContentUnavailableView(
+                                viewModel.emptyStateTitle,
+                                systemImage: viewModel.filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "tray" : "magnifyingglass",
+                                description: Text(viewModel.emptyStateDescription)
+                            )
+                        }
                     }
                 }
             }
@@ -204,6 +220,12 @@ struct ContentView: View {
             }
 
             openWindow(value: presentedTranscript)
+        }
+    }
+
+    private func scrollSessionListToTop(with proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            proxy.scrollTo(sessionListTopAnchorID, anchor: .top)
         }
     }
 
