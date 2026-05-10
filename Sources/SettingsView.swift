@@ -41,12 +41,24 @@ struct SettingsView: View {
 
             Section("Session Catalog") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Newton repos path")
-                        .font(.headline)
-                    TextField("Newton repos path", text: $newtonReposRootPathDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($focusedField, equals: .newtonReposRootPath)
-                        .onSubmit(commitNewtonReposRootPath)
+                    LabeledContent("Newton repos path") {
+                        TextField("/Users/you/repos", text: $newtonReposRootPathDraft)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.12))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.10))
+                            )
+                            .focused($focusedField, equals: .newtonReposRootPath)
+                            .onSubmit(commitNewtonReposRootPath)
+                            .frame(minWidth: 390)
+                    }
+
                     Text("Only repos directly under this root whose names start with `newton` are included by the Newton-only filter.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -83,14 +95,14 @@ struct SettingsView: View {
                     )
                 )
 
-                Text("These options run the standard Refresh Sessions path while the app is open. The first-launch option applies only once per system boot, and subsequent launches are controlled separately.")
+                Text("These options run the standard Refresh Sessions path while the app is open. Every day means every 24 hours from app launch or from the last timer change while the app stays open. The first-launch option applies only once per system boot, and subsequent launches are controlled separately.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 560)
+        .frame(width: 620, height: 500)
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
         }

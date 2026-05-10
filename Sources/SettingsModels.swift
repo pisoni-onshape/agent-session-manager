@@ -71,9 +71,9 @@ public struct AutoSessionRefreshSettings: Equatable, Sendable {
     }
 
     public static let standard = AutoSessionRefreshSettings(
-        cadence: .off,
+        cadence: .everyDay,
         refreshOnFirstLaunchAfterBoot: true,
-        refreshOnSubsequentLaunches: true
+        refreshOnSubsequentLaunches: false
     )
 }
 

@@ -117,9 +117,9 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(
             AutoSessionRefreshSettings.standard,
             AutoSessionRefreshSettings(
-                cadence: .off,
+                cadence: .everyDay,
                 refreshOnFirstLaunchAfterBoot: true,
-                refreshOnSubsequentLaunches: true
+                refreshOnSubsequentLaunches: false
             )
         )
     }
