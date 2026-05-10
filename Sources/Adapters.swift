@@ -421,6 +421,11 @@ private struct CursorComposerHeader: Decodable {
     let name: String?
 }
 
+private struct VSCodeSessionReference {
+    let sessionID: String
+    let transcriptFile: URL
+}
+
 struct VSCodeCopilotAdapter: SessionSourceAdapter {
     let root: URL
 
@@ -432,29 +437,30 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
 
         return try workspaceDirectories.flatMap { workspaceDirectory -> [SessionScanCandidate] in
             let workspaceJSONURL = workspaceDirectory.appendingPathComponent("workspace.json")
-            let transcriptDirectory = workspaceDirectory.appendingPathComponent("GitHub.copilot-chat/transcripts", isDirectory: true)
-            guard FileManager.default.fileExists(atPath: workspaceJSONURL.path),
-                  FileManager.default.fileExists(atPath: transcriptDirectory.path) else {
+            guard FileManager.default.fileExists(atPath: workspaceJSONURL.path) else {
                 return []
             }
 
             let metadata = try loadJSONDictionary(from: workspaceJSONURL)
             let workspacePath = PathUtilities.workspacePathFromFileURI((metadata?["folder"] as? String) ?? (metadata?["workspace"] as? String))
             let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: workspaceDirectory.lastPathComponent)
-            let transcriptFiles = try FileManager.default.contentsOfDirectory(at: transcriptDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-                .filter { $0.pathExtension == "jsonl" }
+            let sessionReferences = try discoverSessionReferences(in: workspaceDirectory)
+            guard !sessionReferences.isEmpty else {
+                return []
+            }
 
-            return try transcriptFiles.map { transcriptFile in
-                let preview = try TranscriptPreviewExtractor.extractEventTranscript(from: transcriptFile)
-                let sessionID = preview.sessionId ?? transcriptFile.deletingPathExtension().lastPathComponent
-                let title = TextSanitizer.inferTitle(from: preview.firstUser, fallback: sessionID)
-                let chatSessionURL = workspaceDirectory.appendingPathComponent("chatSessions/\(sessionID).jsonl")
+            return try sessionReferences.map { reference in
+                let sessionMetadata = try TranscriptPreviewExtractor.extractVSCodeSessionMetadata(from: reference.transcriptFile)
+                let sessionID = sessionMetadata.sessionId ?? reference.sessionID
+                let title = sessionMetadata.title ?? TextSanitizer.inferTitle(
+                    from: sessionMetadata.firstUser,
+                    fallback: sessionID
+                )
                 let relatedPlanPath = SessionArtifactLocator.vscodePlanPath(workspaceDirectory: workspaceDirectory, sessionId: sessionID)
                 let fingerprint = combinedFingerprint(
                     paths: [
-                        transcriptFile.path,
+                        reference.transcriptFile.path,
                         workspaceJSONURL.path,
-                        FileManager.default.fileExists(atPath: chatSessionURL.path) ? chatSessionURL.path : nil,
                         relatedPlanPath
                     ]
                 )
@@ -464,14 +470,13 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
                     fingerprint: fingerprint,
                     loadRecord: {
                         try loadRecord(
-                            transcriptFile: transcriptFile,
+                            transcriptFile: reference.transcriptFile,
                             workspaceJSONURL: workspaceJSONURL,
-                            chatSessionURL: chatSessionURL,
                             workspacePath: workspacePath,
                             projectName: projectName,
                             relatedPlanPath: relatedPlanPath,
                             sessionID: sessionID,
-                            preview: preview,
+                            sessionMetadata: sessionMetadata,
                             title: title,
                             fingerprint: fingerprint
                         )
@@ -481,15 +486,71 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
         }
     }
 
+    private func discoverSessionReferences(in workspaceDirectory: URL) throws -> [VSCodeSessionReference] {
+        var referencesBySessionID: [String: VSCodeSessionReference] = [:]
+        let legacyTranscriptDirectory = workspaceDirectory.appendingPathComponent("GitHub.copilot-chat/transcripts", isDirectory: true)
+        if FileManager.default.fileExists(atPath: legacyTranscriptDirectory.path) {
+            let transcriptFiles = try FileManager.default.contentsOfDirectory(
+                at: legacyTranscriptDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ).filter { $0.pathExtension.lowercased() == "jsonl" }
+
+            for transcriptFile in transcriptFiles {
+                let preview = try TranscriptPreviewExtractor.extractEventTranscript(from: transcriptFile)
+                let sessionID = preview.sessionId ?? transcriptFile.deletingPathExtension().lastPathComponent
+                referencesBySessionID[sessionID] = VSCodeSessionReference(
+                    sessionID: sessionID,
+                    transcriptFile: transcriptFile
+                )
+            }
+        }
+
+        let chatSessionsDirectory = workspaceDirectory.appendingPathComponent("chatSessions", isDirectory: true)
+        if FileManager.default.fileExists(atPath: chatSessionsDirectory.path) {
+            let chatSessionFiles = try FileManager.default.contentsOfDirectory(
+                at: chatSessionsDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            .filter { ["json", "jsonl"].contains($0.pathExtension.lowercased()) }
+            .sorted { lhs, rhs in
+                let lhsPriority = lhs.pathExtension.lowercased() == "json" ? 0 : 1
+                let rhsPriority = rhs.pathExtension.lowercased() == "json" ? 0 : 1
+                if lhsPriority != rhsPriority {
+                    return lhsPriority < rhsPriority
+                }
+                return lhs.lastPathComponent.localizedCaseInsensitiveCompare(rhs.lastPathComponent) == .orderedAscending
+            }
+
+            for chatSessionFile in chatSessionFiles {
+                let sessionMetadata = try TranscriptPreviewExtractor.extractVSCodeSessionMetadata(from: chatSessionFile)
+                let sessionID = sessionMetadata.sessionId ?? chatSessionFile.deletingPathExtension().lastPathComponent
+                if let existing = referencesBySessionID[sessionID],
+                   existing.transcriptFile.deletingLastPathComponent().lastPathComponent == "chatSessions" {
+                    continue
+                }
+
+                referencesBySessionID[sessionID] = VSCodeSessionReference(
+                    sessionID: sessionID,
+                    transcriptFile: chatSessionFile
+                )
+            }
+        }
+
+        return referencesBySessionID.values.sorted {
+            $0.sessionID.localizedCaseInsensitiveCompare($1.sessionID) == .orderedAscending
+        }
+    }
+
     private func loadRecord(
         transcriptFile: URL,
         workspaceJSONURL: URL,
-        chatSessionURL: URL,
         workspacePath: String?,
         projectName: String,
         relatedPlanPath: String?,
         sessionID: String,
-        preview: TranscriptPreview,
+        sessionMetadata: VSCodeSessionMetadata,
         title: String,
         fingerprint: String
     ) throws -> SessionRecord? {
@@ -499,11 +560,8 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
         }
 
         let dates = fileDates(for: transcriptFile)
-        let chatSessionModel = FileManager.default.fileExists(atPath: chatSessionURL.path)
-            ? try? TranscriptPreviewExtractor.extractVSCodeChatSessionModel(from: chatSessionURL)
-            : nil
 
-        guard preview.firstUser != nil || preview.firstAssistant != nil else {
+        guard sessionMetadata.firstUser != nil || sessionMetadata.firstAssistant != nil else {
             return nil
         }
 
@@ -513,13 +571,13 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
             workspacePath: workspacePath,
             projectName: projectName,
             branch: nil,
-            conversationModel: preview.latestModel ?? chatSessionModel ?? nil,
-            startedAt: preview.startedAt ?? dates.created,
-            updatedAt: dates.modified,
+            conversationModel: sessionMetadata.latestModel,
+            startedAt: sessionMetadata.startedAt ?? dates.created,
+            updatedAt: sessionMetadata.updatedAt ?? dates.modified,
             title: title,
-            summary: preview.summary,
-            firstUserPreview: preview.firstUser,
-            firstAssistantPreview: preview.firstAssistant,
+            summary: sessionMetadata.summary,
+            firstUserPreview: sessionMetadata.firstUser,
+            firstAssistantPreview: sessionMetadata.firstAssistant,
             rawTranscriptPath: transcriptFile.path,
             rawMetadataPath: workspaceJSONURL.path,
             relatedPlanPath: relatedPlanPath,

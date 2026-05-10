@@ -23,6 +23,7 @@
 		487E4D7B38FDC123C71B26AE /* libAgentSessionManagerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0CFE037DB680ED154043689B /* libAgentSessionManagerCore.a */; };
 		52A29D004A5895EC496076E5 /* AgentSessionManager-Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 28283EED08D30CE6A10381E5 /* AgentSessionManager-Icon.png */; };
 		5308D4D2CB80910E6EFBE6B3 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */; };
+		53CE0A984532A427920442E0 /* VSCodeCopilotAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 781557419678DB527BEA2B41 /* VSCodeCopilotAdapterTests.swift */; };
 		55445405C0C4B604DD394B62 /* CursorAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */; };
 		56AD7542BC1F08BE675081B6 /* SessionSearchCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1834E9C8936435B621086C76 /* SessionSearchCLI.swift */; };
 		5A8B4D7B1B618D5BE8C8C5E6 /* TranscriptDocumentCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C502C8C1B3BCB859BB461884 /* TranscriptDocumentCache.swift */; };
@@ -99,6 +100,7 @@
 		6BEF66E0F0DD94E3CBE7EAB8 /* Adapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Adapters.swift; sourceTree = "<group>"; };
 		74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalogRefreshTests.swift; sourceTree = "<group>"; };
 		77AD452ED3BAD9AC88B10508 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		781557419678DB527BEA2B41 /* VSCodeCopilotAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VSCodeCopilotAdapterTests.swift; sourceTree = "<group>"; };
 		82B73D4FEC3FBEE9171DF758 /* AgentSessionManager.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentSessionManager.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		892DA86504AA676C90F9F425 /* ViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewModel.swift; sourceTree = "<group>"; };
 		8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLiteStoreTests.swift; sourceTree = "<group>"; };
@@ -192,6 +194,7 @@
 				8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */,
 				530298199879A385F6C372DE /* TextSanitizerTests.swift */,
 				618F620A1984E0955FBD39D1 /* TranscriptParsingTests.swift */,
+				781557419678DB527BEA2B41 /* VSCodeCopilotAdapterTests.swift */,
 				E94A3ED57E602E84C177D3A1 /* WorkspaceLauncherTests.swift */,
 			);
 			path = Tests;
@@ -453,6 +456,7 @@
 				8C2295EEF286FDF3629AF2A6 /* SessionSearchCLITests.swift in Sources */,
 				04BEFA40C45EE48667B6A7AA /* TextSanitizerTests.swift in Sources */,
 				D15892D1CCA981D256988BB4 /* TranscriptParsingTests.swift in Sources */,
+				53CE0A984532A427920442E0 /* VSCodeCopilotAdapterTests.swift in Sources */,
 				99013BA95FBFE1C2F4D73C18 /* WorkspaceLauncherTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -530,6 +530,20 @@ public enum TranscriptLoadingError: LocalizedError {
     }
 }
 
+struct VSCodeSessionMetadata {
+    let sessionId: String?
+    let title: String?
+    let startedAt: Date?
+    let updatedAt: Date?
+    let latestModel: String?
+    let firstUser: String?
+    let firstAssistant: String?
+
+    var summary: String? {
+        TextSanitizer.summarize(firstAssistant ?? firstUser)
+    }
+}
+
 public enum TranscriptPreviewExtractor {
     public static func loadTranscript(for record: SessionRecord) throws -> TranscriptDocument {
         guard let transcriptPath = record.rawTranscriptPath else {
@@ -542,7 +556,22 @@ public enum TranscriptPreviewExtractor {
         }
 
         switch record.source {
-        case .copilotCLI, .vscodeCopilot:
+        case .copilotCLI:
+            return try extractEventTranscriptDocument(
+                from: url,
+                source: record.source,
+                sessionId: record.sourceSessionId,
+                title: record.title
+            )
+        case .vscodeCopilot:
+            if isVSCodeChatSessionTranscript(url) {
+                return try extractVSCodeChatSessionDocument(
+                    from: url,
+                    source: record.source,
+                    sessionId: record.sourceSessionId,
+                    title: record.title
+                )
+            }
             return try extractEventTranscriptDocument(
                 from: url,
                 source: record.source,
@@ -616,6 +645,23 @@ public enum TranscriptPreviewExtractor {
         return preview
     }
 
+    static func extractVSCodeSessionMetadata(from url: URL) throws -> VSCodeSessionMetadata {
+        if isVSCodeChatSessionTranscript(url) {
+            return try extractVSCodeChatSessionMetadata(from: url)
+        }
+
+        let preview = try extractEventTranscript(from: url)
+        return VSCodeSessionMetadata(
+            sessionId: preview.sessionId,
+            title: nil,
+            startedAt: preview.startedAt,
+            updatedAt: nil,
+            latestModel: preview.latestModel,
+            firstUser: preview.firstUser,
+            firstAssistant: preview.firstAssistant
+        )
+    }
+
     private static func extractEventTranscriptDocument(
         from url: URL,
         source: SessionSource,
@@ -668,18 +714,7 @@ public enum TranscriptPreviewExtractor {
     }
 
     static func extractVSCodeChatSessionModel(from url: URL) throws -> String? {
-        let contents = try String(contentsOf: url, encoding: .utf8)
-        guard let firstLine = contents.split(separator: "\n", omittingEmptySubsequences: true).first,
-              let data = firstLine.data(using: .utf8),
-              let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-
-        let selectedModel = nestedString(
-            in: object,
-            path: ["v", "inputState", "selectedModel", "identifier"]
-        )
-        return normalizeModelIdentifier(selectedModel)
+        try extractVSCodeChatSessionMetadata(from: url).latestModel
     }
 
     static func extractCursorTranscript(from url: URL) throws -> TranscriptPreview {
@@ -764,6 +799,56 @@ public enum TranscriptPreviewExtractor {
         )
     }
 
+    private static func extractVSCodeChatSessionDocument(
+        from url: URL,
+        source: SessionSource,
+        sessionId: String,
+        title: String
+    ) throws -> TranscriptDocument {
+        let root = try loadVSCodeChatSessionRoot(from: url)
+        let requests = root["requests"] as? [[String: Any]] ?? []
+        var entries: [TranscriptEntry] = []
+
+        for (index, request) in requests.enumerated() {
+            let requestID = request["requestId"] as? String ?? "\(sessionId)-request-\(index)"
+            let requestTimestamp = dateFromEpochMilliseconds(request["timestamp"])
+
+            if let userText = extractVSCodeChatRequestText(from: request) {
+                entries.append(
+                    TranscriptEntry(
+                        id: "\(requestID)-user",
+                        role: .user,
+                        title: "User",
+                        body: userText,
+                        timestamp: requestTimestamp
+                    )
+                )
+            }
+
+            if let assistantText = extractVSCodeChatResponseText(from: request["response"]) {
+                entries.append(
+                    TranscriptEntry(
+                        id: "\(requestID)-assistant",
+                        role: .assistant,
+                        title: "Assistant",
+                        body: assistantText,
+                        timestamp: nil
+                    )
+                )
+            }
+        }
+
+        return TranscriptDocument(
+            sessionID: sessionId,
+            sessionTitle: title,
+            source: source,
+            rawTranscriptPath: url.path,
+            entries: entries,
+            timestampsAreComplete: false,
+            timestampNotice: "VS Code chatSessions preserve creation and request timestamps, but the inspected local files do not expose a reliable per-response timestamp for every assistant chunk."
+        )
+    }
+
     static func extractMarkdownSummary(from url: URL) throws -> String? {
         let text = try String(contentsOf: url, encoding: .utf8)
         let cleaned = text
@@ -792,6 +877,123 @@ public enum TranscriptPreviewExtractor {
         }
 
         return nil
+    }
+
+    private static func isVSCodeChatSessionTranscript(_ url: URL) -> Bool {
+        url.deletingLastPathComponent().lastPathComponent == "chatSessions"
+    }
+
+    private static func extractVSCodeChatSessionMetadata(from url: URL) throws -> VSCodeSessionMetadata {
+        let root = try loadVSCodeChatSessionRoot(from: url)
+        let requests = root["requests"] as? [[String: Any]] ?? []
+        let createdAt = dateFromEpochMilliseconds(root["creationDate"])
+        let updatedAt = requests.compactMap { dateFromEpochMilliseconds($0["timestamp"]) }.max() ?? createdAt
+        let firstUser = requests.lazy.compactMap { extractVSCodeChatRequestText(from: $0) }.first
+        let firstAssistant = requests.lazy.compactMap { extractVSCodeChatResponseText(from: $0["response"]) }.first
+        let latestModel = requests
+            .reversed()
+            .lazy
+            .compactMap { request in
+                normalizeModelIdentifier(request["modelId"] as? String)
+                    ?? normalizeModelIdentifier(nestedString(in: request, path: ["agent", "modelId"]))
+            }
+            .first
+            ?? normalizeModelIdentifier(
+                nestedString(in: root, path: ["inputState", "selectedModel", "identifier"])
+            )
+
+        return VSCodeSessionMetadata(
+            sessionId: root["sessionId"] as? String,
+            title: TextSanitizer.clean(root["customTitle"] as? String),
+            startedAt: createdAt,
+            updatedAt: updatedAt,
+            latestModel: latestModel,
+            firstUser: firstUser,
+            firstAssistant: firstAssistant
+        )
+    }
+
+    private static func loadVSCodeChatSessionRoot(from url: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: url)
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return (object["v"] as? [String: Any]) ?? object
+        }
+
+        let contents = String(decoding: data, as: UTF8.self)
+        for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let lineData = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
+                continue
+            }
+            return (object["v"] as? [String: Any]) ?? object
+        }
+
+        throw TranscriptLoadingError.transcriptUnreadable(url.path)
+    }
+
+    private static func extractVSCodeChatRequestText(from request: [String: Any]) -> String? {
+        guard let message = request["message"] as? [String: Any] else {
+            return nil
+        }
+
+        if let text = message["text"] as? String {
+            return TextSanitizer.clean(SearchTextMatcher.visibleText(from: text))
+        }
+
+        if let parts = message["parts"] as? [[String: Any]] {
+            let combined = parts.compactMap { part -> String? in
+                if let text = part["text"] as? String {
+                    return text
+                }
+                return nestedString(in: part, path: ["value", "text"])
+            }.joined(separator: "\n\n")
+            return TextSanitizer.clean(SearchTextMatcher.visibleText(from: combined))
+        }
+
+        return nil
+    }
+
+    private static func extractVSCodeChatResponseText(from rawResponse: Any?) -> String? {
+        guard let responseItems = rawResponse as? [Any] else {
+            return nil
+        }
+
+        let fragments = responseItems.compactMap { item -> String? in
+            guard let item = item as? [String: Any] else {
+                return nil
+            }
+
+            if let kind = item["kind"] as? String {
+                switch kind {
+                case "markdownContent":
+                    return nestedString(in: item, path: ["content", "value"])
+                case "warningMessage":
+                    return TextSanitizer.clean(item["warningMessage"] as? String)
+                default:
+                    return nil
+                }
+            }
+
+            return item["value"] as? String
+        }
+
+        guard !fragments.isEmpty else {
+            return nil
+        }
+
+        return TextSanitizer.clean(SearchTextMatcher.visibleText(from: fragments.joined()))
+    }
+
+    private static func dateFromEpochMilliseconds(_ rawValue: Any?) -> Date? {
+        switch rawValue {
+        case let number as NSNumber:
+            return Date(timeIntervalSince1970: number.doubleValue / 1000)
+        case let string as String:
+            guard let milliseconds = Double(string) else { return nil }
+            return Date(timeIntervalSince1970: milliseconds / 1000)
+        default:
+            return nil
+        }
     }
 
     private static func normalizeModelIdentifier(_ rawValue: String?) -> String? {

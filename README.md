@@ -78,9 +78,10 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
 - **Catalog** menu actions now include **Open Index Folder** for quickly revealing the directory that contains `catalog.sqlite3`.
 - A **Rebuild Session Index** command remains available under the **Catalog** menu as a recovery/debug path.
 - Cursor sessions now prefer Cursor workspace metadata from `workspaceStorage/workspace.json` for canonical workspace paths and display names, with the `~/.cursor/projects/<slug>` directory only used as a fallback when that metadata is missing.
-- Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (`chatSessions` selected model). Cursor transcripts did not show a stable per-session model field in the inspected local store.
+- VS Code Copilot sessions are indexed from both the older `GitHub.copilot-chat/transcripts` store and the current `chatSessions` store; the current `chatSessions` format also preserves the custom chat title you see in VS Code.
+- Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (legacy event transcripts or current `chatSessions` request model IDs). Cursor transcripts did not show a stable per-session model field in the inspected local store.
 - The in-app transcript viewer now opens in a separate window instead of an attached sheet, preserving the same UI while avoiding parent-window repositioning.
-- The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and VS Code Copilot. Cursor transcripts are still readable in-app, but the inspected local JSONL files do not expose per-message timestamps.
+- The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and legacy VS Code event transcripts. Current VS Code `chatSessions` and Cursor transcripts are still readable in-app, but the inspected local files do not expose a complete per-message timestamp for every assistant response.
 - The companion CLI supports `agent-session-manager search --query <text>`, `agent-session-manager --search <text>`, `--refresh`, `--within`, `--limit`, `--json`, and `-h` / `--help`.
 - `./build.sh` computes the marketing version as `<incrementing-build-number>.<commit-derived-8-digit-number>`, installs the finished Release app into `/Applications`, and installs `/usr/local/bin/agent-session-manager` as a symlink to the bundled CLI helper.
 
