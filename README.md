@@ -69,7 +69,7 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
 - The local SQLite catalog lives under `~/Library/Application Support/AgentSessionManager/catalog.sqlite3`.
 - The app now stores its own **local-only starred session preferences** alongside the catalog so stars survive refreshes and app relaunches without modifying the original session sources.
 - The app now runs an **incremental refresh automatically on launch** and the main **Refresh** button uses that same incremental path.
-- The app now includes a standard macOS **Settings** dialog for **Launch at Login**, a configurable **Newton repos path**, and optional **Auto Session refresh** intervals that run the normal incremental refresh path while the app is open.
+- The app now includes a standard macOS **Settings** dialog for **Launch at Login**, a configurable **Newton repos path**, and an **Auto Session Refresh** section with a timer plus separate controls for refresh on the first app launch after system startup and on subsequent launches.
 - The app now includes a **CLI** menu with **Install CLI to PATH**, which installs a user-level `agent-session-manager` command and, when needed, adds `~/.local/bin` to `~/.zprofile`.
 - Incremental refresh still scans the source directories, but it only reparses sessions whose transcript/metadata files changed and only upserts/deletes affected rows in SQLite, including the persisted transcript search index.
 - The **Newton repos only** filter now matches only workspace paths that live under the configured Newton repos root and whose repo directory starts with `newton`, with path normalization handling either `/path/to/repos` or `/path/to/repos/`.

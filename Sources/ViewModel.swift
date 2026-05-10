@@ -66,11 +66,15 @@ final class SessionBrowserViewModel: ObservableObject {
             let persisted = try catalog.loadPersistedSessions()
             applySessions(persisted)
             lastRefreshDate = catalogModifiedDate()
-            await performRefresh(
-                activity: .incremental,
-                operation: { try catalog.refreshSessions() },
-                completesInitialLoad: true
-            )
+            if shouldRefreshOnLaunch() {
+                await performRefresh(
+                    activity: .incremental,
+                    operation: { try catalog.refreshSessions() },
+                    completesInitialLoad: true
+                )
+            } else {
+                hasCompletedInitialLoad = true
+            }
         } catch {
             errorMessage = error.localizedDescription
             hasCompletedInitialLoad = true
@@ -454,6 +458,11 @@ final class SessionBrowserViewModel: ObservableObject {
     private func refreshSessionsIfIdle() async {
         guard hasCompletedInitialLoad, !isRefreshing else { return }
         await refreshSessions()
+    }
+
+    private func shouldRefreshOnLaunch() -> Bool {
+        guard let settings else { return true }
+        return settings.consumeLaunchRefreshDecision().shouldRefresh
     }
 
     private func performRefresh(

@@ -39,6 +39,8 @@ final class AppSettingsTests: XCTestCase {
         )
         store.setNewtonReposRootPath("/Users/tester/repos/")
         store.setAutoRefreshCadence(.every4Hours)
+        store.setRefreshOnFirstLaunchAfterBoot(false)
+        store.setRefreshOnSubsequentLaunches(false)
 
         let reopenedStore = AppSettingsStore(
             userDefaults: defaults,
@@ -48,6 +50,8 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(reopenedStore.newtonReposRootPath, "/Users/tester/repos")
         XCTAssertEqual(reopenedStore.autoRefreshCadence, .every4Hours)
+        XCTAssertFalse(reopenedStore.refreshOnFirstLaunchAfterBoot)
+        XCTAssertFalse(reopenedStore.refreshOnSubsequentLaunches)
     }
 
     func testLaunchAtLoginFailureSurfacesErrorAndKeepsDisabledState() {
@@ -79,6 +83,45 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(AutoRefreshCadence.every4Hours.timeInterval, 14_400)
         XCTAssertEqual(AutoRefreshCadence.everyDay.timeInterval, 86_400)
         XCTAssertEqual(AutoRefreshCadence.every7Days.timeInterval, 604_800)
+    }
+
+    func testLaunchRefreshDecisionUsesFirstAndSubsequentLaunchSettings() {
+        let suiteName = "AppSettingsTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let settings = AutoSessionRefreshSettings(
+            cadence: .off,
+            refreshOnFirstLaunchAfterBoot: false,
+            refreshOnSubsequentLaunches: true
+        )
+
+        let firstDecision = AppSettingsPersistence.consumeLaunchRefreshDecision(
+            settings: settings,
+            userDefaults: defaults,
+            referenceDate: Date(timeIntervalSince1970: 1_000),
+            systemUptime: 100
+        )
+        let subsequentDecision = AppSettingsPersistence.consumeLaunchRefreshDecision(
+            settings: settings,
+            userDefaults: defaults,
+            referenceDate: Date(timeIntervalSince1970: 2_000),
+            systemUptime: 1_100
+        )
+
+        XCTAssertEqual(firstDecision, LaunchRefreshDecision(kind: .firstLaunchAfterBoot, shouldRefresh: false))
+        XCTAssertEqual(subsequentDecision, LaunchRefreshDecision(kind: .subsequentLaunch, shouldRefresh: true))
+    }
+
+    func testDefaultAutoSessionRefreshSettingsPreserveLaunchRefreshBehavior() {
+        XCTAssertEqual(
+            AutoSessionRefreshSettings.standard,
+            AutoSessionRefreshSettings(
+                cadence: .off,
+                refreshOnFirstLaunchAfterBoot: true,
+                refreshOnSubsequentLaunches: true
+            )
+        )
     }
 }
 

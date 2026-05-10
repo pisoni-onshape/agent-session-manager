@@ -51,9 +51,11 @@ struct SettingsView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
+            }
 
+            Section("Auto Session Refresh") {
                 Picker(
-                    "Auto Session refresh",
+                    "Refresh on a timer",
                     selection: Binding(
                         get: { settings.autoRefreshCadence },
                         set: { settings.setAutoRefreshCadence($0) }
@@ -65,7 +67,23 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Text("Auto refresh runs the standard Refresh Sessions path while the app is open. It does not rebuild the session index.")
+                Toggle(
+                    "Refresh on first launch after system startup",
+                    isOn: Binding(
+                        get: { settings.refreshOnFirstLaunchAfterBoot },
+                        set: { settings.setRefreshOnFirstLaunchAfterBoot($0) }
+                    )
+                )
+
+                Toggle(
+                    "Refresh on subsequent launches",
+                    isOn: Binding(
+                        get: { settings.refreshOnSubsequentLaunches },
+                        set: { settings.setRefreshOnSubsequentLaunches($0) }
+                    )
+                )
+
+                Text("These options run the standard Refresh Sessions path while the app is open. The first-launch option applies only once per system boot, and subsequent launches are controlled separately.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

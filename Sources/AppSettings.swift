@@ -58,6 +58,8 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var launchAtLoginErrorMessage: String?
     @Published private(set) var newtonReposRootPath: String
     @Published private(set) var autoRefreshCadence: AutoRefreshCadence
+    @Published private(set) var refreshOnFirstLaunchAfterBoot: Bool
+    @Published private(set) var refreshOnSubsequentLaunches: Bool
 
     private let userDefaults: UserDefaults
     private let launchAtLoginController: any LaunchAtLoginControlling
@@ -72,19 +74,26 @@ final class AppSettingsStore: ObservableObject {
         self.launchAtLoginController = launchAtLoginController
         self.homeDirectoryURL = homeDirectoryURL
 
-        let homeDirectoryPath = homeDirectoryURL.path
-        let defaultRootPath = AppSettingsSnapshot.defaultNewtonReposRootPath(homeDirectory: homeDirectoryURL)
-        let storedRootPath = userDefaults.string(forKey: AppSettingsPersistence.newtonReposRootPathKey) ?? defaultRootPath
-        let storedAutoRefreshCadence = userDefaults.string(forKey: AppSettingsPersistence.autoRefreshCadenceKey)
-
-        self.newtonReposRootPath = AppSettingsSnapshot.normalizedNewtonReposRootPath(
-            storedRootPath,
-            homeDirectoryPath: homeDirectoryPath
+        let snapshot = AppSettingsPersistence.loadSnapshot(
+            userDefaults: userDefaults,
+            homeDirectoryURL: homeDirectoryURL
         )
-        self.autoRefreshCadence = AutoRefreshCadence(rawValue: storedAutoRefreshCadence ?? "") ?? .off
+
+        self.newtonReposRootPath = snapshot.newtonReposRootPath
+        self.autoRefreshCadence = snapshot.autoSessionRefresh.cadence
+        self.refreshOnFirstLaunchAfterBoot = snapshot.autoSessionRefresh.refreshOnFirstLaunchAfterBoot
+        self.refreshOnSubsequentLaunches = snapshot.autoSessionRefresh.refreshOnSubsequentLaunches
 
         userDefaults.set(self.newtonReposRootPath, forKey: AppSettingsPersistence.newtonReposRootPathKey)
         userDefaults.set(self.autoRefreshCadence.rawValue, forKey: AppSettingsPersistence.autoRefreshCadenceKey)
+        userDefaults.set(
+            self.refreshOnFirstLaunchAfterBoot,
+            forKey: AppSettingsPersistence.refreshOnFirstLaunchAfterBootKey
+        )
+        userDefaults.set(
+            self.refreshOnSubsequentLaunches,
+            forKey: AppSettingsPersistence.refreshOnSubsequentLaunchesKey
+        )
 
         refreshLaunchAtLoginStatus()
     }
@@ -92,7 +101,15 @@ final class AppSettingsStore: ObservableObject {
     var snapshot: AppSettingsSnapshot {
         AppSettingsSnapshot(
             newtonReposRootPath: newtonReposRootPath,
-            autoRefreshCadence: autoRefreshCadence
+            autoSessionRefresh: autoSessionRefreshSettings
+        )
+    }
+
+    var autoSessionRefreshSettings: AutoSessionRefreshSettings {
+        AutoSessionRefreshSettings(
+            cadence: autoRefreshCadence,
+            refreshOnFirstLaunchAfterBoot: refreshOnFirstLaunchAfterBoot,
+            refreshOnSubsequentLaunches: refreshOnSubsequentLaunches
         )
     }
 
@@ -129,5 +146,31 @@ final class AppSettingsStore: ObservableObject {
 
         autoRefreshCadence = cadence
         userDefaults.set(cadence.rawValue, forKey: AppSettingsPersistence.autoRefreshCadenceKey)
+    }
+
+    func setRefreshOnFirstLaunchAfterBoot(_ enabled: Bool) {
+        guard enabled != refreshOnFirstLaunchAfterBoot else { return }
+
+        refreshOnFirstLaunchAfterBoot = enabled
+        userDefaults.set(enabled, forKey: AppSettingsPersistence.refreshOnFirstLaunchAfterBootKey)
+    }
+
+    func setRefreshOnSubsequentLaunches(_ enabled: Bool) {
+        guard enabled != refreshOnSubsequentLaunches else { return }
+
+        refreshOnSubsequentLaunches = enabled
+        userDefaults.set(enabled, forKey: AppSettingsPersistence.refreshOnSubsequentLaunchesKey)
+    }
+
+    func consumeLaunchRefreshDecision(
+        referenceDate: Date = Date(),
+        systemUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> LaunchRefreshDecision {
+        AppSettingsPersistence.consumeLaunchRefreshDecision(
+            settings: autoSessionRefreshSettings,
+            userDefaults: userDefaults,
+            referenceDate: referenceDate,
+            systemUptime: systemUptime
+        )
     }
 }

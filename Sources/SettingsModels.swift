@@ -55,13 +55,50 @@ public enum AutoRefreshCadence: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+public struct AutoSessionRefreshSettings: Equatable, Sendable {
+    public let cadence: AutoRefreshCadence
+    public let refreshOnFirstLaunchAfterBoot: Bool
+    public let refreshOnSubsequentLaunches: Bool
+
+    public init(
+        cadence: AutoRefreshCadence,
+        refreshOnFirstLaunchAfterBoot: Bool,
+        refreshOnSubsequentLaunches: Bool
+    ) {
+        self.cadence = cadence
+        self.refreshOnFirstLaunchAfterBoot = refreshOnFirstLaunchAfterBoot
+        self.refreshOnSubsequentLaunches = refreshOnSubsequentLaunches
+    }
+
+    public static let standard = AutoSessionRefreshSettings(
+        cadence: .off,
+        refreshOnFirstLaunchAfterBoot: true,
+        refreshOnSubsequentLaunches: true
+    )
+}
+
+public enum LaunchRefreshKind: Equatable, Sendable {
+    case firstLaunchAfterBoot
+    case subsequentLaunch
+}
+
+public struct LaunchRefreshDecision: Equatable, Sendable {
+    public let kind: LaunchRefreshKind
+    public let shouldRefresh: Bool
+
+    public init(kind: LaunchRefreshKind, shouldRefresh: Bool) {
+        self.kind = kind
+        self.shouldRefresh = shouldRefresh
+    }
+}
+
 public struct AppSettingsSnapshot: Equatable, Sendable {
     public let newtonReposRootPath: String
-    public let autoRefreshCadence: AutoRefreshCadence
+    public let autoSessionRefresh: AutoSessionRefreshSettings
 
-    public init(newtonReposRootPath: String, autoRefreshCadence: AutoRefreshCadence) {
+    public init(newtonReposRootPath: String, autoSessionRefresh: AutoSessionRefreshSettings) {
         self.newtonReposRootPath = newtonReposRootPath
-        self.autoRefreshCadence = autoRefreshCadence
+        self.autoSessionRefresh = autoSessionRefresh
     }
 
     public static func defaultNewtonReposRootPath(homeDirectory: URL = AppPaths.homeDirectory) -> String {
@@ -79,7 +116,7 @@ public struct AppSettingsSnapshot: Equatable, Sendable {
     public static func standard(homeDirectory: URL = AppPaths.homeDirectory) -> AppSettingsSnapshot {
         AppSettingsSnapshot(
             newtonReposRootPath: defaultNewtonReposRootPath(homeDirectory: homeDirectory),
-            autoRefreshCadence: .off
+            autoSessionRefresh: .standard
         )
     }
 }
@@ -87,6 +124,16 @@ public struct AppSettingsSnapshot: Equatable, Sendable {
 public enum AppSettingsPersistence {
     public static let newtonReposRootPathKey = "settings.newtonReposRootPath"
     public static let autoRefreshCadenceKey = "settings.autoRefreshCadence"
+    public static let refreshOnFirstLaunchAfterBootKey = "settings.refreshOnFirstLaunchAfterBoot"
+    public static let refreshOnSubsequentLaunchesKey = "settings.refreshOnSubsequentLaunches"
+    public static let lastSeenBootIdentifierKey = "settings.lastSeenBootIdentifier"
+
+    public static func currentBootIdentifier(
+        referenceDate: Date = Date(),
+        systemUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> String {
+        String(Int((referenceDate.timeIntervalSince1970 - systemUptime).rounded(.down)))
+    }
 
     public static func loadSnapshot(
         userDefaults: UserDefaults = .standard,
@@ -96,13 +143,44 @@ public enum AppSettingsPersistence {
         let defaultRootPath = AppSettingsSnapshot.defaultNewtonReposRootPath(homeDirectory: homeDirectoryURL)
         let storedRootPath = userDefaults.string(forKey: newtonReposRootPathKey) ?? defaultRootPath
         let storedAutoRefreshCadence = userDefaults.string(forKey: autoRefreshCadenceKey)
+        let refreshOnFirstLaunchAfterBoot = userDefaults.object(forKey: refreshOnFirstLaunchAfterBootKey) as? Bool
+            ?? AutoSessionRefreshSettings.standard.refreshOnFirstLaunchAfterBoot
+        let refreshOnSubsequentLaunches = userDefaults.object(forKey: refreshOnSubsequentLaunchesKey) as? Bool
+            ?? AutoSessionRefreshSettings.standard.refreshOnSubsequentLaunches
 
         return AppSettingsSnapshot(
             newtonReposRootPath: AppSettingsSnapshot.normalizedNewtonReposRootPath(
                 storedRootPath,
                 homeDirectoryPath: homeDirectoryPath
             ),
-            autoRefreshCadence: AutoRefreshCadence(rawValue: storedAutoRefreshCadence ?? "") ?? .off
+            autoSessionRefresh: AutoSessionRefreshSettings(
+                cadence: AutoRefreshCadence(rawValue: storedAutoRefreshCadence ?? "") ?? .off,
+                refreshOnFirstLaunchAfterBoot: refreshOnFirstLaunchAfterBoot,
+                refreshOnSubsequentLaunches: refreshOnSubsequentLaunches
+            )
         )
+    }
+
+    public static func consumeLaunchRefreshDecision(
+        settings: AutoSessionRefreshSettings,
+        userDefaults: UserDefaults = .standard,
+        referenceDate: Date = Date(),
+        systemUptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> LaunchRefreshDecision {
+        let bootIdentifier = currentBootIdentifier(referenceDate: referenceDate, systemUptime: systemUptime)
+        let lastSeenBootIdentifier = userDefaults.string(forKey: lastSeenBootIdentifierKey)
+        let kind: LaunchRefreshKind = lastSeenBootIdentifier == bootIdentifier ? .subsequentLaunch : .firstLaunchAfterBoot
+
+        userDefaults.set(bootIdentifier, forKey: lastSeenBootIdentifierKey)
+
+        let shouldRefresh: Bool
+        switch kind {
+        case .firstLaunchAfterBoot:
+            shouldRefresh = settings.refreshOnFirstLaunchAfterBoot
+        case .subsequentLaunch:
+            shouldRefresh = settings.refreshOnSubsequentLaunches
+        }
+
+        return LaunchRefreshDecision(kind: kind, shouldRefresh: shouldRefresh)
     }
 }

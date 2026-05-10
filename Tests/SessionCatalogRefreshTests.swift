@@ -218,7 +218,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
             settingsProvider: {
                 AppSettingsSnapshot(
                     newtonReposRootPath: "/Users/pisoni/Development/LocalProjects",
-                    autoRefreshCadence: .off
+                    autoSessionRefresh: .standard
                 )
             },
             adaptersOverride: [adapter]
