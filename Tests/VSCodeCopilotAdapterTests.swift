@@ -30,7 +30,8 @@ final class VSCodeCopilotAdapterTests: XCTestCase {
             customTitle: "Reviewing display data design and code commits",
             userText: "<timestamp>Friday, May 8, 2026, 3:53 PM (UTC+5:30)</timestamp>\nPlease review this diff.",
             assistantFragments: ["I checked the ", "**transition**", " path."],
-            modelID: "copilot/gpt-5.1-codex-max"
+            modelID: "copilot/gpt-5.1-codex-max",
+            includeJSONSnapshot: false
         )
 
         let records = try VSCodeCopilotAdapter(root: workspaceStorageRoot).discover()
@@ -46,7 +47,7 @@ final class VSCodeCopilotAdapterTests: XCTestCase {
         XCTAssertEqual(records[0].resumeKind, .openInVSCode)
         XCTAssertEqual(
             records[0].rawTranscriptPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
-            sessionFiles.jsonURL.standardizedFileURL.path
+            sessionFiles.jsonlURL.standardizedFileURL.path
         )
     }
 
@@ -63,7 +64,8 @@ final class VSCodeCopilotAdapterTests: XCTestCase {
             customTitle: "Jira MCP server OAuth SETUP assistance",
             userText: "Please help me set up Jira OAuth.",
             assistantFragments: ["Open ", "**Settings**", " and add the callback URL."],
-            modelID: "copilot/gpt-5.4"
+            modelID: "copilot/gpt-5.4",
+            includeJSONSnapshot: false
         )
 
         let record = SessionRecord(
@@ -79,7 +81,7 @@ final class VSCodeCopilotAdapterTests: XCTestCase {
             summary: nil,
             firstUserPreview: nil,
             firstAssistantPreview: nil,
-            rawTranscriptPath: sessionFiles.jsonURL.path,
+            rawTranscriptPath: sessionFiles.jsonlURL.path,
             rawMetadataPath: nil,
             relatedPlanPath: nil,
             fingerprint: "fingerprint-vscode-chat",
@@ -113,8 +115,9 @@ private func createVSCodeChatSessionFiles(
     customTitle: String,
     userText: String,
     assistantFragments: [String],
-    modelID: String
-) throws -> (jsonURL: URL, jsonlURL: URL) {
+    modelID: String,
+    includeJSONSnapshot: Bool = true
+) throws -> (jsonURL: URL?, jsonlURL: URL) {
     var root: [String: Any] = [
         "version": 3,
         "responderUsername": "GitHub Copilot",
@@ -135,13 +138,68 @@ private func createVSCodeChatSessionFiles(
     ]
     root["customTitle"] = customTitle
 
-    let jsonURL = directory.appendingPathComponent("\(sessionID).json")
-    let jsonData = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-    try jsonData.write(to: jsonURL)
+    let jsonURL: URL?
+    if includeJSONSnapshot {
+        let snapshotURL = directory.appendingPathComponent("\(sessionID).json")
+        let jsonData = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try jsonData.write(to: snapshotURL)
+        jsonURL = snapshotURL
+    } else {
+        jsonURL = nil
+    }
 
     let jsonlURL = directory.appendingPathComponent("\(sessionID).jsonl")
-    let wrappedData = try JSONSerialization.data(withJSONObject: ["kind": 0, "v": root], options: [.sortedKeys])
-    try wrappedData.write(to: jsonlURL)
+    let patchRecords: [[String: Any]] = [
+        [
+            "kind": 0,
+            "v": [
+                "version": 3,
+                "creationDate": 1_769_787_480_334,
+                "initialLocation": "panel",
+                "responderUsername": "GitHub Copilot",
+                "sessionId": sessionID,
+                "hasPendingEdits": false,
+                "requests": [],
+                "pendingRequests": [],
+                "inputState": [
+                    "attachments": [],
+                    "selectedModel": [
+                        "identifier": modelID
+                    ]
+                ]
+            ]
+        ],
+        [
+            "kind": 1,
+            "k": ["customTitle"],
+            "v": customTitle
+        ],
+        [
+            "kind": 2,
+            "k": ["requests"],
+            "v": [[
+                "requestId": "request-1",
+                "timestamp": 1_769_787_885_941,
+                "modelId": modelID,
+                "message": [
+                    "text": userText
+                ],
+                "response": []
+            ]]
+        ],
+        [
+            "kind": 2,
+            "k": ["requests", 0, "response"],
+            "v": assistantFragments.map { ["value": $0] }
+        ]
+    ]
+    let jsonlText = try patchRecords
+        .map { record in
+            let data = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+            return String(decoding: data, as: UTF8.self)
+        }
+        .joined(separator: "\n")
+    try jsonlText.write(to: jsonlURL, atomically: true, encoding: .utf8)
 
     return (jsonURL, jsonlURL)
 }

@@ -544,6 +544,11 @@ struct VSCodeSessionMetadata {
     }
 }
 
+private enum VSCodeChatSessionPathComponent {
+    case key(String)
+    case index(Int)
+}
+
 public enum TranscriptPreviewExtractor {
     public static func loadTranscript(for record: SessionRecord) throws -> TranscriptDocument {
         guard let transcriptPath = record.rawTranscriptPath else {
@@ -915,20 +920,56 @@ public enum TranscriptPreviewExtractor {
 
     private static func loadVSCodeChatSessionRoot(from url: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: url)
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           object["kind"] == nil {
             return (object["v"] as? [String: Any]) ?? object
         }
 
         let contents = String(decoding: data, as: UTF8.self)
+        var root: [String: Any]?
         for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let lineData = line.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
                 continue
             }
-            return (object["v"] as? [String: Any]) ?? object
+
+            let kind = (object["kind"] as? NSNumber)?.intValue
+            switch kind {
+            case 0:
+                root = (object["v"] as? [String: Any]) ?? object
+            case 1:
+                guard let path = decodeVSCodeChatSessionPath(from: object["k"]) else { continue }
+                root = (setVSCodeChatSessionValue(
+                    in: root ?? [:],
+                    path: path,
+                    value: object["v"] ?? NSNull()
+                ) as? [String: Any]) ?? root
+            case 2:
+                guard let path = decodeVSCodeChatSessionPath(from: object["k"]) else { continue }
+                let values: [Any]
+                if let array = object["v"] as? [Any] {
+                    values = array
+                } else if let value = object["v"] {
+                    values = [value]
+                } else {
+                    values = []
+                }
+                root = (appendVSCodeChatSessionValues(
+                    in: root ?? [:],
+                    path: path,
+                    values: values
+                ) as? [String: Any]) ?? root
+            default:
+                if root == nil {
+                    root = (object["v"] as? [String: Any]) ?? object
+                }
+            }
         }
 
-        throw TranscriptLoadingError.transcriptUnreadable(url.path)
+        guard let root else {
+            throw TranscriptLoadingError.transcriptUnreadable(url.path)
+        }
+        return root
     }
 
     private static func extractVSCodeChatRequestText(from request: [String: Any]) -> String? {
@@ -993,6 +1034,131 @@ public enum TranscriptPreviewExtractor {
             return Date(timeIntervalSince1970: milliseconds / 1000)
         default:
             return nil
+        }
+    }
+
+    private static func decodeVSCodeChatSessionPath(from rawPath: Any?) -> [VSCodeChatSessionPathComponent]? {
+        guard let rawSegments = rawPath as? [Any] else {
+            return nil
+        }
+
+        let segments = rawSegments.compactMap { rawSegment -> VSCodeChatSessionPathComponent? in
+            switch rawSegment {
+            case let key as String:
+                return .key(key)
+            case let index as NSNumber:
+                return .index(index.intValue)
+            default:
+                return nil
+            }
+        }
+
+        return segments.count == rawSegments.count ? segments : nil
+    }
+
+    private static func setVSCodeChatSessionValue(
+        in current: Any,
+        path: [VSCodeChatSessionPathComponent],
+        value: Any
+    ) -> Any {
+        guard let component = path.first else {
+            return value
+        }
+
+        switch component {
+        case .key(let key):
+            var dictionary = current as? [String: Any] ?? [:]
+            if path.count == 1 {
+                dictionary[key] = value
+            } else {
+                dictionary[key] = setVSCodeChatSessionValue(
+                    in: sanitizedVSCodeChatSessionValue(dictionary[key], nextPath: Array(path.dropFirst())),
+                    path: Array(path.dropFirst()),
+                    value: value
+                )
+            }
+            return dictionary
+        case .index(let index):
+            var array = current as? [Any] ?? []
+            while array.count <= index {
+                array.append(NSNull())
+            }
+            if path.count == 1 {
+                array[index] = value
+            } else {
+                array[index] = setVSCodeChatSessionValue(
+                    in: sanitizedVSCodeChatSessionValue(array[index], nextPath: Array(path.dropFirst())),
+                    path: Array(path.dropFirst()),
+                    value: value
+                )
+            }
+            return array
+        }
+    }
+
+    private static func appendVSCodeChatSessionValues(
+        in current: Any,
+        path: [VSCodeChatSessionPathComponent],
+        values: [Any]
+    ) -> Any {
+        guard let component = path.first else {
+            var array = current as? [Any] ?? []
+            array.append(contentsOf: values)
+            return array
+        }
+
+        switch component {
+        case .key(let key):
+            var dictionary = current as? [String: Any] ?? [:]
+            if path.count == 1 {
+                var array = dictionary[key] as? [Any] ?? []
+                array.append(contentsOf: values)
+                dictionary[key] = array
+            } else {
+                dictionary[key] = appendVSCodeChatSessionValues(
+                    in: sanitizedVSCodeChatSessionValue(dictionary[key], nextPath: Array(path.dropFirst())),
+                    path: Array(path.dropFirst()),
+                    values: values
+                )
+            }
+            return dictionary
+        case .index(let index):
+            var array = current as? [Any] ?? []
+            while array.count <= index {
+                array.append(NSNull())
+            }
+            if path.count == 1 {
+                var childArray = array[index] as? [Any] ?? []
+                childArray.append(contentsOf: values)
+                array[index] = childArray
+            } else {
+                array[index] = appendVSCodeChatSessionValues(
+                    in: sanitizedVSCodeChatSessionValue(array[index], nextPath: Array(path.dropFirst())),
+                    path: Array(path.dropFirst()),
+                    values: values
+                )
+            }
+            return array
+        }
+    }
+
+    private static func sanitizedVSCodeChatSessionValue(
+        _ value: Any?,
+        nextPath: [VSCodeChatSessionPathComponent]
+    ) -> Any {
+        if let value, !(value is NSNull) {
+            return value
+        }
+
+        guard let nextComponent = nextPath.first else {
+            return [:]
+        }
+
+        switch nextComponent {
+        case .key:
+            return [String: Any]()
+        case .index:
+            return [Any]()
         }
     }
 
