@@ -7,6 +7,7 @@ state_dir=".build-state"
 counter_file="$state_dir/release-version-counter"
 release_glob="$HOME/Library/Developer/Xcode/DerivedData/AgentSessionManager-*/Build/Products/Release/AgentSessionManager.app"
 install_app="/Applications/AgentSessionManager.app"
+install_cli_link="/usr/local/bin/agent-session-manager"
 
 mkdir -p "$state_dir"
 
@@ -79,6 +80,28 @@ echo "$release_app"
 echo
 echo "Installed app:"
 echo "$install_app"
+echo
+installed_cli_helper="$install_app/Contents/Helpers/AgentSessionManagerCLI"
+if [[ ! -x "$installed_cli_helper" ]]; then
+  echo "Bundled CLI helper not found at $installed_cli_helper." >&2
+  exit 1
+fi
+
+install_cli_link_copy() {
+  mkdir -p "$(dirname "$install_cli_link")"
+  ln -sfn "$installed_cli_helper" "$install_cli_link"
+}
+
+if [[ -w "$(dirname "$install_cli_link")" ]]; then
+  install_cli_link_copy
+else
+  echo "Installing the CLI helper to /usr/local/bin may require administrator privileges."
+  sudo mkdir -p "$(dirname "$install_cli_link")"
+  sudo ln -sfn "$installed_cli_helper" "$install_cli_link"
+fi
+
+echo "Installed CLI link:"
+echo "$install_cli_link"
 echo
 echo "Marketing version:"
 echo "$marketing_version"

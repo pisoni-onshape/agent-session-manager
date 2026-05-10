@@ -11,10 +11,12 @@
 		1A6B847794CA7B44F8C9B081 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2C27AD6AF2454C65F2D1A90 /* AppSettings.swift */; };
 		1E325B3CB9ABF5A078988C9E /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */; };
 		1F669C7C07232D3C1694A0A3 /* SessionFiltering.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C9A6E9E1B5E29F559CAC1D9 /* SessionFiltering.swift */; };
+		2586C63EFA49B9E6D984D3D6 /* CLIPathInstallerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A33E5C350DBDB7D5076DF018 /* CLIPathInstallerTests.swift */; };
 		2686696D7E0B57A714094702 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BE74D318718590BE9CACF18 /* ContentView.swift */; };
 		2AF4C97E7BBA5D896468E5E0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8F7C6545E063326573123004 /* Assets.xcassets */; };
 		3584A73530E2863875881211 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */; };
 		374323A3CA71944A86173593 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B1087C9289C144190B61B3C /* SettingsView.swift */; };
+		387E85031E9FA942CEBC73A5 /* CLIPathInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = C24DF61E47E73D674DAE8488 /* CLIPathInstaller.swift */; };
 		3A88E94A114CE717D4C5EE2B /* Storage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EBC35DE3C94D9B0C3A4728 /* Storage.swift */; };
 		44549A39F6E93B0E8A34AA71 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DC6FF5831403EEB1D0CAFAC /* Utilities.swift */; };
 		45287F9D7F6609D0EFB8EAAD /* libAgentSessionManagerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0CFE037DB680ED154043689B /* libAgentSessionManagerCore.a */; };
@@ -57,6 +59,13 @@
 			remoteGlobalIDString = 5C0CF6CBB4A47642D1132E22;
 			remoteInfo = AgentSessionManager;
 		};
+		7AE4963FCFF022FE8D46B5C4 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D70E980C9FE01EEAEA0ED9BE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F210007508860F7B864A05EA;
+			remoteInfo = AgentSessionManagerCLI;
+		};
 		A9591C29CA00616C4AC309E7 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D70E980C9FE01EEAEA0ED9BE /* Project object */;
@@ -94,8 +103,10 @@
 		892DA86504AA676C90F9F425 /* ViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewModel.swift; sourceTree = "<group>"; };
 		8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLiteStoreTests.swift; sourceTree = "<group>"; };
 		8F7C6545E063326573123004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A33E5C350DBDB7D5076DF018 /* CLIPathInstallerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPathInstallerTests.swift; sourceTree = "<group>"; };
 		A3C4EBCEAA7A1923BC6C0BE4 /* AgentSessionManagerCLI */ = {isa = PBXFileReference; includeInIndex = 0; path = AgentSessionManagerCLI; sourceTree = BUILT_PRODUCTS_DIR; };
 		B95E238E77BEC6ED1E572B3D /* AppSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsTests.swift; sourceTree = "<group>"; };
+		C24DF61E47E73D674DAE8488 /* CLIPathInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIPathInstaller.swift; sourceTree = "<group>"; };
 		C502C8C1B3BCB859BB461884 /* TranscriptDocumentCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptDocumentCache.swift; sourceTree = "<group>"; };
 		C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		CC79DA7CE5281B15608695DB /* SettingsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsModels.swift; sourceTree = "<group>"; };
@@ -152,6 +163,7 @@
 				6BEF66E0F0DD94E3CBE7EAB8 /* Adapters.swift */,
 				4BC01673AC71F156041BD76F /* AgentSessionManagerApp.swift */,
 				D2C27AD6AF2454C65F2D1A90 /* AppSettings.swift */,
+				C24DF61E47E73D674DAE8488 /* CLIPathInstaller.swift */,
 				2BE74D318718590BE9CACF18 /* ContentView.swift */,
 				CEA1E8ACE6592728373C134F /* Models.swift */,
 				5C9A6E9E1B5E29F559CAC1D9 /* SessionFiltering.swift */,
@@ -172,6 +184,7 @@
 			isa = PBXGroup;
 			children = (
 				B95E238E77BEC6ED1E572B3D /* AppSettingsTests.swift */,
+				A33E5C350DBDB7D5076DF018 /* CLIPathInstallerTests.swift */,
 				CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */,
 				CF76D7F25639A165DE9268AC /* NewtonProjectMatchingTests.swift */,
 				74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */,
@@ -268,10 +281,12 @@
 				47DA1D9C9808AE95FEBDE2F0 /* Sources */,
 				DD1AE42AB373B6C89DAA6FAE /* Resources */,
 				FEAA8B0E39CFB2193DB2D07D /* Frameworks */,
+				DFC5C751E586E7CD233B025D /* Bundle CLI helper */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				36D5D90E4AA16AE661FEA3B2 /* PBXTargetDependency */,
 				5EEF9AC2D1AE0AB15929F7CF /* PBXTargetDependency */,
 			);
 			name = AgentSessionManager;
@@ -382,6 +397,25 @@
 			shellPath = /bin/sh;
 			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 		};
+		DFC5C751E586E7CD233B025D /* Bundle CLI helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle CLI helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Helpers/AgentSessionManagerCLI",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nhelper_source=\"${BUILT_PRODUCTS_DIR}/AgentSessionManagerCLI\"\nhelper_destination_dir=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Helpers\"\nhelper_destination=\"${helper_destination_dir}/AgentSessionManagerCLI\"\nif [[ ! -x \"$helper_source\" ]]; then\n  echo \"Expected CLI helper at $helper_source\" >&2\n  exit 1\nfi\nmkdir -p \"$helper_destination_dir\"\nditto \"$helper_source\" \"$helper_destination\"\nchmod +x \"$helper_destination\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -399,6 +433,7 @@
 			files = (
 				B8B334283D193C15934B224F /* AgentSessionManagerApp.swift in Sources */,
 				1A6B847794CA7B44F8C9B081 /* AppSettings.swift in Sources */,
+				387E85031E9FA942CEBC73A5 /* CLIPathInstaller.swift in Sources */,
 				2686696D7E0B57A714094702 /* ContentView.swift in Sources */,
 				374323A3CA71944A86173593 /* SettingsView.swift in Sources */,
 				FDA1F106A884B1FE92BD9907 /* ViewModel.swift in Sources */,
@@ -410,6 +445,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				68EF8294256C5743AB0D7BCB /* AppSettingsTests.swift in Sources */,
+				2586C63EFA49B9E6D984D3D6 /* CLIPathInstallerTests.swift in Sources */,
 				55445405C0C4B604DD394B62 /* CursorAdapterTests.swift in Sources */,
 				CDFEE81802EC2892E50ECC79 /* NewtonProjectMatchingTests.swift in Sources */,
 				5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */,
@@ -440,6 +476,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		36D5D90E4AA16AE661FEA3B2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F210007508860F7B864A05EA /* AgentSessionManagerCLI */;
+			targetProxy = 7AE4963FCFF022FE8D46B5C4 /* PBXContainerItemProxy */;
+		};
 		4E89AAAAE6A5FBBF6F9FBB4F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 5C0CF6CBB4A47642D1132E22 /* AgentSessionManager */;

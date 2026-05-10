@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import AgentSessionManagerCore
 
@@ -39,6 +40,12 @@ struct AgentSessionManagerApp: App {
                 }
                 .disabled(viewModel.isRefreshing)
             }
+
+            CommandMenu("CLI") {
+                Button("Install CLI to PATH") {
+                    installCLIToPath()
+                }
+            }
         }
         WindowGroup("Transcript", for: PresentedTranscript.self) { presentedTranscript in
             if let presentedTranscript = presentedTranscript.wrappedValue {
@@ -59,5 +66,30 @@ struct AgentSessionManagerApp: App {
         Settings {
             SettingsView(settings: settings)
         }
+    }
+
+    private func installCLIToPath() {
+        do {
+            let result = try CLIPathInstaller.installForCurrentUser()
+            presentAlert(
+                title: "CLI Installed",
+                message: result.successMessage,
+                style: .informational
+            )
+        } catch {
+            presentAlert(
+                title: "CLI Installation Failed",
+                message: error.localizedDescription,
+                style: .warning
+            )
+        }
+    }
+
+    private func presentAlert(title: String, message: String, style: NSAlert.Style) {
+        let alert = NSAlert()
+        alert.alertStyle = style
+        alert.messageText = title
+        alert.informativeText = message
+        alert.runModal()
     }
 }

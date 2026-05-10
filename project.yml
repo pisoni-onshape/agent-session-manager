@@ -41,6 +41,7 @@ targets:
         includes:
           - AgentSessionManagerApp.swift
           - AppSettings.swift
+          - CLIPathInstaller.swift
           - ContentView.swift
           - SettingsView.swift
           - ViewModel.swift
@@ -54,8 +55,27 @@ targets:
         SUPPORTS_MACCATALYST: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
+      - target: AgentSessionManagerCLI
+        link: false
+        embed: false
       - target: AgentSessionManagerCore
       - sdk: libsqlite3.tbd
+    postBuildScripts:
+      - name: Bundle CLI helper
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Helpers/AgentSessionManagerCLI
+        script: |
+          set -euo pipefail
+          helper_source="${BUILT_PRODUCTS_DIR}/AgentSessionManagerCLI"
+          helper_destination_dir="${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Helpers"
+          helper_destination="${helper_destination_dir}/AgentSessionManagerCLI"
+          if [[ ! -x "$helper_source" ]]; then
+            echo "Expected CLI helper at $helper_source" >&2
+            exit 1
+          fi
+          mkdir -p "$helper_destination_dir"
+          ditto "$helper_source" "$helper_destination"
+          chmod +x "$helper_destination"
   AgentSessionManagerCLI:
     type: tool
     platform: macOS

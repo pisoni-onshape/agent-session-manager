@@ -1,6 +1,6 @@
 # Agent Session Manager
 
-Agent Session Manager is a macOS SwiftUI desktop app that aggregates local session history from:
+Agent Session Manager is a macOS SwiftUI desktop app with a companion CLI that aggregates local session history from:
 
 - GitHub Copilot CLI
 - Cursor
@@ -49,7 +49,13 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
     /Applications/AgentSessionManager.app
     ```
 
-5. For manual testing without changing the build/install flow, you can still run tests directly:
+5. `./build.sh` also installs a PATH-visible CLI link at:
+
+    ```bash
+    /usr/local/bin/agent-session-manager
+    ```
+
+6. For manual testing without changing the build/install flow, you can still run tests directly:
 
     ```bash
     xcodebuild -project AgentSessionManager.xcodeproj -scheme AgentSessionManager -destination 'platform=macOS' test
@@ -64,6 +70,7 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
 - The app now stores its own **local-only starred session preferences** alongside the catalog so stars survive refreshes and app relaunches without modifying the original session sources.
 - The app now runs an **incremental refresh automatically on launch** and the main **Refresh** button uses that same incremental path.
 - The app now includes a standard macOS **Settings** dialog for **Launch at Login**, a configurable **Newton repos path**, and optional **Auto Session refresh** intervals that run the normal incremental refresh path while the app is open.
+- The app now includes a **CLI** menu with **Install CLI to PATH**, which installs a user-level `agent-session-manager` command and, when needed, adds `~/.local/bin` to `~/.zprofile`.
 - Incremental refresh still scans the source directories, but it only reparses sessions whose transcript/metadata files changed and only upserts/deletes affected rows in SQLite, including the persisted transcript search index.
 - The **Newton repos only** filter now matches only workspace paths that live under the configured Newton repos root and whose repo directory starts with `newton`, with path normalization handling either `/path/to/repos` or `/path/to/repos/`.
 - The main session browser now exposes first-class **Open Plan**, persistent metadata **copy buttons**, a **Starred / Unstarred / All** filter with starred sessions grouped ahead of unstarred ones and separated by an inline divider, wider multi-row **Project/Branch** filters, and the conversation **workspace path** directly in metadata.
@@ -74,4 +81,24 @@ It also supports an in-app read-only transcript viewer so you can inspect the co
 - Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (`chatSessions` selected model). Cursor transcripts did not show a stable per-session model field in the inspected local store.
 - The in-app transcript viewer now opens in a separate window instead of an attached sheet, preserving the same UI while avoiding parent-window repositioning.
 - The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and VS Code Copilot. Cursor transcripts are still readable in-app, but the inspected local JSONL files do not expose per-message timestamps.
-- `./build.sh` computes the marketing version as `<incrementing-build-number>.<commit-derived-8-digit-number>` and installs the finished Release app into `/Applications`.
+- The companion CLI supports `agent-session-manager search --query <text>`, `agent-session-manager --search <text>`, `--refresh`, `--within`, `--limit`, `--json`, and `-h` / `--help`.
+- `./build.sh` computes the marketing version as `<incrementing-build-number>.<commit-derived-8-digit-number>`, installs the finished Release app into `/Applications`, and installs `/usr/local/bin/agent-session-manager` as a symlink to the bundled CLI helper.
+
+## CLI usage
+
+```bash
+agent-session-manager --help
+agent-session-manager search --query 'project:newton2 transcript:"drag bug"' --newton-only --branch main
+agent-session-manager --search 'title:"plan update"' --within 1w --limit 10
+agent-session-manager search --query 'source:cursor branch:main' --refresh --json
+```
+
+The CLI search accepts the same label syntax as the app toolbar search:
+
+- `title:`
+- `project:`
+- `branch:`
+- `source:`
+- `model:`
+- `id:`
+- `transcript:`
