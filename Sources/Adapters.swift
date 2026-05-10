@@ -24,7 +24,7 @@ final class SessionCatalog {
         store = try SQLiteSessionStore(databaseURL: storeURL)
         adapters = adaptersOverride ?? [
             CopilotCLIAdapter(root: roots.copilotCLI),
-            CursorAdapter(root: roots.cursorProjects),
+            CursorAdapter(root: roots.cursorProjects, workspaceStorageRoot: roots.cursorWorkspaceStorage),
             VSCodeCopilotAdapter(root: roots.vscodeWorkspaceStorage)
         ]
     }
@@ -218,10 +218,12 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
 
 struct CursorAdapter: SessionSourceAdapter {
     let root: URL
+    let workspaceStorageRoot: URL
 
     func scanCandidates() throws -> [SessionScanCandidate] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
 
+        let workspaceReferences = try loadWorkspaceReferencesByProjectDirectory()
         let projectDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
             .filter(\.hasDirectoryPath)
 
@@ -229,8 +231,11 @@ struct CursorAdapter: SessionSourceAdapter {
             let transcriptRoot = projectDirectory.appendingPathComponent("agent-transcripts", isDirectory: true)
             guard FileManager.default.fileExists(atPath: transcriptRoot.path) else { return [] }
 
-            let workspacePath = PathUtilities.decodeCursorWorkspacePath(from: projectDirectory.lastPathComponent)
-            let fallbackProjectName = PathUtilities.cursorFallbackProjectName(from: projectDirectory.lastPathComponent)
+            let workspaceReference = workspaceReferences[projectDirectory.lastPathComponent]
+            let workspacePath = workspaceReference?.workspacePath
+                ?? PathUtilities.decodeCursorWorkspacePath(from: projectDirectory.lastPathComponent)
+            let fallbackProjectName = workspaceReference?.projectName
+                ?? PathUtilities.cursorFallbackProjectName(from: projectDirectory.lastPathComponent)
             let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName)
 
             let sessionDirectories = try FileManager.default.contentsOfDirectory(at: transcriptRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
@@ -239,7 +244,7 @@ struct CursorAdapter: SessionSourceAdapter {
             return sessionDirectories.map { sessionDirectory in
                 let transcriptFile = sessionDirectory.appendingPathComponent("\(sessionDirectory.lastPathComponent).jsonl")
                 let relatedPlanPath = SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
-                let fingerprint = combinedFingerprint(paths: [transcriptFile.path, relatedPlanPath])
+                let fingerprint = combinedFingerprint(paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath])
                 let sessionID = sessionDirectory.lastPathComponent
 
                 return SessionScanCandidate(
@@ -258,6 +263,39 @@ struct CursorAdapter: SessionSourceAdapter {
                 )
             }
         }
+    }
+
+    private func loadWorkspaceReferencesByProjectDirectory() throws -> [String: CursorWorkspaceReference] {
+        guard FileManager.default.fileExists(atPath: workspaceStorageRoot.path) else { return [:] }
+
+        let workspaceDirectories = try FileManager.default.contentsOfDirectory(
+            at: workspaceStorageRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).filter(\.hasDirectoryPath)
+
+        var references: [String: CursorWorkspaceReference] = [:]
+        for workspaceDirectory in workspaceDirectories {
+            let workspaceJSONURL = workspaceDirectory.appendingPathComponent("workspace.json")
+            guard FileManager.default.fileExists(atPath: workspaceJSONURL.path),
+                  let metadata = try loadJSONDictionary(from: workspaceJSONURL),
+                  let workspaceURI = (metadata["folder"] as? String) ?? (metadata["workspace"] as? String),
+                  let workspacePath = PathUtilities.workspacePathFromFileURI(workspaceURI) else {
+                continue
+            }
+
+            let projectDirectoryName = PathUtilities.cursorProjectDirectoryName(forWorkspacePath: workspacePath)
+            guard !projectDirectoryName.isEmpty else { continue }
+            references[projectDirectoryName] = CursorWorkspaceReference(
+                workspacePath: workspacePath,
+                projectName: PathUtilities.displayProjectName(
+                    workspacePath: workspacePath,
+                    fallback: workspaceDirectory.lastPathComponent
+                ),
+                metadataPath: workspaceJSONURL.path
+            )
+        }
+        return references
     }
 
     private func loadRecord(
@@ -300,6 +338,12 @@ struct CursorAdapter: SessionSourceAdapter {
             isNewtonProject: PathUtilities.isNewtonProject(workspacePath ?? projectName)
         )
     }
+}
+
+private struct CursorWorkspaceReference {
+    let workspacePath: String
+    let projectName: String
+    let metadataPath: String
 }
 
 struct VSCodeCopilotAdapter: SessionSourceAdapter {

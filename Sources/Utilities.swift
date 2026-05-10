@@ -212,7 +212,11 @@ enum SearchTextMatcher {
 enum PathUtilities {
     static func displayProjectName(workspacePath: String?, fallback: String) -> String {
         guard let workspacePath, !workspacePath.isEmpty else { return fallback }
-        return URL(fileURLWithPath: workspacePath).lastPathComponent
+        let url = URL(fileURLWithPath: workspacePath)
+        if url.pathExtension.lowercased() == "code-workspace" {
+            return url.deletingPathExtension().lastPathComponent
+        }
+        return url.lastPathComponent
     }
 
     static func cursorFallbackProjectName(from encodedDirectoryName: String) -> String {
@@ -264,6 +268,16 @@ enum PathUtilities {
         return nil
     }
 
+    static func cursorProjectDirectoryName(forWorkspacePath workspacePath: String) -> String {
+        let trimmed = workspacePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !trimmed.isEmpty else { return "" }
+        return trimmed.replacingOccurrences(
+            of: #"[/\s]+"#,
+            with: "-",
+            options: .regularExpression
+        )
+    }
+
     static func workspacePathFromFileURI(_ uri: String?) -> String? {
         guard let uri, let url = URL(string: uri), url.isFileURL else { return nil }
         return url.path(percentEncoded: false)
@@ -277,11 +291,13 @@ enum PathUtilities {
 struct SourceRoots {
     let copilotCLI: URL
     let cursorProjects: URL
+    let cursorWorkspaceStorage: URL
     let vscodeWorkspaceStorage: URL
 
     static let live = SourceRoots(
         copilotCLI: AppPaths.homeDirectory.appendingPathComponent(".copilot/session-state", isDirectory: true),
         cursorProjects: AppPaths.homeDirectory.appendingPathComponent(".cursor/projects", isDirectory: true),
+        cursorWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/workspaceStorage", isDirectory: true),
         vscodeWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Code/User/workspaceStorage", isDirectory: true)
     )
 }

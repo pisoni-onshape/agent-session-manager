@@ -11,6 +11,7 @@
 		2686696D7E0B57A714094702 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BE74D318718590BE9CACF18 /* ContentView.swift */; };
 		2AF4C97E7BBA5D896468E5E0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8F7C6545E063326573123004 /* Assets.xcassets */; };
 		52A29D004A5895EC496076E5 /* AgentSessionManager-Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 28283EED08D30CE6A10381E5 /* AgentSessionManager-Icon.png */; };
+		55445405C0C4B604DD394B62 /* CursorAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */; };
 		5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */; };
 		7950ABE1A14965929DF95531 /* SessionCatalogRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */; };
 		803ACF05877C08CCEFB0EE76 /* Adapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BEF66E0F0DD94E3CBE7EAB8 /* Adapters.swift */; };
@@ -51,6 +52,7 @@
 		8F7C6545E063326573123004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		CEA1E8ACE6592728373C134F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorAdapterTests.swift; sourceTree = "<group>"; };
 		E94A3ED57E602E84C177D3A1 /* WorkspaceLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceLauncherTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -83,6 +85,7 @@
 		43479DAFE5DECECE84F26ABE /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */,
 				74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */,
 				8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */,
 				530298199879A385F6C372DE /* TextSanitizerTests.swift */,
@@ -239,6 +242,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				55445405C0C4B604DD394B62 /* CursorAdapterTests.swift in Sources */,
 				5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */,
 				7950ABE1A14965929DF95531 /* SessionCatalogRefreshTests.swift in Sources */,
 				04BEFA40C45EE48667B6A7AA /* TextSanitizerTests.swift in Sources */,

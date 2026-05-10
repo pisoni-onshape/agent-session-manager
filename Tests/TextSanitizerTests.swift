@@ -28,6 +28,27 @@ final class TextSanitizerTests: XCTestCase {
         )
     }
 
+    func testCursorProjectDirectoryNameMatchesCursorWorkspaceSlug() {
+        XCTAssertEqual(
+            PathUtilities.cursorProjectDirectoryName(forWorkspacePath: "/Users/pisoni/Library/CloudStorage/OneDrive-PTC/Projects/newton-env-manager"),
+            "Users-pisoni-Library-CloudStorage-OneDrive-PTC-Projects-newton-env-manager"
+        )
+        XCTAssertEqual(
+            PathUtilities.cursorProjectDirectoryName(forWorkspacePath: "/Users/pisoni/Downloads/Interns 2026-27"),
+            "Users-pisoni-Downloads-Interns-2026-27"
+        )
+    }
+
+    func testDisplayProjectNameUsesWorkspaceFileNameWithoutExtension() {
+        XCTAssertEqual(
+            PathUtilities.displayProjectName(
+                workspacePath: "/Users/pisoni/workspaces/Agent Session Manager.code-workspace",
+                fallback: "fallback"
+            ),
+            "Agent Session Manager"
+        )
+    }
+
     func testBase64EncodedASCIIMatchesVSCodeMemoryFolderFormat() {
         XCTAssertEqual(
             PathUtilities.base64EncodedASCII("094573f8-522c-43d7-8198-139fcd09e04d"),
