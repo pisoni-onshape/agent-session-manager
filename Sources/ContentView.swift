@@ -599,58 +599,66 @@ private struct SessionDetailView: View {
     }
 
     private var actionBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                viewModel.performPrimaryAction(for: session)
-            } label: {
-                Label(viewModel.primaryActionLabel(for: session), systemImage: primaryActionSystemImageName)
-            }
-            .buttonStyle(.borderedProminent)
-            .help(primaryActionHelpText)
-
-            if viewModel.canStartNewConversation(for: session) {
+        HStack(alignment: .center, spacing: 12) {
+            HStack(spacing: 12) {
                 Button {
-                    viewModel.startNewConversation(for: session)
+                    viewModel.performPrimaryAction(for: session)
                 } label: {
-                    Label("New Chat", systemImage: "plus.bubble")
+                    Label(viewModel.primaryActionLabel(for: session), systemImage: primaryActionSystemImageName)
                 }
-                .help("Start a fresh Copilot CLI conversation in this project's workspace.")
-            }
+                .buttonStyle(.borderedProminent)
+                .help(primaryActionHelpText)
 
-            Button {
-                onOpenTranscript()
-            } label: {
-                Label("Transcript", systemImage: "text.bubble")
-            }
-            .disabled(session.rawTranscriptPath == nil)
-            .help("Open the transcript viewer for this session.")
-
-            if session.relatedPlanPath != nil {
-                Button {
-                    viewModel.openPlan(for: session)
-                } label: {
-                    Label("Open Plan", systemImage: "doc.text")
-                }
-                .help("Open the related planning document for this session.")
-            }
-
-            Menu {
-                if session.source == .copilotCLI {
-                    Button("Copy Resume Command") {
-                        viewModel.copyPrimaryCommand(session)
+                if viewModel.canStartNewConversation(for: session) {
+                    Button {
+                        viewModel.startNewConversation(for: session)
+                    } label: {
+                        Label("New Chat", systemImage: "plus.bubble")
                     }
+                    .help("Start a fresh Copilot CLI conversation in this project's workspace.")
                 }
 
-                Button("Reveal Raw File") {
-                    viewModel.revealTranscript(for: session)
+                Button {
+                    onOpenTranscript()
+                } label: {
+                    Label("Transcript", systemImage: "text.bubble")
                 }
-                .disabled(session.rawTranscriptPath == nil && session.rawMetadataPath == nil)
-            } label: {
-                Label("More", systemImage: "ellipsis.circle")
+                .disabled(session.rawTranscriptPath == nil)
+                .help("Open the transcript viewer for this session.")
+
+                if session.relatedPlanPath != nil {
+                    Button {
+                        viewModel.openPlan(for: session)
+                    } label: {
+                        Label("Open Plan", systemImage: "doc.text")
+                    }
+                    .help("Open the related planning document for this session.")
+                }
             }
-            .help("Open less-common session actions.")
 
             Spacer(minLength: 0)
+
+            if showsUtilityActions {
+                HStack(spacing: 12) {
+                    if session.source == .copilotCLI {
+                        Button {
+                            viewModel.copyPrimaryCommand(session)
+                        } label: {
+                            Label("Copy Resume Command", systemImage: "doc.on.doc")
+                        }
+                        .help("Copy the Copilot CLI resume command for this session.")
+                    }
+
+                    if canRevealRawFile {
+                        Button {
+                            viewModel.revealTranscript(for: session)
+                        } label: {
+                            Label("Reveal Raw File", systemImage: "folder")
+                        }
+                        .help("Reveal the stored raw transcript or metadata file in Finder.")
+                    }
+                }
+            }
         }
     }
 
@@ -683,26 +691,23 @@ private struct SessionDetailView: View {
     private var metadataSection: some View {
         GroupBox("Metadata") {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
-                metadataRow(title: "Source", value: session.source.displayName, copyValue: session.source.displayName)
+                metadataRow(title: "Source", value: session.source.displayName, copyValue: nil, showsCopyButton: false)
                 metadataRow(title: "Session ID", value: session.sourceSessionId, copyValue: session.sourceSessionId)
                 metadataRow(title: "Project", value: session.projectName, copyValue: session.projectName)
                 metadataRow(title: "Workspace", value: session.workspacePath ?? "—", copyValue: session.workspacePath)
                 metadataRow(title: "Branch", value: session.branch ?? "—", copyValue: session.branch)
-                metadataRow(title: "Model", value: session.conversationModel ?? "—", copyValue: session.conversationModel)
+                metadataRow(title: "Model", value: session.conversationModel ?? "—", copyValue: nil, showsCopyButton: false)
                 metadataRow(
                     title: "Started",
                     value: session.startedAt?.formatted(date: .abbreviated, time: .shortened) ?? "—",
-                    copyValue: session.startedAt?.formatted(date: .abbreviated, time: .shortened)
+                    copyValue: nil,
+                    showsCopyButton: false
                 )
                 metadataRow(
                     title: "Updated",
                     value: session.updatedAt?.formatted(date: .abbreviated, time: .shortened) ?? "—",
-                    copyValue: session.updatedAt?.formatted(date: .abbreviated, time: .shortened)
-                )
-                metadataRow(
-                    title: "Newton Project",
-                    value: session.isNewtonProject ? "Yes" : "No",
-                    copyValue: session.isNewtonProject ? "Yes" : "No"
+                    copyValue: nil,
+                    showsCopyButton: false
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -732,18 +737,24 @@ private struct SessionDetailView: View {
     }
 
     @ViewBuilder
-    private func metadataRow(title: String, value: String, copyValue: String?) -> some View {
+    private func metadataRow(title: String, value: String, copyValue: String?, showsCopyButton: Bool = true) -> some View {
         GridRow {
             Text(title)
                 .foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                CopyValueButton(
-                    value: copyValue,
-                    label: "Copy \(title)"
-                ) {
-                    if let copyValue {
-                        viewModel.copyToClipboard(copyValue)
+                if showsCopyButton {
+                    CopyValueButton(
+                        value: copyValue,
+                        label: "Copy \(title)"
+                    ) {
+                        if let copyValue {
+                            viewModel.copyToClipboard(copyValue)
+                        }
                     }
+                } else {
+                    Color.clear
+                        .frame(width: CopyValueButton.controlSize, height: CopyValueButton.controlSize)
+                        .accessibilityHidden(true)
                 }
 
                 Text(value)
@@ -751,6 +762,14 @@ private struct SessionDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private var canRevealRawFile: Bool {
+        session.rawTranscriptPath != nil || session.rawMetadataPath != nil
+    }
+
+    private var showsUtilityActions: Bool {
+        session.source == .copilotCLI || canRevealRawFile
     }
 }
 
@@ -879,6 +898,8 @@ private struct SessionStarButton: View {
 }
 
 private struct CopyValueButton: View {
+    static let controlSize: CGFloat = 24
+
     let value: String?
     let label: String
     let action: () -> Void
@@ -888,7 +909,7 @@ private struct CopyValueButton: View {
             Image(systemName: "doc.on.doc")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(value == nil ? Color.secondary.opacity(0.6) : Color.accentColor)
-                .frame(width: 24, height: 24)
+                .frame(width: Self.controlSize, height: Self.controlSize)
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
