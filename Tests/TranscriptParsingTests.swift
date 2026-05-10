@@ -122,6 +122,36 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(sorted.map(\.sourceSessionId), ["starred", "unstarred"])
     }
 
+    func testSessionListSectionsInsertDividerBetweenStarredAndUnstarredSessions() {
+        let starred = makeRecord(sessionID: "starred", title: "Starred Session", summary: nil)
+        let unstarred = makeRecord(sessionID: "plain", title: "Plain Session", summary: nil)
+
+        let sections = SessionListSectionBuilder.build(
+            [starred, unstarred],
+            filters: SessionFilterState(),
+            starredSessionIDs: [starred.id]
+        )
+
+        XCTAssertEqual(sections.starred.map(\.sourceSessionId), ["starred"])
+        XCTAssertEqual(sections.unstarred.map(\.sourceSessionId), ["plain"])
+        XCTAssertTrue(sections.showsUnstarredDivider)
+    }
+
+    func testSessionListSectionsHideDividerOutsideAllSessionsFilter() {
+        let starred = makeRecord(sessionID: "starred", title: "Starred Session", summary: nil)
+        let unstarred = makeRecord(sessionID: "plain", title: "Plain Session", summary: nil)
+        var filters = SessionFilterState()
+        filters.starFilter = .unstarred
+
+        let sections = SessionListSectionBuilder.build(
+            [starred, unstarred],
+            filters: filters,
+            starredSessionIDs: [starred.id]
+        )
+
+        XCTAssertFalse(sections.showsUnstarredDivider)
+    }
+
     func testCursorFallbackProjectNamePreservesKnownProjectName() {
         XCTAssertEqual(
             PathUtilities.cursorFallbackProjectName(from: "Users-pisoni-repos-newton-env-manager"),

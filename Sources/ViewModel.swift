@@ -126,6 +126,29 @@ enum SessionListOrdering {
     }
 }
 
+struct SessionListSections: Equatable {
+    let starred: [SessionRecord]
+    let unstarred: [SessionRecord]
+    let showsUnstarredDivider: Bool
+}
+
+enum SessionListSectionBuilder {
+    static func build(
+        _ sessions: [SessionRecord],
+        filters: SessionFilterState,
+        starredSessionIDs: Set<String>
+    ) -> SessionListSections {
+        let starred = sessions.filter { starredSessionIDs.contains($0.id) }
+        let unstarred = sessions.filter { !starredSessionIDs.contains($0.id) }
+
+        return SessionListSections(
+            starred: starred,
+            unstarred: unstarred,
+            showsUnstarredDivider: filters.starFilter == .all && !starred.isEmpty && !unstarred.isEmpty
+        )
+    }
+}
+
 @MainActor
 final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var allSessions: [SessionRecord] = []
@@ -251,6 +274,14 @@ final class SessionBrowserViewModel: ObservableObject {
                 parsedQuery: parsedSearchQuery,
                 transcriptSessionIDsByQuery: searchState.sessionIDsByQuery
             ),
+            filters: filters,
+            starredSessionIDs: starredSessionIDs
+        )
+    }
+
+    var displayedSessionSections: SessionListSections {
+        SessionListSectionBuilder.build(
+            displayedSessions,
             filters: filters,
             starredSessionIDs: starredSessionIDs
         )

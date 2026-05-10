@@ -10,23 +10,22 @@ struct ContentView: View {
         NavigationSplitView {
             VStack(spacing: 0) {
                 filterBar
-                List(viewModel.displayedSessions, selection: $viewModel.selectedSessionID) { session in
-                    SessionRowView(
-                        session: session,
-                        isSelected: viewModel.selectedSessionID == session.id,
-                        isStarred: viewModel.isStarred(session),
-                        transcriptMatch: viewModel.searchMatch(for: session),
-                        onToggleStar: {
-                            viewModel.toggleStar(for: session)
-                        },
-                        onOpenTranscriptMatch: {
-                            openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
-                        }
-                    )
-                    .tag(session.id)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
+                List(selection: $viewModel.selectedSessionID) {
+                    ForEach(viewModel.displayedSessionSections.starred) { session in
+                        sessionListRow(for: session)
+                    }
+
+                    if viewModel.displayedSessionSections.showsUnstarredDivider {
+                        SessionListDividerView(title: "Unstarred")
+                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .allowsHitTesting(false)
+                    }
+
+                    ForEach(viewModel.displayedSessionSections.unstarred) { session in
+                        sessionListRow(for: session)
+                    }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -175,6 +174,25 @@ struct ContentView: View {
         }
     }
 
+    private func sessionListRow(for session: SessionRecord) -> some View {
+        SessionRowView(
+            session: session,
+            isSelected: viewModel.selectedSessionID == session.id,
+            isStarred: viewModel.isStarred(session),
+            transcriptMatch: viewModel.searchMatch(for: session),
+            onToggleStar: {
+                viewModel.toggleStar(for: session)
+            },
+            onOpenTranscriptMatch: {
+                openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
+            }
+        )
+        .tag(session.id)
+        .listRowInsets(EdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
     private func openTranscript(for record: SessionRecord, initialSearchText: String = "") {
         Task {
             guard let presentedTranscript = await viewModel.loadPresentedTranscript(
@@ -297,6 +315,21 @@ struct ContentView: View {
         }
         .padding(16)
         .background(.bar)
+    }
+}
+
+private struct SessionListDividerView: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Divider()
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Divider()
+        }
+        .padding(.vertical, 4)
     }
 }
 
