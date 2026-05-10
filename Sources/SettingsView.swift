@@ -42,17 +42,22 @@ struct SettingsView: View {
             Section("Session Catalog") {
                 VStack(alignment: .leading, spacing: 8) {
                     LabeledContent("Newton repos path") {
-                        TextField("/Users/you/repos", text: $newtonReposRootPathDraft)
+                        TextField(
+                            "",
+                            text: $newtonReposRootPathDraft,
+                            prompt: Text("/Users/you/repos")
+                                .foregroundStyle(.secondary)
+                        )
                             .textFieldStyle(.plain)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)
                             .background(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.white.opacity(0.12))
+                                    .fill(Color.white.opacity(0.22))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.10))
+                                    .strokeBorder(Color.white.opacity(0.18))
                             )
                             .focused($focusedField, equals: .newtonReposRootPath)
                             .onSubmit(commitNewtonReposRootPath)
@@ -102,7 +107,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 620, height: 580)
+        .frame(width: 620, height: 570)
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
         }
