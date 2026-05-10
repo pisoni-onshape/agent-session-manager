@@ -1,7 +1,7 @@
 import Foundation
 import SQLite3
 import XCTest
-@testable import AgentSessionManager
+@testable import AgentSessionManagerCore
 
 final class CursorAdapterTests: XCTestCase {
     func testCursorAdapterUsesWorkspaceStorageMetadataAndStoredCursorTitle() throws {

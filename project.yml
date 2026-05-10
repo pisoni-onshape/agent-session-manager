@@ -10,12 +10,39 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 1.00000000
 targets:
+  AgentSessionManagerCore:
+    type: library.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources
+        includes:
+          - Adapters.swift
+          - Models.swift
+          - SessionFiltering.swift
+          - SessionSearchService.swift
+          - SettingsModels.swift
+          - Storage.swift
+          - TranscriptDocumentCache.swift
+          - Utilities.swift
+    settings:
+      base:
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+    dependencies:
+      - sdk: libsqlite3.tbd
   AgentSessionManager:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
     sources:
       - path: Sources
+        includes:
+          - AgentSessionManagerApp.swift
+          - AppSettings.swift
+          - ContentView.swift
+          - SettingsView.swift
+          - ViewModel.swift
       - path: Resources
     settings:
       base:
@@ -26,6 +53,21 @@ targets:
         SUPPORTS_MACCATALYST: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
+      - target: AgentSessionManagerCore
+      - sdk: libsqlite3.tbd
+  AgentSessionManagerCLI:
+    type: tool
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/CLI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pisoni.AgentSessionManagerCLI
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+    dependencies:
+      - target: AgentSessionManagerCore
       - sdk: libsqlite3.tbd
   AgentSessionManagerTests:
     type: bundle.unit-test
@@ -40,3 +82,5 @@ targets:
         CODE_SIGNING_REQUIRED: NO
     dependencies:
       - target: AgentSessionManager
+      - target: AgentSessionManagerCore
+      - sdk: libsqlite3.tbd

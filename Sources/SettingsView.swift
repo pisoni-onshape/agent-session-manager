@@ -1,4 +1,5 @@
 import SwiftUI
+import AgentSessionManagerCore
 
 struct SettingsView: View {
     @ObservedObject var settings: AppSettingsStore

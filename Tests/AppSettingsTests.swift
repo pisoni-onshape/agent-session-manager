@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import AgentSessionManager
+@testable import AgentSessionManagerCore
 
 @MainActor
 final class AppSettingsTests: XCTestCase {

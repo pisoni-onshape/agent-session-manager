@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import AgentSessionManager
+@testable import AgentSessionManagerCore
 
 final class SQLiteStoreTests: XCTestCase {
     func testReplaceAllPersistsAndReadsBackSessions() throws {

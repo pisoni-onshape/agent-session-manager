@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import AgentSessionManager
+@testable import AgentSessionManagerCore
 
 final class TranscriptParsingTests: XCTestCase {
     func testFieldedSearchParserKeepsRecognizedClausesAndFallbackTerms() {

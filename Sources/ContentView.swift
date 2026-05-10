@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import AgentSessionManagerCore
 
 struct ContentView: View {
     @ObservedObject var viewModel: SessionBrowserViewModel

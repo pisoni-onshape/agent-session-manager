@@ -1,13 +1,13 @@
 import Foundation
 
-enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
+public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case copilotCLI = "copilot-cli"
     case cursor
     case vscodeCopilot = "vscode-copilot"
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var displayName: String {
+    public var displayName: String {
         switch self {
         case .copilotCLI:
             return "Copilot CLI"
@@ -18,7 +18,7 @@ enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable, Senda
         }
     }
 
-    var systemImageName: String {
+    public var systemImageName: String {
         switch self {
         case .copilotCLI:
             return "terminal"
@@ -30,23 +30,23 @@ enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable, Senda
     }
 }
 
-enum ResumeActionKind: String, Codable, Sendable {
+public enum ResumeActionKind: String, Codable, Sendable {
     case copilotConnect
     case openInCursor
     case openInVSCode
     case revealPath
 }
 
-enum SessionSortMode: String, CaseIterable, Identifiable, Sendable {
+public enum SessionSortMode: String, CaseIterable, Identifiable, Sendable {
     case recentlyUpdated
     case startedAt
     case project
     case source
     case title
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var displayName: String {
+    public var displayName: String {
         switch self {
         case .recentlyUpdated:
             return "Recently Updated"
@@ -62,14 +62,14 @@ enum SessionSortMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum SessionStarFilter: String, CaseIterable, Identifiable, Sendable {
+public enum SessionStarFilter: String, CaseIterable, Identifiable, Sendable {
     case all
     case starred
     case unstarred
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var displayName: String {
+    public var displayName: String {
         switch self {
         case .all:
             return "All Sessions"
@@ -81,44 +81,86 @@ enum SessionStarFilter: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct SessionRecord: Identifiable, Equatable, Sendable {
-    let source: SessionSource
-    let sourceSessionId: String
-    let workspacePath: String?
-    let projectName: String
-    let branch: String?
-    let conversationModel: String?
-    let startedAt: Date?
-    let updatedAt: Date?
-    let title: String
-    let summary: String?
-    let firstUserPreview: String?
-    let firstAssistantPreview: String?
-    let rawTranscriptPath: String?
-    let rawMetadataPath: String?
-    let relatedPlanPath: String?
-    let fingerprint: String
-    let resumeKind: ResumeActionKind
-    let resumePayload: String
-    let isNewtonProject: Bool
+public struct SessionRecord: Identifiable, Equatable, Sendable {
+    public let source: SessionSource
+    public let sourceSessionId: String
+    public let workspacePath: String?
+    public let projectName: String
+    public let branch: String?
+    public let conversationModel: String?
+    public let startedAt: Date?
+    public let updatedAt: Date?
+    public let title: String
+    public let summary: String?
+    public let firstUserPreview: String?
+    public let firstAssistantPreview: String?
+    public let rawTranscriptPath: String?
+    public let rawMetadataPath: String?
+    public let relatedPlanPath: String?
+    public let fingerprint: String
+    public let resumeKind: ResumeActionKind
+    public let resumePayload: String
+    public let isNewtonProject: Bool
 
-    var id: String {
+    public init(
+        source: SessionSource,
+        sourceSessionId: String,
+        workspacePath: String?,
+        projectName: String,
+        branch: String?,
+        conversationModel: String?,
+        startedAt: Date?,
+        updatedAt: Date?,
+        title: String,
+        summary: String?,
+        firstUserPreview: String?,
+        firstAssistantPreview: String?,
+        rawTranscriptPath: String?,
+        rawMetadataPath: String?,
+        relatedPlanPath: String?,
+        fingerprint: String,
+        resumeKind: ResumeActionKind,
+        resumePayload: String,
+        isNewtonProject: Bool
+    ) {
+        self.source = source
+        self.sourceSessionId = sourceSessionId
+        self.workspacePath = workspacePath
+        self.projectName = projectName
+        self.branch = branch
+        self.conversationModel = conversationModel
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
+        self.title = title
+        self.summary = summary
+        self.firstUserPreview = firstUserPreview
+        self.firstAssistantPreview = firstAssistantPreview
+        self.rawTranscriptPath = rawTranscriptPath
+        self.rawMetadataPath = rawMetadataPath
+        self.relatedPlanPath = relatedPlanPath
+        self.fingerprint = fingerprint
+        self.resumeKind = resumeKind
+        self.resumePayload = resumePayload
+        self.isNewtonProject = isNewtonProject
+    }
+
+    public var id: String {
         "\(source.rawValue)::\(sourceSessionId)"
     }
 
-    var subtitle: String {
+    public var subtitle: String {
         [projectName, branch].compactMap { $0 }.joined(separator: " • ")
     }
 
-    var bestTimestamp: Date? {
+    public var bestTimestamp: Date? {
         updatedAt ?? startedAt
     }
 
-    var detailSummary: String {
+    public var detailSummary: String {
         summary ?? firstAssistantPreview ?? firstUserPreview ?? "No preview available."
     }
 
-    func with(isNewtonProject: Bool) -> SessionRecord {
+    public func with(isNewtonProject: Bool) -> SessionRecord {
         SessionRecord(
             source: source,
             sourceSessionId: sourceSessionId,
@@ -143,7 +185,7 @@ struct SessionRecord: Identifiable, Equatable, Sendable {
     }
 }
 
-enum SessionSearchField: String, CaseIterable, Sendable {
+public enum SessionSearchField: String, CaseIterable, Sendable {
     case title
     case project
     case branch
@@ -153,40 +195,45 @@ enum SessionSearchField: String, CaseIterable, Sendable {
     case transcript
 }
 
-struct SessionSearchFieldClause: Equatable, Sendable {
-    let field: SessionSearchField
-    let value: String
+public struct SessionSearchFieldClause: Equatable, Sendable {
+    public let field: SessionSearchField
+    public let value: String
+
+    public init(field: SessionSearchField, value: String) {
+        self.field = field
+        self.value = value
+    }
 }
 
-struct ParsedSessionSearchQuery: Equatable, Sendable {
-    let rawText: String
-    let fieldClauses: [SessionSearchFieldClause]
-    let freeTextTerms: [String]
-    let usesStructuredSyntax: Bool
+public struct ParsedSessionSearchQuery: Equatable, Sendable {
+    public let rawText: String
+    public let fieldClauses: [SessionSearchFieldClause]
+    public let freeTextTerms: [String]
+    public let usesStructuredSyntax: Bool
 
-    var hasFieldClauses: Bool {
+    public var hasFieldClauses: Bool {
         !fieldClauses.isEmpty
     }
 
-    var isEmpty: Bool {
+    public var isEmpty: Bool {
         rawText.isEmpty
     }
 
-    var normalizedWholeText: String {
+    public var normalizedWholeText: String {
         rawText.lowercased()
     }
 
-    var metadataFieldClauses: [SessionSearchFieldClause] {
+    public var metadataFieldClauses: [SessionSearchFieldClause] {
         fieldClauses.filter { $0.field != .transcript }
     }
 
-    var transcriptFieldValues: [String] {
+    public var transcriptFieldValues: [String] {
         fieldClauses
             .filter { $0.field == .transcript }
             .map(\.value)
     }
 
-    var transcriptQueries: [String] {
+    public var transcriptQueries: [String] {
         if isEmpty {
             return []
         }
@@ -208,8 +255,8 @@ struct ParsedSessionSearchQuery: Equatable, Sendable {
     }
 }
 
-enum SessionSearchQueryParser {
-    static func parse(_ rawQuery: String) -> ParsedSessionSearchQuery {
+public enum SessionSearchQueryParser {
+    public static func parse(_ rawQuery: String) -> ParsedSessionSearchQuery {
         let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return ParsedSessionSearchQuery(rawText: "", fieldClauses: [], freeTextTerms: [], usesStructuredSyntax: false)
@@ -368,108 +415,159 @@ extension SessionRecord {
     }
 }
 
-struct TranscriptPreview: Sendable {
-    var sessionId: String?
-    var startedAt: Date?
-    var latestModel: String?
-    var firstUser: String?
-    var firstAssistant: String?
+public struct TranscriptPreview: Sendable {
+    public var sessionId: String?
+    public var startedAt: Date?
+    public var latestModel: String?
+    public var firstUser: String?
+    public var firstAssistant: String?
 
-    var summary: String? {
+    public init(
+        sessionId: String? = nil,
+        startedAt: Date? = nil,
+        latestModel: String? = nil,
+        firstUser: String? = nil,
+        firstAssistant: String? = nil
+    ) {
+        self.sessionId = sessionId
+        self.startedAt = startedAt
+        self.latestModel = latestModel
+        self.firstUser = firstUser
+        self.firstAssistant = firstAssistant
+    }
+
+    public var summary: String? {
         TextSanitizer.summarize(firstAssistant ?? firstUser)
     }
 }
 
-struct SessionFilterState: Equatable, Sendable {
-    static let allProjectsToken = "__all_projects__"
-    static let allBranchesToken = "__all_branches__"
-    static let allSourcesToken = "__all_sources__"
+public struct SessionFilterState: Equatable, Sendable {
+    public static let allProjectsToken = "__all_projects__"
+    public static let allBranchesToken = "__all_branches__"
+    public static let allSourcesToken = "__all_sources__"
 
-    var searchText = ""
-    var selectedSourceRawValue = allSourcesToken
-    var selectedProject = allProjectsToken
-    var selectedBranch = allBranchesToken
-    var starFilter: SessionStarFilter = .all
-    var newtonOnly = false
-    var sortMode: SessionSortMode = .recentlyUpdated
+    public var searchText = ""
+    public var selectedSourceRawValue = allSourcesToken
+    public var selectedProject = allProjectsToken
+    public var selectedBranch = allBranchesToken
+    public var starFilter: SessionStarFilter = .all
+    public var newtonOnly = false
+    public var sortMode: SessionSortMode = .recentlyUpdated
 
-    var selectedSource: SessionSource? {
+    public init() {}
+
+    public var selectedSource: SessionSource? {
         SessionSource(rawValue: selectedSourceRawValue)
     }
 
-    var hasCustomSourceSelection: Bool {
+    public var hasCustomSourceSelection: Bool {
         selectedSourceRawValue != Self.allSourcesToken
     }
 
-    var hasCustomProjectSelection: Bool {
+    public var hasCustomProjectSelection: Bool {
         selectedProject != Self.allProjectsToken
     }
 
-    var hasCustomBranchSelection: Bool {
+    public var hasCustomBranchSelection: Bool {
         selectedBranch != Self.allBranchesToken
     }
 
-    var hasCustomStarFilter: Bool {
+    public var hasCustomStarFilter: Bool {
         starFilter != .all
     }
 
-    var hasCustomSortMode: Bool {
+    public var hasCustomSortMode: Bool {
         sortMode != .recentlyUpdated
     }
 }
 
-struct TranscriptViewerSearchResult: Equatable, Sendable {
-    let displayItems: [TranscriptDisplayItem]
-    let totalMatchCount: Int
-    let matchingEntryCount: Int
-    let highlightQuery: String?
+public struct TranscriptViewerSearchResult: Equatable, Sendable {
+    public let displayItems: [TranscriptDisplayItem]
+    public let totalMatchCount: Int
+    public let matchingEntryCount: Int
+    public let highlightQuery: String?
 
-    var isActive: Bool {
+    public var isActive: Bool {
         highlightQuery != nil
     }
 }
 
-struct PresentedTranscript: Codable, Hashable, Identifiable, Sendable {
-    let transcript: TranscriptDocument
-    let initialSearchText: String
+public struct PresentedTranscript: Codable, Hashable, Identifiable, Sendable {
+    public let transcript: TranscriptDocument
+    public let initialSearchText: String
 
-    var id: String {
+    public init(transcript: TranscriptDocument, initialSearchText: String) {
+        self.transcript = transcript
+        self.initialSearchText = initialSearchText
+    }
+
+    public var id: String {
         transcript.id
     }
 }
 
-struct TranscriptSessionSearchMatch: Identifiable, Equatable, Sendable {
-    let sessionRecordID: String
-    let matchCount: Int
-    let snippets: [String]
+public struct TranscriptSessionSearchMatch: Identifiable, Equatable, Sendable {
+    public let sessionRecordID: String
+    public let matchCount: Int
+    public let snippets: [String]
 
-    var id: String {
+    public var id: String {
         sessionRecordID
     }
 }
 
-struct TranscriptIndexEntry: Equatable, Sendable {
-    let sessionRecordID: String
-    let entryIndex: Int
-    let text: String
+public struct TranscriptIndexEntry: Equatable, Sendable {
+    public let sessionRecordID: String
+    public let entryIndex: Int
+    public let text: String
+
+    public init(sessionRecordID: String, entryIndex: Int, text: String) {
+        self.sessionRecordID = sessionRecordID
+        self.entryIndex = entryIndex
+        self.text = text
+    }
 }
 
-struct TranscriptIndexSearchHit: Equatable, Sendable {
-    let sessionRecordID: String
-    let entryIndex: Int
-    let text: String
+public struct TranscriptIndexSearchHit: Equatable, Sendable {
+    public let sessionRecordID: String
+    public let entryIndex: Int
+    public let text: String
+
+    public init(sessionRecordID: String, entryIndex: Int, text: String) {
+        self.sessionRecordID = sessionRecordID
+        self.entryIndex = entryIndex
+        self.text = text
+    }
 }
 
-struct SessionSearchState: Equatable, Sendable {
-    var requestedQuery = ""
-    var searchedScopeSignature = ""
-    var searchedSessionCount = 0
-    var resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:]
-    var mergedResultsBySessionID: [String: TranscriptSessionSearchMatch] = [:]
-    var isSearching = false
-    var lastError: String?
+public struct SessionSearchState: Equatable, Sendable {
+    public var requestedQuery = ""
+    public var searchedScopeSignature = ""
+    public var searchedSessionCount = 0
+    public var resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:]
+    public var mergedResultsBySessionID: [String: TranscriptSessionSearchMatch] = [:]
+    public var isSearching = false
+    public var lastError: String?
 
-    var sessionIDsByQuery: [String: Set<String>] {
+    public init(
+        requestedQuery: String = "",
+        searchedScopeSignature: String = "",
+        searchedSessionCount: Int = 0,
+        resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:],
+        mergedResultsBySessionID: [String: TranscriptSessionSearchMatch] = [:],
+        isSearching: Bool = false,
+        lastError: String? = nil
+    ) {
+        self.requestedQuery = requestedQuery
+        self.searchedScopeSignature = searchedScopeSignature
+        self.searchedSessionCount = searchedSessionCount
+        self.resultsByQuery = resultsByQuery
+        self.mergedResultsBySessionID = mergedResultsBySessionID
+        self.isSearching = isSearching
+        self.lastError = lastError
+    }
+
+    public var sessionIDsByQuery: [String: Set<String>] {
         Dictionary(
             uniqueKeysWithValues: resultsByQuery.map { query, hits in
                 (query, Set(hits.map(\.sessionRecordID)))
@@ -477,17 +575,17 @@ struct SessionSearchState: Equatable, Sendable {
         )
     }
 
-    var totalMatchCount: Int {
+    public var totalMatchCount: Int {
         mergedResultsBySessionID.values.reduce(0) { $0 + $1.matchCount }
     }
 
-    var hasRequestedQuery: Bool {
+    public var hasRequestedQuery: Bool {
         !requestedQuery.isEmpty
     }
 }
 
-enum SessionSearchEvaluator {
-    static func filterSessions(
+public enum SessionSearchEvaluator {
+    public static func filterSessions(
         _ sessions: [SessionRecord],
         parsedQuery: ParsedSessionSearchQuery,
         transcriptSessionIDsByQuery: [String: Set<String>]
@@ -495,7 +593,7 @@ enum SessionSearchEvaluator {
         sessions.filter { matches($0, parsedQuery: parsedQuery, transcriptSessionIDsByQuery: transcriptSessionIDsByQuery) }
     }
 
-    static func matches(
+    public static func matches(
         _ record: SessionRecord,
         parsedQuery: ParsedSessionSearchQuery,
         transcriptSessionIDsByQuery: [String: Set<String>]
@@ -532,44 +630,70 @@ enum SessionSearchEvaluator {
     }
 }
 
-enum TranscriptEntryRole: String, Codable, Hashable, Sendable {
+public enum TranscriptEntryRole: String, Codable, Hashable, Sendable {
     case user
     case assistant
     case tool
     case system
 }
 
-struct TranscriptEntry: Codable, Hashable, Identifiable, Sendable {
-    let id: String
-    let role: TranscriptEntryRole
-    let title: String
-    let body: String?
-    let timestamp: Date?
+public struct TranscriptEntry: Codable, Hashable, Identifiable, Sendable {
+    public let id: String
+    public let role: TranscriptEntryRole
+    public let title: String
+    public let body: String?
+    public let timestamp: Date?
 
-    var isChatMessage: Bool {
+    public init(id: String, role: TranscriptEntryRole, title: String, body: String?, timestamp: Date?) {
+        self.id = id
+        self.role = role
+        self.title = title
+        self.body = body
+        self.timestamp = timestamp
+    }
+
+    public var isChatMessage: Bool {
         role == .user || role == .assistant
     }
 }
 
-struct TranscriptDocument: Codable, Hashable, Identifiable, Sendable {
-    let sessionID: String
-    let sessionTitle: String
-    let source: SessionSource
-    let rawTranscriptPath: String
-    let entries: [TranscriptEntry]
-    let timestampsAreComplete: Bool
-    let timestampNotice: String?
+public struct TranscriptDocument: Codable, Hashable, Identifiable, Sendable {
+    public let sessionID: String
+    public let sessionTitle: String
+    public let source: SessionSource
+    public let rawTranscriptPath: String
+    public let entries: [TranscriptEntry]
+    public let timestampsAreComplete: Bool
+    public let timestampNotice: String?
 
-    var id: String {
+    public init(
+        sessionID: String,
+        sessionTitle: String,
+        source: SessionSource,
+        rawTranscriptPath: String,
+        entries: [TranscriptEntry],
+        timestampsAreComplete: Bool,
+        timestampNotice: String?
+    ) {
+        self.sessionID = sessionID
+        self.sessionTitle = sessionTitle
+        self.source = source
+        self.rawTranscriptPath = rawTranscriptPath
+        self.entries = entries
+        self.timestampsAreComplete = timestampsAreComplete
+        self.timestampNotice = timestampNotice
+    }
+
+    public var id: String {
         "\(source.rawValue)::\(sessionID)"
     }
 }
 
-enum TranscriptDisplayItem: Identifiable, Equatable, Sendable {
+public enum TranscriptDisplayItem: Identifiable, Equatable, Sendable {
     case entry(TranscriptEntry)
     case collapsedEvents(id: String, entries: [TranscriptEntry])
 
-    var id: String {
+    public var id: String {
         switch self {
         case let .entry(entry):
             return entry.id
@@ -578,7 +702,7 @@ enum TranscriptDisplayItem: Identifiable, Equatable, Sendable {
         }
     }
 
-    var timestamp: Date? {
+    public var timestamp: Date? {
         switch self {
         case let .entry(entry):
             return entry.timestamp
@@ -588,7 +712,7 @@ enum TranscriptDisplayItem: Identifiable, Equatable, Sendable {
     }
 }
 
-extension TranscriptDocument {
+public extension TranscriptDocument {
     var displayItems: [TranscriptDisplayItem] {
         var items: [TranscriptDisplayItem] = []
         var pendingEvents: [TranscriptEntry] = []

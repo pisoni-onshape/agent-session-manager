@@ -4,21 +4,21 @@ import SQLite3
 
 private let SQLITE_TRANSIENT_UTILITIES = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-enum AppPaths {
-    static var applicationSupportDirectory: URL {
+public enum AppPaths {
+    public static var applicationSupportDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return base.appendingPathComponent("AgentSessionManager", isDirectory: true)
     }
 
-    static var catalogDirectoryURL: URL {
+    public static var catalogDirectoryURL: URL {
         catalogDatabaseURL.deletingLastPathComponent()
     }
 
-    static var catalogDatabaseURL: URL {
+    public static var catalogDatabaseURL: URL {
         applicationSupportDirectory.appendingPathComponent("catalog.sqlite3")
     }
 
-    static var homeDirectory: URL {
+    public static var homeDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
     }
 }
@@ -80,31 +80,36 @@ enum TextSanitizer {
     }
 }
 
-struct HighlightedTextSegment: Equatable, Sendable {
-    let text: String
-    let isMatch: Bool
+public struct HighlightedTextSegment: Equatable, Sendable {
+    public let text: String
+    public let isMatch: Bool
+
+    public init(text: String, isMatch: Bool) {
+        self.text = text
+        self.isMatch = isMatch
+    }
 }
 
-enum SearchTextMatcher {
-    static func normalizedQuery(_ rawQuery: String?) -> String? {
+public enum SearchTextMatcher {
+    public static func normalizedQuery(_ rawQuery: String?) -> String? {
         guard let rawQuery else { return nil }
         let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed.lowercased()
     }
 
-    static func visibleText(from rawText: String) -> String {
+    public static func visibleText(from rawText: String) -> String {
         if let attributed = try? AttributedString(markdown: rawText) {
             return String(attributed.characters)
         }
         return rawText
     }
 
-    static func matchCount(in rawText: String?, query: String) -> Int {
+    public static func matchCount(in rawText: String?, query: String) -> Int {
         guard let rawText else { return 0 }
         return matchRanges(in: visibleText(from: rawText), query: query).count
     }
 
-    static func segments(in rawText: String, query rawQuery: String?) -> [HighlightedTextSegment] {
+    public static func segments(in rawText: String, query rawQuery: String?) -> [HighlightedTextSegment] {
         guard let query = normalizedQuery(rawQuery) else {
             return [HighlightedTextSegment(text: visibleText(from: rawText), isMatch: false)]
         }
@@ -147,7 +152,7 @@ enum SearchTextMatcher {
         return segments
     }
 
-    static func highlightedAttributedString(from rawText: String, query rawQuery: String?) -> AttributedString {
+    public static func highlightedAttributedString(from rawText: String, query rawQuery: String?) -> AttributedString {
         let visible = visibleText(from: rawText)
         var attributed = AttributedString(visible)
 
@@ -160,13 +165,13 @@ enum SearchTextMatcher {
                   let upperBound = AttributedString.Index(range.upperBound, within: attributed) else {
                 continue
             }
-            attributed[lowerBound..<upperBound].backgroundColor = .yellow.opacity(0.35)
+            attributed[lowerBound..<upperBound].backgroundColor = NSColor.systemYellow.withAlphaComponent(0.35)
         }
 
         return attributed
     }
 
-    static func snippet(in rawText: String, query rawQuery: String?, limit: Int = 120) -> String? {
+    public static func snippet(in rawText: String, query rawQuery: String?, limit: Int = 120) -> String? {
         guard let query = normalizedQuery(rawQuery) else { return nil }
         let visible = visibleText(from: rawText)
         guard let range = matchRanges(in: visible, query: query).first else { return nil }
@@ -186,7 +191,7 @@ enum SearchTextMatcher {
         return snippet
     }
 
-    static func snippet(in rawText: String, queries: [String], limit: Int = 120) -> String? {
+    public static func snippet(in rawText: String, queries: [String], limit: Int = 120) -> String? {
         for query in queries {
             if let snippet = snippet(in: rawText, query: query, limit: limit) {
                 return snippet
@@ -195,7 +200,7 @@ enum SearchTextMatcher {
         return nil
     }
 
-    static func matchRanges(in text: String, query rawQuery: String?) -> [Range<String.Index>] {
+    public static func matchRanges(in text: String, query rawQuery: String?) -> [Range<String.Index>] {
         guard let query = normalizedQuery(rawQuery) else { return [] }
 
         var ranges: [Range<String.Index>] = []
@@ -213,8 +218,8 @@ enum SearchTextMatcher {
     }
 }
 
-enum PathUtilities {
-    static func displayProjectName(workspacePath: String?, fallback: String) -> String {
+public enum PathUtilities {
+    public static func displayProjectName(workspacePath: String?, fallback: String) -> String {
         guard let workspacePath, !workspacePath.isEmpty else { return fallback }
         let url = URL(fileURLWithPath: workspacePath)
         if url.pathExtension.lowercased() == "code-workspace" {
@@ -223,7 +228,7 @@ enum PathUtilities {
         return url.lastPathComponent
     }
 
-    static func cursorFallbackProjectName(from encodedDirectoryName: String) -> String {
+    public static func cursorFallbackProjectName(from encodedDirectoryName: String) -> String {
         let knownPrefixes = [
             "Users-pisoni-repos-",
             "Users-pisoni-Development-LocalProjects-"
@@ -239,7 +244,7 @@ enum PathUtilities {
         return encodedDirectoryName
     }
 
-    static func normalizedDirectoryPath(
+    public static func normalizedDirectoryPath(
         _ rawPath: String?,
         homeDirectoryPath: String = AppPaths.homeDirectory.path
     ) -> String? {
@@ -254,11 +259,11 @@ enum PathUtilities {
         return normalized.isEmpty ? nil : normalized
     }
 
-    static func isNewtonProject(workspacePath: String?, reposRootPath: String) -> Bool {
+    public static func isNewtonProject(workspacePath: String?, reposRootPath: String) -> Bool {
         NewtonProjectMatcher(reposRootPath: reposRootPath).matches(workspacePath: workspacePath)
     }
 
-    static func decodeCursorWorkspacePath(from encodedDirectoryName: String) -> String? {
+    public static func decodeCursorWorkspacePath(from encodedDirectoryName: String) -> String? {
         let directCandidate = "/" + encodedDirectoryName.split(separator: "-").joined(separator: "/")
         if FileManager.default.fileExists(atPath: directCandidate) {
             return directCandidate
@@ -285,7 +290,7 @@ enum PathUtilities {
         return nil
     }
 
-    static func cursorProjectDirectoryName(forWorkspacePath workspacePath: String) -> String {
+    public static func cursorProjectDirectoryName(forWorkspacePath workspacePath: String) -> String {
         let trimmed = workspacePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !trimmed.isEmpty else { return "" }
         return trimmed.replacingOccurrences(
@@ -295,12 +300,12 @@ enum PathUtilities {
         )
     }
 
-    static func workspacePathFromFileURI(_ uri: String?) -> String? {
+    public static func workspacePathFromFileURI(_ uri: String?) -> String? {
         guard let uri, let url = URL(string: uri), url.isFileURL else { return nil }
         return url.path(percentEncoded: false)
     }
 
-    static func base64EncodedASCII(_ value: String) -> String {
+    public static func base64EncodedASCII(_ value: String) -> String {
         Data(value.utf8).base64EncodedString()
     }
 }
@@ -351,8 +356,8 @@ struct SourceRoots {
     )
 }
 
-enum WorkspaceLauncher {
-    static func performPrimaryAction(for record: SessionRecord) throws {
+public enum WorkspaceLauncher {
+    public static func performPrimaryAction(for record: SessionRecord) throws {
         switch record.resumeKind {
         case .copilotConnect:
             try resumeCopilotCLI(sessionId: record.resumePayload, workingDirectory: record.workspacePath)
@@ -365,7 +370,7 @@ enum WorkspaceLauncher {
         }
     }
 
-    static func startNewConversation(in workingDirectory: String?) throws {
+    public static func startNewConversation(in workingDirectory: String?) throws {
         guard let workingDirectory else {
             throw NSError(domain: "WorkspaceLauncher", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "This session does not include a project workspace path."
@@ -378,23 +383,23 @@ enum WorkspaceLauncher {
         )
     }
 
-    static func reveal(path: String?) {
+    public static func reveal(path: String?) {
         guard let path else { return }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
-    static func openDocument(path: String?) {
+    public static func openDocument(path: String?) {
         guard let path else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
-    static func copyToPasteboard(_ text: String) {
+    public static func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
     }
 
-    static func copilotResumeCommand(for record: SessionRecord) -> String {
+    public static func copilotResumeCommand(for record: SessionRecord) -> String {
         var components: [String] = []
         if let workspacePath = record.workspacePath {
             components.append("cd \(shellQuote(workspacePath))")
@@ -403,7 +408,7 @@ enum WorkspaceLauncher {
         return components.joined(separator: " && ")
     }
 
-    static func copilotNewConversationCommand(workingDirectory: String) -> String {
+    public static func copilotNewConversationCommand(workingDirectory: String) -> String {
         "cd \(shellQuote(workingDirectory)) && copilot"
     }
 
@@ -511,11 +516,11 @@ enum SessionArtifactLocator {
     }
 }
 
-enum TranscriptLoadingError: LocalizedError {
+public enum TranscriptLoadingError: LocalizedError {
     case transcriptUnavailable
     case transcriptUnreadable(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .transcriptUnavailable:
             return "This session does not have a readable transcript file."
@@ -525,8 +530,8 @@ enum TranscriptLoadingError: LocalizedError {
     }
 }
 
-enum TranscriptPreviewExtractor {
-    static func loadTranscript(for record: SessionRecord) throws -> TranscriptDocument {
+public enum TranscriptPreviewExtractor {
+    public static func loadTranscript(for record: SessionRecord) throws -> TranscriptDocument {
         guard let transcriptPath = record.rawTranscriptPath else {
             throw TranscriptLoadingError.transcriptUnavailable
         }
@@ -554,7 +559,7 @@ enum TranscriptPreviewExtractor {
         }
     }
 
-    static func searchableEntries(for record: SessionRecord) throws -> [TranscriptIndexEntry] {
+    public static func searchableEntries(for record: SessionRecord) throws -> [TranscriptIndexEntry] {
         let transcript = try loadTranscript(for: record)
         return transcript.entries.enumerated().compactMap { index, entry in
             guard entry.isChatMessage,

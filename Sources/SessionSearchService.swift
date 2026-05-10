@@ -1,16 +1,21 @@
 import Foundation
 
-struct SessionCatalogSnapshot: Equatable, Sendable {
-    let sessions: [SessionRecord]
-    let starredSessionIDs: Set<String>
+public struct SessionCatalogSnapshot: Equatable, Sendable {
+    public let sessions: [SessionRecord]
+    public let starredSessionIDs: Set<String>
+
+    public init(sessions: [SessionRecord], starredSessionIDs: Set<String>) {
+        self.sessions = sessions
+        self.starredSessionIDs = starredSessionIDs
+    }
 }
 
-struct SessionSearchRequest: Equatable, Sendable {
-    let filters: SessionFilterState
-    let resultLimit: Int?
-    let updatedWithin: TimeInterval?
+public struct SessionSearchRequest: Equatable, Sendable {
+    public let filters: SessionFilterState
+    public let resultLimit: Int?
+    public let updatedWithin: TimeInterval?
 
-    init(
+    public init(
         filters: SessionFilterState,
         resultLimit: Int? = nil,
         updatedWithin: TimeInterval? = nil
@@ -21,16 +26,16 @@ struct SessionSearchRequest: Equatable, Sendable {
     }
 }
 
-struct SessionSearchExecution: Equatable, Sendable {
-    let snapshot: SessionCatalogSnapshot
-    let scopeSessions: [SessionRecord]
-    let parsedQuery: ParsedSessionSearchQuery
-    let searchState: SessionSearchState
-    let displayedSessions: [SessionRecord]
+public struct SessionSearchExecution: Equatable, Sendable {
+    public let snapshot: SessionCatalogSnapshot
+    public let scopeSessions: [SessionRecord]
+    public let parsedQuery: ParsedSessionSearchQuery
+    public let searchState: SessionSearchState
+    public let displayedSessions: [SessionRecord]
 }
 
-enum SessionSearchService {
-    static func loadSnapshot(from catalog: SessionCatalog, refresh: Bool = false) throws -> SessionCatalogSnapshot {
+public enum SessionSearchService {
+    public static func loadSnapshot(from catalog: SessionCatalog, refresh: Bool = false) throws -> SessionCatalogSnapshot {
         let sessions = refresh ? try catalog.refreshSessions() : try catalog.loadPersistedSessions()
         return SessionCatalogSnapshot(
             sessions: sessions,
@@ -38,7 +43,7 @@ enum SessionSearchService {
         )
     }
 
-    static func makePendingSearchState(
+    public static func makePendingSearchState(
         snapshot: SessionCatalogSnapshot,
         request: SessionSearchRequest,
         referenceDate: Date = Date()
@@ -61,7 +66,7 @@ enum SessionSearchService {
         )
     }
 
-    static func search(
+    public static func search(
         using catalog: SessionCatalog,
         request: SessionSearchRequest,
         refresh: Bool = false,
@@ -73,7 +78,7 @@ enum SessionSearchService {
         }
     }
 
-    static func search(
+    public static func search(
         snapshot: SessionCatalogSnapshot,
         request: SessionSearchRequest,
         referenceDate: Date = Date(),
@@ -127,7 +132,7 @@ enum SessionSearchService {
         )
     }
 
-    static func scopeSignature(for sessions: [SessionRecord]) -> String {
+    public static func scopeSignature(for sessions: [SessionRecord]) -> String {
         sessions.map(\.id).sorted().joined(separator: "\u{1F}")
     }
 

@@ -16,7 +16,7 @@ extension SessionSourceAdapter {
     }
 }
 
-final class SessionCatalog {
+public final class SessionCatalog {
     private let store: SQLiteSessionStore
     private let adapters: [SessionSourceAdapter]
     private let settingsProvider: () -> AppSettingsSnapshot
@@ -40,34 +40,34 @@ final class SessionCatalog {
         ]
     }
 
-    static func makeDefault(settingsProvider: @escaping () -> AppSettingsSnapshot = { AppSettingsSnapshot.standard() }) throws -> SessionCatalog {
+    public static func makeDefault(settingsProvider: @escaping () -> AppSettingsSnapshot = { AppSettingsSnapshot.standard() }) throws -> SessionCatalog {
         try SessionCatalog(storeURL: AppPaths.catalogDatabaseURL, settingsProvider: settingsProvider)
     }
 
-    func loadPersistedSessions() throws -> [SessionRecord] {
+    public func loadPersistedSessions() throws -> [SessionRecord] {
         reclassifySessions(try store.fetchAll())
     }
 
-    func starredSessionIDs() throws -> Set<String> {
+    public func starredSessionIDs() throws -> Set<String> {
         try store.fetchStarredSessionIDs()
     }
 
-    func setSessionStarred(_ isStarred: Bool, for sessionID: String) throws {
+    public func setSessionStarred(_ isStarred: Bool, for sessionID: String) throws {
         try store.setSessionStarred(isStarred, for: sessionID)
     }
 
-    func searchTranscriptIndex(sessionIDs: [String], query: String) throws -> [TranscriptIndexSearchHit] {
+    public func searchTranscriptIndex(sessionIDs: [String], query: String) throws -> [TranscriptIndexSearchHit] {
         try store.searchTranscriptEntries(sessionIDs: sessionIDs, query: query)
     }
 
-    func reclassifySessions(_ records: [SessionRecord]) -> [SessionRecord] {
+    public func reclassifySessions(_ records: [SessionRecord]) -> [SessionRecord] {
         let matcher = NewtonProjectMatcher(reposRootPath: settingsProvider().newtonReposRootPath)
         return records.map { record in
             record.with(isNewtonProject: matcher.matches(workspacePath: record.workspacePath))
         }
     }
 
-    func refreshSessions() throws -> [SessionRecord] {
+    public func refreshSessions() throws -> [SessionRecord] {
         let existingRecords = try store.fetchAll()
         let existingByID = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.id, $0) })
         let indexedSessionIDs = try store.indexedSessionIDs(for: Array(existingByID.keys))
@@ -118,7 +118,7 @@ final class SessionCatalog {
         return refreshedRecordsByID.values.sorted(by: SessionCatalog.sort(lhs:rhs:))
     }
 
-    func rebuildSessions() throws -> [SessionRecord] {
+    public func rebuildSessions() throws -> [SessionRecord] {
         let records = reclassifySessions(
             try adapters
             .flatMap { try $0.discover() }

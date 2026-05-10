@@ -1,5 +1,5 @@
 import XCTest
-@testable import AgentSessionManager
+@testable import AgentSessionManagerCore
 
 final class NewtonProjectMatchingTests: XCTestCase {
     func testMatcherAcceptsNewtonRepoDirectlyUnderConfiguredRoot() {

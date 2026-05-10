@@ -1,4 +1,5 @@
 import SwiftUI
+import AgentSessionManagerCore
 
 @main
 struct AgentSessionManagerApp: App {
