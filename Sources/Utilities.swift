@@ -1,5 +1,8 @@
 import AppKit
 import Foundation
+import SQLite3
+
+private let SQLITE_TRANSIENT_UTILITIES = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 enum AppPaths {
     static var applicationSupportDirectory: URL {
@@ -49,6 +52,7 @@ enum TextSanitizer {
         guard var text = rawText else { return nil }
         let patterns = [
             "(?s)<current_datetime>.*?</current_datetime>",
+            "(?s)<timestamp>.*?</timestamp>",
             "(?s)<system_reminder>.*?</system_reminder>",
             "(?s)<reminder>.*?</reminder>",
             "(?s)<sql_tables>.*?</sql_tables>",
@@ -292,12 +296,14 @@ struct SourceRoots {
     let copilotCLI: URL
     let cursorProjects: URL
     let cursorWorkspaceStorage: URL
+    let cursorGlobalStorage: URL
     let vscodeWorkspaceStorage: URL
 
     static let live = SourceRoots(
         copilotCLI: AppPaths.homeDirectory.appendingPathComponent(".copilot/session-state", isDirectory: true),
         cursorProjects: AppPaths.homeDirectory.appendingPathComponent(".cursor/projects", isDirectory: true),
         cursorWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/workspaceStorage", isDirectory: true),
+        cursorGlobalStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage", isDirectory: true),
         vscodeWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Code/User/workspaceStorage", isDirectory: true)
     )
 }
@@ -993,11 +999,46 @@ func fileFingerprint(for path: String?) -> String {
     return "\(path)|\(modified)|\(size)"
 }
 
-func combinedFingerprint(paths: [String?]) -> String {
-    paths.map(fileFingerprint).joined(separator: "||")
+func stringFingerprint(for value: String?) -> String {
+    "value:\(value ?? "missing")"
+}
+
+func combinedFingerprint(paths: [String?], values: [String?] = []) -> String {
+    (paths.map(fileFingerprint) + values.map(stringFingerprint(for:))).joined(separator: "||")
 }
 
 func loadJSONDictionary(from url: URL) throws -> [String: Any]? {
     let data = try Data(contentsOf: url)
     return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+}
+
+func loadSQLiteItemValue(from databaseURL: URL, key: String) throws -> String? {
+    var database: OpaquePointer?
+    guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+        let message = database.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "Unknown SQLite open error"
+        sqlite3_close(database)
+        throw SQLiteStoreError.openFailed(message)
+    }
+    defer { sqlite3_close(database) }
+
+    let sql = "SELECT value FROM ItemTable WHERE key = ? LIMIT 1;"
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+        let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite prepare error"
+        throw SQLiteStoreError.prepareFailed(message)
+    }
+    defer { sqlite3_finalize(statement) }
+
+    sqlite3_bind_text(statement, 1, key, -1, SQLITE_TRANSIENT_UTILITIES)
+    let stepResult = sqlite3_step(statement)
+    switch stepResult {
+    case SQLITE_ROW:
+        guard let text = sqlite3_column_text(statement, 0) else { return nil }
+        return String(cString: text)
+    case SQLITE_DONE:
+        return nil
+    default:
+        let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite step error"
+        throw SQLiteStoreError.stepFailed(message)
+    }
 }

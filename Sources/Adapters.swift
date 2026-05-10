@@ -24,7 +24,11 @@ final class SessionCatalog {
         store = try SQLiteSessionStore(databaseURL: storeURL)
         adapters = adaptersOverride ?? [
             CopilotCLIAdapter(root: roots.copilotCLI),
-            CursorAdapter(root: roots.cursorProjects, workspaceStorageRoot: roots.cursorWorkspaceStorage),
+            CursorAdapter(
+                root: roots.cursorProjects,
+                workspaceStorageRoot: roots.cursorWorkspaceStorage,
+                globalStorageRoot: roots.cursorGlobalStorage
+            ),
             VSCodeCopilotAdapter(root: roots.vscodeWorkspaceStorage)
         ]
     }
@@ -219,11 +223,13 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
 struct CursorAdapter: SessionSourceAdapter {
     let root: URL
     let workspaceStorageRoot: URL
+    let globalStorageRoot: URL
 
     func scanCandidates() throws -> [SessionScanCandidate] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
 
         let workspaceReferences = try loadWorkspaceReferencesByProjectDirectory()
+        let titleReferences = try loadTitleReferencesBySessionID()
         let projectDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
             .filter(\.hasDirectoryPath)
 
@@ -242,10 +248,14 @@ struct CursorAdapter: SessionSourceAdapter {
                 .filter(\.hasDirectoryPath)
 
             return sessionDirectories.map { sessionDirectory in
+                let sessionID = sessionDirectory.lastPathComponent
                 let transcriptFile = sessionDirectory.appendingPathComponent("\(sessionDirectory.lastPathComponent).jsonl")
                 let relatedPlanPath = SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
-                let fingerprint = combinedFingerprint(paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath])
-                let sessionID = sessionDirectory.lastPathComponent
+                let titleReference = titleReferences[sessionID]
+                let fingerprint = combinedFingerprint(
+                    paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath],
+                    values: [titleReference?.title]
+                )
 
                 return SessionScanCandidate(
                     id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
@@ -256,6 +266,7 @@ struct CursorAdapter: SessionSourceAdapter {
                             transcriptFile: transcriptFile,
                             workspacePath: workspacePath,
                             projectName: projectName,
+                            preferredTitle: titleReference?.title,
                             relatedPlanPath: relatedPlanPath,
                             fingerprint: fingerprint
                         )
@@ -298,11 +309,32 @@ struct CursorAdapter: SessionSourceAdapter {
         return references
     }
 
+    private func loadTitleReferencesBySessionID() throws -> [String: CursorTitleReference] {
+        let stateDatabaseURL = globalStorageRoot.appendingPathComponent("state.vscdb")
+        guard FileManager.default.fileExists(atPath: stateDatabaseURL.path),
+              let rawValue = try loadSQLiteItemValue(from: stateDatabaseURL, key: "composer.composerHeaders"),
+              let data = rawValue.data(using: .utf8) else {
+            return [:]
+        }
+
+        let payload = try JSONDecoder().decode(CursorComposerHeadersPayload.self, from: data)
+        return Dictionary(
+            uniqueKeysWithValues: payload.allComposers.compactMap { header in
+                guard let title = header.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !title.isEmpty else {
+                    return nil
+                }
+                return (header.composerId, CursorTitleReference(title: title))
+            }
+        )
+    }
+
     private func loadRecord(
         sessionID: String,
         transcriptFile: URL,
         workspacePath: String?,
         projectName: String,
+        preferredTitle: String?,
         relatedPlanPath: String?,
         fingerprint: String
     ) throws -> SessionRecord? {
@@ -310,7 +342,7 @@ struct CursorAdapter: SessionSourceAdapter {
 
         let preview = try TranscriptPreviewExtractor.extractCursorTranscript(from: transcriptFile)
         let dates = fileDates(for: transcriptFile)
-        let title = TextSanitizer.inferTitle(from: preview.firstUser, fallback: sessionID)
+        let title = preferredTitle ?? TextSanitizer.inferTitle(from: preview.firstUser, fallback: sessionID)
 
         guard preview.firstUser != nil || preview.firstAssistant != nil else {
             return nil
@@ -344,6 +376,19 @@ private struct CursorWorkspaceReference {
     let workspacePath: String
     let projectName: String
     let metadataPath: String
+}
+
+private struct CursorTitleReference {
+    let title: String
+}
+
+private struct CursorComposerHeadersPayload: Decodable {
+    let allComposers: [CursorComposerHeader]
+}
+
+private struct CursorComposerHeader: Decodable {
+    let composerId: String
+    let name: String?
 }
 
 struct VSCodeCopilotAdapter: SessionSourceAdapter {
