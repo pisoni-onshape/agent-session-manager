@@ -53,9 +53,6 @@ struct SystemLaunchAtLoginController: LaunchAtLoginControlling {
 
 @MainActor
 final class AppSettingsStore: ObservableObject {
-    private static let newtonReposRootPathKey = "settings.newtonReposRootPath"
-    private static let autoRefreshCadenceKey = "settings.autoRefreshCadence"
-
     @Published private(set) var launchAtLoginEnabled: Bool = false
     @Published private(set) var launchAtLoginStatusDetail: String?
     @Published private(set) var launchAtLoginErrorMessage: String?
@@ -77,8 +74,8 @@ final class AppSettingsStore: ObservableObject {
 
         let homeDirectoryPath = homeDirectoryURL.path
         let defaultRootPath = AppSettingsSnapshot.defaultNewtonReposRootPath(homeDirectory: homeDirectoryURL)
-        let storedRootPath = userDefaults.string(forKey: Self.newtonReposRootPathKey) ?? defaultRootPath
-        let storedAutoRefreshCadence = userDefaults.string(forKey: Self.autoRefreshCadenceKey)
+        let storedRootPath = userDefaults.string(forKey: AppSettingsPersistence.newtonReposRootPathKey) ?? defaultRootPath
+        let storedAutoRefreshCadence = userDefaults.string(forKey: AppSettingsPersistence.autoRefreshCadenceKey)
 
         self.newtonReposRootPath = AppSettingsSnapshot.normalizedNewtonReposRootPath(
             storedRootPath,
@@ -86,8 +83,8 @@ final class AppSettingsStore: ObservableObject {
         )
         self.autoRefreshCadence = AutoRefreshCadence(rawValue: storedAutoRefreshCadence ?? "") ?? .off
 
-        userDefaults.set(self.newtonReposRootPath, forKey: Self.newtonReposRootPathKey)
-        userDefaults.set(self.autoRefreshCadence.rawValue, forKey: Self.autoRefreshCadenceKey)
+        userDefaults.set(self.newtonReposRootPath, forKey: AppSettingsPersistence.newtonReposRootPathKey)
+        userDefaults.set(self.autoRefreshCadence.rawValue, forKey: AppSettingsPersistence.autoRefreshCadenceKey)
 
         refreshLaunchAtLoginStatus()
     }
@@ -124,13 +121,13 @@ final class AppSettingsStore: ObservableObject {
         guard normalizedPath != newtonReposRootPath else { return }
 
         newtonReposRootPath = normalizedPath
-        userDefaults.set(normalizedPath, forKey: Self.newtonReposRootPathKey)
+        userDefaults.set(normalizedPath, forKey: AppSettingsPersistence.newtonReposRootPathKey)
     }
 
     func setAutoRefreshCadence(_ cadence: AutoRefreshCadence) {
         guard cadence != autoRefreshCadence else { return }
 
         autoRefreshCadence = cadence
-        userDefaults.set(cadence.rawValue, forKey: Self.autoRefreshCadenceKey)
+        userDefaults.set(cadence.rawValue, forKey: AppSettingsPersistence.autoRefreshCadenceKey)
     }
 }

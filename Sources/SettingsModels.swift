@@ -83,3 +83,26 @@ public struct AppSettingsSnapshot: Equatable, Sendable {
         )
     }
 }
+
+public enum AppSettingsPersistence {
+    public static let newtonReposRootPathKey = "settings.newtonReposRootPath"
+    public static let autoRefreshCadenceKey = "settings.autoRefreshCadence"
+
+    public static func loadSnapshot(
+        userDefaults: UserDefaults = .standard,
+        homeDirectoryURL: URL = AppPaths.homeDirectory
+    ) -> AppSettingsSnapshot {
+        let homeDirectoryPath = homeDirectoryURL.path
+        let defaultRootPath = AppSettingsSnapshot.defaultNewtonReposRootPath(homeDirectory: homeDirectoryURL)
+        let storedRootPath = userDefaults.string(forKey: newtonReposRootPathKey) ?? defaultRootPath
+        let storedAutoRefreshCadence = userDefaults.string(forKey: autoRefreshCadenceKey)
+
+        return AppSettingsSnapshot(
+            newtonReposRootPath: AppSettingsSnapshot.normalizedNewtonReposRootPath(
+                storedRootPath,
+                homeDirectoryPath: homeDirectoryPath
+            ),
+            autoRefreshCadence: AutoRefreshCadence(rawValue: storedAutoRefreshCadence ?? "") ?? .off
+        )
+    }
+}

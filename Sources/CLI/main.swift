@@ -1,4 +1,11 @@
 import Foundation
 import AgentSessionManagerCore
 
-print("Agent Session Manager CLI target is scaffolded. Search commands will be added in the next phase.")
+let result = SessionSearchCLI.execute(arguments: CommandLine.arguments)
+if !result.standardOutput.isEmpty {
+    FileHandle.standardOutput.write(Data(result.standardOutput.utf8))
+}
+if !result.standardError.isEmpty {
+    FileHandle.standardError.write(Data(result.standardError.utf8))
+}
+exit(result.exitCode)

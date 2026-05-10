@@ -22,12 +22,14 @@
 		52A29D004A5895EC496076E5 /* AgentSessionManager-Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 28283EED08D30CE6A10381E5 /* AgentSessionManager-Icon.png */; };
 		5308D4D2CB80910E6EFBE6B3 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */; };
 		55445405C0C4B604DD394B62 /* CursorAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */; };
+		56AD7542BC1F08BE675081B6 /* SessionSearchCLI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1834E9C8936435B621086C76 /* SessionSearchCLI.swift */; };
 		5A8B4D7B1B618D5BE8C8C5E6 /* TranscriptDocumentCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = C502C8C1B3BCB859BB461884 /* TranscriptDocumentCache.swift */; };
 		5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */; };
 		68EF8294256C5743AB0D7BCB /* AppSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95E238E77BEC6ED1E572B3D /* AppSettingsTests.swift */; };
 		6F21FA9CD826054C918DBC00 /* Adapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BEF66E0F0DD94E3CBE7EAB8 /* Adapters.swift */; };
 		7950ABE1A14965929DF95531 /* SessionCatalogRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */; };
 		85CEBEE7CB16742F67B2AF5F /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA1E8ACE6592728373C134F /* Models.swift */; };
+		8C2295EEF286FDF3629AF2A6 /* SessionSearchCLITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F332DCBE5F4757650F3B5073 /* SessionSearchCLITests.swift */; };
 		99013BA95FBFE1C2F4D73C18 /* WorkspaceLauncherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E94A3ED57E602E84C177D3A1 /* WorkspaceLauncherTests.swift */; };
 		9DD16BA8CBEB7E99D4989540 /* SettingsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC79DA7CE5281B15608695DB /* SettingsModels.swift */; };
 		B8B334283D193C15934B224F /* AgentSessionManagerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC01673AC71F156041BD76F /* AgentSessionManagerApp.swift */; };
@@ -74,6 +76,7 @@
 /* Begin PBXFileReference section */
 		0CFE037DB680ED154043689B /* libAgentSessionManagerCore.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libAgentSessionManagerCore.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		0DC6FF5831403EEB1D0CAFAC /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
+		1834E9C8936435B621086C76 /* SessionSearchCLI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchCLI.swift; sourceTree = "<group>"; };
 		26EBA05369BC1A5053511E16 /* SessionSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchService.swift; sourceTree = "<group>"; };
 		28283EED08D30CE6A10381E5 /* AgentSessionManager-Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AgentSessionManager-Icon.png"; sourceTree = "<group>"; };
 		2BE74D318718590BE9CACF18 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -101,6 +104,7 @@
 		CF76D7F25639A165DE9268AC /* NewtonProjectMatchingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewtonProjectMatchingTests.swift; sourceTree = "<group>"; };
 		D2C27AD6AF2454C65F2D1A90 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		E94A3ED57E602E84C177D3A1 /* WorkspaceLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceLauncherTests.swift; sourceTree = "<group>"; };
+		F332DCBE5F4757650F3B5073 /* SessionSearchCLITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchCLITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -151,6 +155,7 @@
 				2BE74D318718590BE9CACF18 /* ContentView.swift */,
 				CEA1E8ACE6592728373C134F /* Models.swift */,
 				5C9A6E9E1B5E29F559CAC1D9 /* SessionFiltering.swift */,
+				1834E9C8936435B621086C76 /* SessionSearchCLI.swift */,
 				26EBA05369BC1A5053511E16 /* SessionSearchService.swift */,
 				CC79DA7CE5281B15608695DB /* SettingsModels.swift */,
 				3B1087C9289C144190B61B3C /* SettingsView.swift */,
@@ -170,6 +175,7 @@
 				CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */,
 				CF76D7F25639A165DE9268AC /* NewtonProjectMatchingTests.swift */,
 				74AC76261AFBDDB47A27871C /* SessionCatalogRefreshTests.swift */,
+				F332DCBE5F4757650F3B5073 /* SessionSearchCLITests.swift */,
 				8B58ACB64DF87CDB3E048436 /* SQLiteStoreTests.swift */,
 				530298199879A385F6C372DE /* TextSanitizerTests.swift */,
 				618F620A1984E0955FBD39D1 /* TranscriptParsingTests.swift */,
@@ -408,6 +414,7 @@
 				CDFEE81802EC2892E50ECC79 /* NewtonProjectMatchingTests.swift in Sources */,
 				5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */,
 				7950ABE1A14965929DF95531 /* SessionCatalogRefreshTests.swift in Sources */,
+				8C2295EEF286FDF3629AF2A6 /* SessionSearchCLITests.swift in Sources */,
 				04BEFA40C45EE48667B6A7AA /* TextSanitizerTests.swift in Sources */,
 				D15892D1CCA981D256988BB4 /* TranscriptParsingTests.swift in Sources */,
 				99013BA95FBFE1C2F4D73C18 /* WorkspaceLauncherTests.swift in Sources */,
@@ -421,6 +428,7 @@
 				6F21FA9CD826054C918DBC00 /* Adapters.swift in Sources */,
 				85CEBEE7CB16742F67B2AF5F /* Models.swift in Sources */,
 				1F669C7C07232D3C1694A0A3 /* SessionFiltering.swift in Sources */,
+				56AD7542BC1F08BE675081B6 /* SessionSearchCLI.swift in Sources */,
 				F9A840EA46E8ADDFA757D1D2 /* SessionSearchService.swift in Sources */,
 				9DD16BA8CBEB7E99D4989540 /* SettingsModels.swift in Sources */,
 				3A88E94A114CE717D4C5EE2B /* Storage.swift in Sources */,

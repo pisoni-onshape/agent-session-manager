@@ -20,6 +20,7 @@ targets:
           - Adapters.swift
           - Models.swift
           - SessionFiltering.swift
+          - SessionSearchCLI.swift
           - SessionSearchService.swift
           - SettingsModels.swift
           - Storage.swift
