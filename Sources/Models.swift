@@ -117,6 +117,30 @@ struct SessionRecord: Identifiable, Equatable, Sendable {
     var detailSummary: String {
         summary ?? firstAssistantPreview ?? firstUserPreview ?? "No preview available."
     }
+
+    func with(isNewtonProject: Bool) -> SessionRecord {
+        SessionRecord(
+            source: source,
+            sourceSessionId: sourceSessionId,
+            workspacePath: workspacePath,
+            projectName: projectName,
+            branch: branch,
+            conversationModel: conversationModel,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            title: title,
+            summary: summary,
+            firstUserPreview: firstUserPreview,
+            firstAssistantPreview: firstAssistantPreview,
+            rawTranscriptPath: rawTranscriptPath,
+            rawMetadataPath: rawMetadataPath,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: resumeKind,
+            resumePayload: resumePayload,
+            isNewtonProject: isNewtonProject
+        )
+    }
 }
 
 enum SessionSearchField: String, CaseIterable, Sendable {

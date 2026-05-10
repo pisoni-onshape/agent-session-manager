@@ -2,10 +2,13 @@ import SwiftUI
 
 @main
 struct AgentSessionManagerApp: App {
+    @StateObject private var settings: AppSettingsStore
     @StateObject private var viewModel: SessionBrowserViewModel
 
     init() {
-        _viewModel = StateObject(wrappedValue: SessionBrowserViewModel.makeDefault())
+        let settings = AppSettingsStore()
+        _settings = StateObject(wrappedValue: settings)
+        _viewModel = StateObject(wrappedValue: SessionBrowserViewModel.makeDefault(settings: settings))
     }
 
     var body: some Scene {
@@ -52,5 +55,8 @@ struct AgentSessionManagerApp: App {
             }
         }
         .defaultSize(width: 920, height: 720)
+        Settings {
+            SettingsView(settings: settings)
+        }
     }
 }

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 enum RefreshActivity: Equatable {
@@ -143,18 +144,31 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var loadingTranscriptTitle: String?
 
     private let catalog: SessionCatalog?
+    private let settings: AppSettingsStore?
     private let transcriptCache = TranscriptDocumentCache()
     private var searchTask: Task<Void, Never>?
+    private var autoRefreshTask: Task<Void, Never>?
+    private var settingsCancellables: Set<AnyCancellable> = []
 
-    init(catalog: SessionCatalog?) {
+    init(catalog: SessionCatalog?, settings: AppSettingsStore? = nil) {
         self.catalog = catalog
+        self.settings = settings
+        bindSettings()
+        configureAutoRefresh(with: settings?.autoRefreshCadence ?? .off)
     }
 
-    static func makeDefault() -> SessionBrowserViewModel {
+    deinit {
+        autoRefreshTask?.cancel()
+    }
+
+    static func makeDefault(settings: AppSettingsStore) -> SessionBrowserViewModel {
         do {
-            return SessionBrowserViewModel(catalog: try SessionCatalog.makeDefault())
+            return SessionBrowserViewModel(
+                catalog: try SessionCatalog.makeDefault(settingsProvider: { settings.snapshot }),
+                settings: settings
+            )
         } catch {
-            let viewModel = SessionBrowserViewModel(catalog: nil)
+            let viewModel = SessionBrowserViewModel(catalog: nil, settings: settings)
             viewModel.errorMessage = error.localizedDescription
             return viewModel
         }
@@ -508,6 +522,70 @@ final class SessionBrowserViewModel: ObservableObject {
                 searchState.lastError = error.localizedDescription
             }
         }
+    }
+
+    private func bindSettings() {
+        guard let settings else { return }
+
+        settings.$newtonReposRootPath
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.handleNewtonReposRootPathChange()
+            }
+            .store(in: &settingsCancellables)
+
+        settings.$autoRefreshCadence
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] cadence in
+                self?.configureAutoRefresh(with: cadence)
+            }
+            .store(in: &settingsCancellables)
+    }
+
+    private func handleNewtonReposRootPathChange() {
+        guard let catalog else { return }
+
+        let reclassifiedSessions = catalog.reclassifySessions(allSessions)
+        if reclassifiedSessions != allSessions {
+            applySessions(reclassifiedSessions)
+        }
+
+        guard hasCompletedInitialLoad else { return }
+        Task { await refreshSessionsIfIdle() }
+    }
+
+    private func configureAutoRefresh(with cadence: AutoRefreshCadence) {
+        autoRefreshTask?.cancel()
+
+        guard let intervalNanoseconds = cadence.intervalNanoseconds else {
+            autoRefreshTask = nil
+            return
+        }
+
+        autoRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: intervalNanoseconds)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    continue
+                }
+
+                if Task.isCancelled {
+                    return
+                }
+
+                await self?.refreshSessionsIfIdle()
+            }
+        }
+    }
+
+    private func refreshSessionsIfIdle() async {
+        guard hasCompletedInitialLoad, !isRefreshing else { return }
+        await refreshSessions()
     }
 
     private func makeMergedSearchMatches(

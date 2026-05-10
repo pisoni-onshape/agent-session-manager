@@ -19,9 +19,16 @@ extension SessionSourceAdapter {
 final class SessionCatalog {
     private let store: SQLiteSessionStore
     private let adapters: [SessionSourceAdapter]
+    private let settingsProvider: () -> AppSettingsSnapshot
 
-    init(storeURL: URL, roots: SourceRoots = .live, adaptersOverride: [SessionSourceAdapter]? = nil) throws {
+    init(
+        storeURL: URL,
+        roots: SourceRoots = .live,
+        settingsProvider: @escaping () -> AppSettingsSnapshot = { AppSettingsSnapshot.standard() },
+        adaptersOverride: [SessionSourceAdapter]? = nil
+    ) throws {
         store = try SQLiteSessionStore(databaseURL: storeURL)
+        self.settingsProvider = settingsProvider
         adapters = adaptersOverride ?? [
             CopilotCLIAdapter(root: roots.copilotCLI),
             CursorAdapter(
@@ -33,12 +40,12 @@ final class SessionCatalog {
         ]
     }
 
-    static func makeDefault() throws -> SessionCatalog {
-        try SessionCatalog(storeURL: AppPaths.catalogDatabaseURL)
+    static func makeDefault(settingsProvider: @escaping () -> AppSettingsSnapshot = { AppSettingsSnapshot.standard() }) throws -> SessionCatalog {
+        try SessionCatalog(storeURL: AppPaths.catalogDatabaseURL, settingsProvider: settingsProvider)
     }
 
     func loadPersistedSessions() throws -> [SessionRecord] {
-        try store.fetchAll()
+        reclassifySessions(try store.fetchAll())
     }
 
     func starredSessionIDs() throws -> Set<String> {
@@ -53,11 +60,19 @@ final class SessionCatalog {
         try store.searchTranscriptEntries(sessionIDs: sessionIDs, query: query)
     }
 
+    func reclassifySessions(_ records: [SessionRecord]) -> [SessionRecord] {
+        let matcher = NewtonProjectMatcher(reposRootPath: settingsProvider().newtonReposRootPath)
+        return records.map { record in
+            record.with(isNewtonProject: matcher.matches(workspacePath: record.workspacePath))
+        }
+    }
+
     func refreshSessions() throws -> [SessionRecord] {
         let existingRecords = try store.fetchAll()
         let existingByID = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.id, $0) })
         let indexedSessionIDs = try store.indexedSessionIDs(for: Array(existingByID.keys))
         let candidates = try adapters.flatMap { try $0.scanCandidates() }
+        let matcher = NewtonProjectMatcher(reposRootPath: settingsProvider().newtonReposRootPath)
 
         var refreshedRecordsByID: [String: SessionRecord] = [:]
         var changedRecords: [SessionRecord] = []
@@ -67,16 +82,29 @@ final class SessionCatalog {
             if let existingRecord = existingByID[candidate.id],
                existingRecord.fingerprint == candidate.fingerprint,
                indexedSessionIDs.contains(candidate.id) {
-                refreshedRecordsByID[candidate.id] = existingRecord
+                let reclassifiedRecord = existingRecord.with(
+                    isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath)
+                )
+                refreshedRecordsByID[candidate.id] = reclassifiedRecord
+                if reclassifiedRecord.isNewtonProject != existingRecord.isNewtonProject {
+                    changedRecords.append(reclassifiedRecord)
+                }
                 continue
             }
 
             if let record = try candidate.loadRecord() {
-                refreshedRecordsByID[record.id] = record
-                changedRecords.append(record)
-                transcriptEntriesBySessionID[record.id] = try TranscriptPreviewExtractor.searchableEntries(for: record)
+                let reclassifiedRecord = record.with(isNewtonProject: matcher.matches(workspacePath: record.workspacePath))
+                refreshedRecordsByID[reclassifiedRecord.id] = reclassifiedRecord
+                changedRecords.append(reclassifiedRecord)
+                transcriptEntriesBySessionID[reclassifiedRecord.id] = try TranscriptPreviewExtractor.searchableEntries(for: reclassifiedRecord)
             } else if let existingRecord = existingByID[candidate.id] {
-                refreshedRecordsByID[candidate.id] = existingRecord
+                let reclassifiedRecord = existingRecord.with(
+                    isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath)
+                )
+                refreshedRecordsByID[candidate.id] = reclassifiedRecord
+                if reclassifiedRecord.isNewtonProject != existingRecord.isNewtonProject {
+                    changedRecords.append(reclassifiedRecord)
+                }
             }
         }
 
@@ -91,9 +119,11 @@ final class SessionCatalog {
     }
 
     func rebuildSessions() throws -> [SessionRecord] {
-        let records = try adapters
+        let records = reclassifySessions(
+            try adapters
             .flatMap { try $0.discover() }
             .sorted(by: SessionCatalog.sort(lhs:rhs:))
+        )
         let transcriptEntriesBySessionID = try Dictionary(
             uniqueKeysWithValues: records.map { record in
                 (record.id, try TranscriptPreviewExtractor.searchableEntries(for: record))
@@ -215,7 +245,7 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
             fingerprint: fingerprint,
             resumeKind: .copilotConnect,
             resumePayload: metadata["id"] ?? sessionDirectory.lastPathComponent,
-            isNewtonProject: PathUtilities.isNewtonProject(workspacePath)
+            isNewtonProject: false
         )
     }
 }
@@ -367,7 +397,7 @@ struct CursorAdapter: SessionSourceAdapter {
             fingerprint: fingerprint,
             resumeKind: workspacePath == nil ? .revealPath : .openInCursor,
             resumePayload: workspacePath ?? transcriptFile.path,
-            isNewtonProject: PathUtilities.isNewtonProject(workspacePath ?? projectName)
+            isNewtonProject: false
         )
     }
 }
@@ -496,7 +526,7 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
             fingerprint: fingerprint,
             resumeKind: workspacePath == nil ? .revealPath : .openInVSCode,
             resumePayload: workspacePath ?? transcriptFile.path,
-            isNewtonProject: PathUtilities.isNewtonProject(workspacePath ?? projectName)
+            isNewtonProject: false
         )
     }
 }

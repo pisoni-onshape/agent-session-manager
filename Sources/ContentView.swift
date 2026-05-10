@@ -216,7 +216,7 @@ struct ContentView: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Toggle("newton* only", isOn: $viewModel.filters.newtonOnly)
+                Toggle("Newton repos only", isOn: $viewModel.filters.newtonOnly)
                     .toggleStyle(.switch)
                     .fixedSize()
             }

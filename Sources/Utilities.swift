@@ -239,10 +239,23 @@ enum PathUtilities {
         return encodedDirectoryName
     }
 
-    static func isNewtonProject(_ workspacePath: String?) -> Bool {
-        guard let workspacePath else { return false }
-        let normalized = workspacePath.lowercased()
-        return normalized.contains("/newton") || normalized.contains("newton")
+    static func normalizedDirectoryPath(
+        _ rawPath: String?,
+        homeDirectoryPath: String = AppPaths.homeDirectory.path
+    ) -> String? {
+        guard let rawPath else { return nil }
+
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let expandedHome = trimmed.replacingOccurrences(of: "$HOME", with: homeDirectoryPath)
+        let expandedTilde = (expandedHome as NSString).expandingTildeInPath
+        let normalized = (expandedTilde as NSString).standardizingPath
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    static func isNewtonProject(workspacePath: String?, reposRootPath: String) -> Bool {
+        NewtonProjectMatcher(reposRootPath: reposRootPath).matches(workspacePath: workspacePath)
     }
 
     static func decodeCursorWorkspacePath(from encodedDirectoryName: String) -> String? {
@@ -289,6 +302,36 @@ enum PathUtilities {
 
     static func base64EncodedASCII(_ value: String) -> String {
         Data(value.utf8).base64EncodedString()
+    }
+}
+
+struct NewtonProjectMatcher: Equatable, Sendable {
+    let reposRootPath: String
+    private let reposRootComponents: [String]
+
+    init(reposRootPath: String) {
+        let normalizedRootPath = PathUtilities.normalizedDirectoryPath(reposRootPath) ?? reposRootPath
+        self.reposRootPath = normalizedRootPath
+        self.reposRootComponents = URL(fileURLWithPath: normalizedRootPath, isDirectory: true)
+            .standardizedFileURL
+            .pathComponents
+    }
+
+    func matches(workspacePath: String?) -> Bool {
+        guard let normalizedWorkspacePath = PathUtilities.normalizedDirectoryPath(workspacePath) else {
+            return false
+        }
+
+        let workspaceComponents = URL(fileURLWithPath: normalizedWorkspacePath, isDirectory: true)
+            .standardizedFileURL
+            .pathComponents
+        guard workspaceComponents.count > reposRootComponents.count,
+              Array(workspaceComponents.prefix(reposRootComponents.count)) == reposRootComponents else {
+            return false
+        }
+
+        let repoDirectoryName = workspaceComponents[reposRootComponents.count]
+        return repoDirectoryName.lowercased().hasPrefix("newton")
     }
 }
 

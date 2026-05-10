@@ -192,12 +192,14 @@ final class SQLiteSessionStore {
 
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
-            let changedIDs = records.map(\.id)
+            let transcriptSessionIDs = Array(Set(removedIDs + transcriptEntriesBySessionID.keys))
             if !removedIDs.isEmpty {
                 try deleteRecords(withIDs: removedIDs, from: "sessions", idColumn: "id")
             }
 
-            try deleteRecords(withIDs: removedIDs + changedIDs, from: "transcript_entries", idColumn: "session_id")
+            if !transcriptSessionIDs.isEmpty {
+                try deleteRecords(withIDs: transcriptSessionIDs, from: "transcript_entries", idColumn: "session_id")
+            }
             try upsert(records: records)
             try insertTranscriptEntries(transcriptEntriesBySessionID)
             try execute("COMMIT;")

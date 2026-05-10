@@ -181,6 +181,56 @@ final class SessionCatalogRefreshTests: XCTestCase {
         XCTAssertEqual(try catalog.starredSessionIDs(), Set([original.id]))
     }
 
+    func testIncrementalRefreshReclassifiesUnchangedSessionsWithoutReparsingTranscripts() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        let original = try makeRecord(
+            sessionID: "newton-session",
+            title: "Newton Session",
+            fingerprint: "same",
+            directory: directory,
+            transcriptText: "Original transcript contents."
+        )
+        try store.replaceAll(
+            records: [original],
+            transcriptEntriesBySessionID: [original.id: try TranscriptPreviewExtractor.searchableEntries(for: original)]
+        )
+
+        var parseCount = 0
+        let adapter = FakeSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: original.id,
+                    fingerprint: original.fingerprint,
+                    loadRecord: {
+                        parseCount += 1
+                        return original
+                    }
+                )
+            ]
+        )
+
+        let catalog = try SessionCatalog(
+            storeURL: databaseURL,
+            settingsProvider: {
+                AppSettingsSnapshot(
+                    newtonReposRootPath: "/Users/pisoni/Development/LocalProjects",
+                    autoRefreshCadence: .off
+                )
+            },
+            adaptersOverride: [adapter]
+        )
+        _ = try catalog.refreshSessions()
+
+        let refreshed = try store.fetchAll()
+
+        XCTAssertEqual(parseCount, 0)
+        XCTAssertFalse(refreshed.first?.isNewtonProject == true)
+    }
+
     private func makeRecord(
         sessionID: String,
         title: String,
