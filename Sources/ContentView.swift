@@ -659,11 +659,16 @@ private struct SessionDetailView: View {
                 .padding(.top, 5)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(session.title)
-                        .font(.largeTitle.weight(.semibold))
-                    Text(session.detailSummary)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
+                    SelectableTextLabel(
+                        text: session.title,
+                        font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold),
+                        textColor: .labelColor
+                    )
+                    SelectableTextLabel(
+                        text: session.detailSummary,
+                        font: .preferredFont(forTextStyle: .body),
+                        textColor: .secondaryLabelColor
+                    )
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -904,8 +909,12 @@ private struct SessionDetailView: View {
                         .accessibilityHidden(true)
                 }
 
-                Text(value)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                SelectableTextLabel(
+                    text: value,
+                    font: .preferredFont(forTextStyle: .body),
+                    textColor: .labelColor
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -1076,6 +1085,70 @@ private struct CopyValueButton: View {
     }
 }
 
+private struct SelectableTextLabel: NSViewRepresentable {
+    let text: String
+    let font: NSFont
+    let textColor: NSColor
+    var maximumNumberOfLines: Int = 0
+    var lineBreakMode: NSLineBreakMode = .byWordWrapping
+
+    func makeNSView(context: Context) -> WrappingSelectableTextField {
+        let textField = WrappingSelectableTextField()
+        textField.isBordered = false
+        textField.isBezeled = false
+        textField.drawsBackground = false
+        textField.isEditable = false
+        textField.isSelectable = true
+        textField.focusRingType = .none
+        textField.usesSingleLineMode = maximumNumberOfLines == 1
+        textField.allowsEditingTextAttributes = false
+        textField.isAutomaticTextCompletionEnabled = false
+        textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        update(textField)
+        return textField
+    }
+
+    func updateNSView(_ nsView: WrappingSelectableTextField, context: Context) {
+        update(nsView)
+    }
+
+    private func update(_ textField: WrappingSelectableTextField) {
+        textField.stringValue = text
+        textField.font = font
+        textField.textColor = textColor
+        textField.lineBreakMode = lineBreakMode
+        textField.maximumNumberOfLines = maximumNumberOfLines
+        textField.usesSingleLineMode = maximumNumberOfLines == 1
+        if let cell = textField.cell as? NSTextFieldCell {
+            cell.wraps = maximumNumberOfLines != 1
+            cell.isScrollable = false
+            cell.truncatesLastVisibleLine = maximumNumberOfLines == 1
+            cell.lineBreakMode = lineBreakMode
+        }
+        textField.invalidateIntrinsicContentSize()
+    }
+}
+
+private final class WrappingSelectableTextField: NSTextField {
+    override var intrinsicContentSize: NSSize {
+        guard let cell else { return super.intrinsicContentSize }
+
+        let fittingWidth = max(bounds.width, 1)
+        let fittingBounds = NSRect(x: 0, y: 0, width: fittingWidth, height: .greatestFiniteMagnitude)
+        let size = cell.cellSize(forBounds: fittingBounds)
+        return NSSize(width: NSView.noIntrinsicMetric, height: ceil(size.height))
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let previousWidth = frame.width
+        super.setFrameSize(newSize)
+        if abs(previousWidth - newSize.width) > .ulpOfOne {
+            invalidateIntrinsicContentSize()
+        }
+    }
+}
+
 private struct PreviewBlock: View {
     let title: String
     let text: String?
@@ -1096,8 +1169,11 @@ private struct PreviewBlock: View {
                     }
                 }
             }
-            Text(text ?? "Unavailable")
-                .foregroundStyle(text == nil ? .secondary : .primary)
+            SelectableTextLabel(
+                text: text ?? "Unavailable",
+                font: .preferredFont(forTextStyle: .body),
+                textColor: text == nil ? .secondaryLabelColor : .labelColor
+            )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -1125,8 +1201,11 @@ private struct PathRow: View {
                     }
                 }
             }
-            Text(value ?? "Unavailable")
-                .foregroundStyle(value == nil ? .secondary : .primary)
+            SelectableTextLabel(
+                text: value ?? "Unavailable",
+                font: .preferredFont(forTextStyle: .body),
+                textColor: value == nil ? .secondaryLabelColor : .labelColor
+            )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -1198,14 +1277,19 @@ struct TranscriptViewerView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Transcript")
                     .font(.title2.weight(.semibold))
-                Text(transcript.sessionTitle)
-                    .font(.title3)
+                SelectableTextLabel(
+                    text: transcript.sessionTitle,
+                    font: .preferredFont(forTextStyle: .title3),
+                    textColor: .labelColor
+                )
                 SourceBadge(source: transcript.source)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Text(transcript.rawTranscriptPath)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                SelectableTextLabel(
+                    text: transcript.rawTranscriptPath,
+                    font: .preferredFont(forTextStyle: .caption1),
+                    textColor: .secondaryLabelColor
+                )
             }
 
             Spacer()
