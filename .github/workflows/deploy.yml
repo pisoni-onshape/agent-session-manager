@@ -1,0 +1,55 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Set build metadata
+        run: |
+          echo "BUILD_COUNTER_OVERRIDE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "MARKETING_VERSION_OVERRIDE=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "ARTIFACT_NAME=AgentSessionManager-${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          else
+            echo "ARTIFACT_NAME=AgentSessionManager-master-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and package Release app
+        run: ./build.sh --ci-package --output-dir build/artifacts
+
+      - name: Upload packaged app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: build/artifacts/*.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" build/artifacts/*.zip --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" build/artifacts/*.zip \
+              --generate-notes \
+              --title "${GITHUB_REF_NAME}"
+          fi

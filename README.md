@@ -177,6 +177,14 @@ This:
 5. Installs to `/Applications/AgentSessionManager.app`
 6. Symlinks the CLI to `/usr/local/bin/agent-session-manager`
 
+To build the same Release app for CI without installing it locally:
+
+```bash
+./build.sh --ci-package --output-dir build/artifacts
+```
+
+That leaves a zipped app bundle in `build/artifacts/`.
+
 ### Development
 
 For iterating in Xcode:
@@ -192,10 +200,28 @@ To run tests:
 xcodebuild -project AgentSessionManager.xcodeproj -scheme AgentSessionManager -destination 'platform=macOS' test
 ```
 
+### GitHub Actions deploy flow
+
+- Pushes to `master` build the Release app, zip `AgentSessionManager.app`, and upload it as a workflow artifact.
+- Pushes of release tags matching `v*` do the same build/package step and also publish the zip to the matching GitHub Release.
+- The workflow lives at `.github/workflows/deploy.yml`.
+
+The easiest way to publish a new release package is:
+
+```bash
+git checkout master
+git pull --ff-only
+git tag -a v1.2.3 -m "Release v1.2.3"
+git push origin v1.2.3
+```
+
+That tag push creates or updates the GitHub Release for `v1.2.3` and uploads the packaged app zip.
+
 ### Project Structure
 
 | File | Purpose |
 |------|---------|
+| `.github/workflows/deploy.yml` | Builds Release artifacts on `master` and publishes tagged releases |
 | `Sources/Models.swift` | Session types, filter/sort state, source definitions |
 | `Sources/Adapters.swift` | Read-only scanners for Copilot CLI, Cursor, and VS Code stores |
 | `Sources/Storage.swift` | SQLite catalog — persistence, search index, migrations |
