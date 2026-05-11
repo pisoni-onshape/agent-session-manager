@@ -863,13 +863,11 @@ private struct SessionDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 PreviewBlock(
                     title: "First User Prompt",
-                    text: session.firstUserPreview,
-                    onCopy: viewModel.copyToClipboard
+                    text: session.firstUserPreview
                 )
                 PreviewBlock(
                     title: "First Assistant Response",
-                    text: session.firstAssistantPreview,
-                    onCopy: viewModel.copyToClipboard
+                    text: session.firstAssistantPreview
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -879,10 +877,10 @@ private struct SessionDetailView: View {
     private var pathSection: some View {
         GroupBox("Paths") {
             VStack(alignment: .leading, spacing: 12) {
-                PathRow(label: "Workspace", value: session.workspacePath, onCopy: viewModel.copyToClipboard)
-                PathRow(label: "Transcript", value: session.rawTranscriptPath, onCopy: viewModel.copyToClipboard)
-                PathRow(label: "Metadata", value: session.rawMetadataPath, onCopy: viewModel.copyToClipboard)
-                PathRow(label: "Plan", value: session.relatedPlanPath, onCopy: viewModel.copyToClipboard)
+                PathRow(label: "Workspace", value: session.workspacePath)
+                PathRow(label: "Transcript", value: session.rawTranscriptPath)
+                PathRow(label: "Metadata", value: session.rawMetadataPath)
+                PathRow(label: "Plan", value: session.relatedPlanPath)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1152,23 +1150,11 @@ private final class WrappingSelectableTextField: NSTextField {
 private struct PreviewBlock: View {
     let title: String
     let text: String?
-    let onCopy: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Text(title)
-                    .font(.headline)
-                Spacer(minLength: 0)
-                CopyValueButton(
-                    value: text,
-                    label: "Copy \(title)"
-                ) {
-                    if let text {
-                        onCopy(text)
-                    }
-                }
-            }
+            Text(title)
+                .font(.headline)
             SelectableTextLabel(
                 text: text ?? "Unavailable",
                 font: .preferredFont(forTextStyle: .body),
@@ -1184,23 +1170,11 @@ private struct PreviewBlock: View {
 private struct PathRow: View {
     let label: String
     let value: String?
-    let onCopy: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
-                Text(label)
-                    .font(.headline)
-                Spacer(minLength: 0)
-                CopyValueButton(
-                    value: value,
-                    label: "Copy \(label) path"
-                ) {
-                    if let value {
-                        onCopy(value)
-                    }
-                }
-            }
+            Text(label)
+                .font(.headline)
             SelectableTextLabel(
                 text: value ?? "Unavailable",
                 font: .preferredFont(forTextStyle: .body),
