@@ -28,6 +28,19 @@ public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable
             return "chevron.left.forwardslash.chevron.right"
         }
     }
+
+    /// Asset catalog image name for sources that have a custom app icon.
+    /// Returns `nil` for sources that should fall back to SF Symbols.
+    public var appIconAssetName: String? {
+        switch self {
+        case .copilotCLI:
+            return nil
+        case .cursor:
+            return "CursorIcon"
+        case .vscodeCopilot:
+            return "VSCodeIcon"
+        }
+    }
 }
 
 public enum ResumeActionKind: String, Codable, Sendable {

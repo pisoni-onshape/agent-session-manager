@@ -511,6 +511,25 @@ private final class SearchShortcutNSView: NSView {
     }
 }
 
+/// Displays the session source with its official app icon (Cursor, VS Code) or SF Symbol fallback.
+private struct SourceBadge: View {
+    let source: SessionSource
+
+    var body: some View {
+        if let assetName = source.appIconAssetName {
+            HStack(spacing: 4) {
+                Image(assetName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 14, height: 14)
+                Text(source.displayName)
+            }
+        } else {
+            Label(source.displayName, systemImage: source.systemImageName)
+        }
+    }
+}
+
 private struct SessionRowView: View {
     let session: SessionRecord
     let isSelected: Bool
@@ -522,7 +541,7 @@ private struct SessionRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
-                Label(session.source.displayName, systemImage: session.source.systemImageName)
+                SourceBadge(source: session.source)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -1127,7 +1146,7 @@ struct TranscriptViewerView: View {
                     .font(.title2.weight(.semibold))
                 Text(transcript.sessionTitle)
                     .font(.title3)
-                Label(transcript.source.displayName, systemImage: transcript.source.systemImageName)
+                SourceBadge(source: transcript.source)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Text(transcript.rawTranscriptPath)
