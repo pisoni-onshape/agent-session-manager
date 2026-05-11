@@ -229,9 +229,10 @@ public enum PathUtilities {
     }
 
     public static func cursorFallbackProjectName(from encodedDirectoryName: String) -> String {
+        let username = AppPaths.homeDirectory.lastPathComponent
         let knownPrefixes = [
-            "Users-pisoni-repos-",
-            "Users-pisoni-Development-LocalProjects-"
+            "Users-\(username)-repos-",
+            "Users-\(username)-Development-LocalProjects-"
         ]
 
         for prefix in knownPrefixes where encodedDirectoryName.hasPrefix(prefix) {
@@ -269,19 +270,25 @@ public enum PathUtilities {
             return directCandidate
         }
 
-        let commonPrefix = "Users-pisoni-repos-"
+        let username = AppPaths.homeDirectory.lastPathComponent
+        let commonPrefix = "Users-\(username)-repos-"
         if encodedDirectoryName.hasPrefix(commonPrefix) {
             let suffix = encodedDirectoryName.dropFirst(commonPrefix.count)
-            let candidate = "/Users/pisoni/repos/\(suffix)"
+            let candidate = AppPaths.homeDirectory
+                .appendingPathComponent("repos", isDirectory: true)
+                .appendingPathComponent(String(suffix)).path
             if FileManager.default.fileExists(atPath: candidate) {
                 return candidate
             }
         }
 
-        let localProjectsPrefix = "Users-pisoni-Development-LocalProjects-"
+        let localProjectsPrefix = "Users-\(username)-Development-LocalProjects-"
         if encodedDirectoryName.hasPrefix(localProjectsPrefix) {
             let suffix = encodedDirectoryName.dropFirst(localProjectsPrefix.count)
-            let candidate = "/Users/pisoni/Development/LocalProjects/\(suffix)"
+            let candidate = AppPaths.homeDirectory
+                .appendingPathComponent("Development", isDirectory: true)
+                .appendingPathComponent("LocalProjects", isDirectory: true)
+                .appendingPathComponent(String(suffix)).path
             if FileManager.default.fileExists(atPath: candidate) {
                 return candidate
             }
