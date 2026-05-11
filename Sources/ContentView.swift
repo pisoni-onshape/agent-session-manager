@@ -112,11 +112,7 @@ struct ContentView: View {
                 Button {
                     Task { await viewModel.refreshSessions() }
                 } label: {
-                    if viewModel.isRefreshing {
-                        ProgressView()
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
+                    RefreshToolbarButtonLabel(isRefreshing: viewModel.isRefreshing)
                 }
                 .disabled(viewModel.isRefreshing)
 
@@ -416,6 +412,21 @@ private struct ToolbarSearchField: NSViewRepresentable {
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSSearchField else { return }
             text = field.stringValue
+        }
+    }
+}
+
+private struct RefreshToolbarButtonLabel: View {
+    let isRefreshing: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.clockwise")
+            Text(isRefreshing ? "Refreshing…" : "Refresh")
+            if isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+            }
         }
     }
 }

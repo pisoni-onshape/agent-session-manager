@@ -8,6 +8,73 @@ enum RefreshActivity: Equatable {
     case rebuild
 }
 
+private final class SessionCatalogController: @unchecked Sendable {
+    private let catalog: SessionCatalog
+    private let queue = DispatchQueue(label: "com.pisoni.AgentSessionManager.catalog", qos: .userInitiated)
+
+    init(catalog: SessionCatalog) {
+        self.catalog = catalog
+    }
+
+    func loadPersistedSessions() async throws -> [SessionRecord] {
+        try await run { catalog in
+            try catalog.loadPersistedSessions()
+        }
+    }
+
+    func starredSessionIDs() async throws -> Set<String> {
+        try await run { catalog in
+            try catalog.starredSessionIDs()
+        }
+    }
+
+    func refreshSessions() async throws -> [SessionRecord] {
+        try await run { catalog in
+            try catalog.refreshSessions()
+        }
+    }
+
+    func rebuildSessions() async throws -> [SessionRecord] {
+        try await run { catalog in
+            try catalog.rebuildSessions()
+        }
+    }
+
+    func setSessionStarred(_ isStarred: Bool, for sessionID: String) async throws {
+        try await run { catalog in
+            try catalog.setSessionStarred(isStarred, for: sessionID)
+        }
+    }
+
+    func reclassifySessions(_ records: [SessionRecord]) async -> [SessionRecord] {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                continuation.resume(returning: self.catalog.reclassifySessions(records))
+            }
+        }
+    }
+
+    func search(snapshot: SessionCatalogSnapshot, request: SessionSearchRequest) async throws -> SessionSearchExecution {
+        try await run { catalog in
+            try SessionSearchService.search(snapshot: snapshot, request: request) { sessionIDs, query in
+                try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query)
+            }
+        }
+    }
+
+    private func run<T: Sendable>(_ operation: @escaping @Sendable (SessionCatalog) throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    continuation.resume(returning: try operation(self.catalog))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+}
+
 @MainActor
 final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var allSessions: [SessionRecord] = []
@@ -25,7 +92,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var lastRefreshDate: Date?
     @Published private(set) var loadingTranscriptTitle: String?
 
-    private let catalog: SessionCatalog?
+    private let catalogController: SessionCatalogController?
     private let settings: AppSettingsStore?
     private let transcriptCache = TranscriptDocumentCache()
     private var searchTask: Task<Void, Never>?
@@ -33,7 +100,7 @@ final class SessionBrowserViewModel: ObservableObject {
     private var settingsCancellables: Set<AnyCancellable> = []
 
     init(catalog: SessionCatalog?, settings: AppSettingsStore? = nil) {
-        self.catalog = catalog
+        self.catalogController = catalog.map(SessionCatalogController.init)
         self.settings = settings
         bindSettings()
         configureAutoRefresh(with: settings?.autoRefreshCadence ?? .off)
@@ -57,19 +124,19 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func loadInitialData() async {
-        guard let catalog else {
+        guard let catalogController else {
             hasCompletedInitialLoad = true
             return
         }
         do {
-            starredSessionIDs = try catalog.starredSessionIDs()
-            let persisted = try catalog.loadPersistedSessions()
+            starredSessionIDs = try await catalogController.starredSessionIDs()
+            let persisted = try await catalogController.loadPersistedSessions()
             applySessions(persisted)
             lastRefreshDate = catalogModifiedDate()
             if shouldRefreshOnLaunch() {
                 await performRefresh(
                     activity: .incremental,
-                    operation: { try catalog.refreshSessions() },
+                    operation: { try await catalogController.refreshSessions() },
                     completesInitialLoad: true
                 )
             } else {
@@ -82,11 +149,11 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func refreshSessions() async {
-        await performRefresh(activity: .incremental, operation: { try catalogOrThrow().refreshSessions() })
+        await performRefresh(activity: .incremental, operation: { try await self.catalogOrThrow().refreshSessions() })
     }
 
     func rebuildSessions() async {
-        await performRefresh(activity: .rebuild, operation: { try catalogOrThrow().rebuildSessions() })
+        await performRefresh(activity: .rebuild, operation: { try await self.catalogOrThrow().rebuildSessions() })
     }
 
     var isRefreshing: Bool {
@@ -292,18 +359,20 @@ final class SessionBrowserViewModel: ObservableObject {
     func toggleStar(for record: SessionRecord) {
         let updatedValue = !isStarred(record)
 
-        do {
-            try catalogOrThrow().setSessionStarred(updatedValue, for: record.id)
-            var updatedStarredSessionIDs = starredSessionIDs
-            if updatedValue {
-                updatedStarredSessionIDs.insert(record.id)
-            } else {
-                updatedStarredSessionIDs.remove(record.id)
+        Task {
+            do {
+                try await catalogOrThrow().setSessionStarred(updatedValue, for: record.id)
+                var updatedStarredSessionIDs = starredSessionIDs
+                if updatedValue {
+                    updatedStarredSessionIDs.insert(record.id)
+                } else {
+                    updatedStarredSessionIDs.remove(record.id)
+                }
+                starredSessionIDs = updatedStarredSessionIDs
+                errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
             }
-            starredSessionIDs = updatedStarredSessionIDs
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
         }
     }
 
@@ -354,7 +423,7 @@ final class SessionBrowserViewModel: ObservableObject {
             return
         }
 
-        guard let catalog else {
+        guard let catalogController else {
             searchState = SessionSearchState()
             return
         }
@@ -366,9 +435,7 @@ final class SessionBrowserViewModel: ObservableObject {
                     return
                 }
 
-                let execution = try SessionSearchService.search(snapshot: snapshot, request: request) { sessionIDs, query in
-                    try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query)
-                }
+                let execution = try await catalogController.search(snapshot: snapshot, request: request)
 
                 if Task.isCancelled {
                     return
@@ -417,15 +484,17 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     private func handleNewtonReposRootPathChange() {
-        guard let catalog else { return }
+        guard let catalogController else { return }
 
-        let reclassifiedSessions = catalog.reclassifySessions(allSessions)
-        if reclassifiedSessions != allSessions {
-            applySessions(reclassifiedSessions)
+        Task {
+            let reclassifiedSessions = await catalogController.reclassifySessions(allSessions)
+            if reclassifiedSessions != allSessions {
+                applySessions(reclassifiedSessions)
+            }
+
+            guard hasCompletedInitialLoad else { return }
+            await refreshSessionsIfIdle()
         }
-
-        guard hasCompletedInitialLoad else { return }
-        Task { await refreshSessionsIfIdle() }
     }
 
     private func configureAutoRefresh(with cadence: AutoRefreshCadence) {
@@ -467,10 +536,11 @@ final class SessionBrowserViewModel: ObservableObject {
 
     private func performRefresh(
         activity: RefreshActivity,
-        operation: () throws -> [SessionRecord],
+        operation: @escaping () async throws -> [SessionRecord],
         completesInitialLoad: Bool = false
     ) async {
         refreshActivity = activity
+        await Task.yield()
         defer {
             refreshActivity = .idle
             if completesInitialLoad {
@@ -479,7 +549,7 @@ final class SessionBrowserViewModel: ObservableObject {
         }
 
         do {
-            let refreshed = try operation()
+            let refreshed = try await operation()
             applySessions(refreshed)
             lastRefreshDate = Date()
             errorMessage = nil
@@ -488,15 +558,15 @@ final class SessionBrowserViewModel: ObservableObject {
         }
     }
 
-    private func catalogOrThrow() throws -> SessionCatalog {
-        guard let catalog else {
+    private func catalogOrThrow() throws -> SessionCatalogController {
+        guard let catalogController else {
             throw NSError(
                 domain: "SessionBrowserViewModel",
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "The catalog could not be initialized."]
             )
         }
-        return catalog
+        return catalogController
     }
 
 }
