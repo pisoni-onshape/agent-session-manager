@@ -6,6 +6,7 @@ struct ContentView: View {
     private let sessionListTopAnchorID = "session-list-top-anchor"
 
     @ObservedObject var viewModel: SessionBrowserViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openWindow) private var openWindow
     @StateObject private var searchFieldController = ToolbarSearchFieldController()
 
@@ -184,6 +185,12 @@ struct ContentView: View {
                 .padding(.vertical, 10)
                 .background(.thinMaterial)
             }
+        }
+        .onAppear {
+            viewModel.setAppIsActive(NSApp.isActive)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            viewModel.setAppIsActive(newPhase == .active)
         }
     }
 

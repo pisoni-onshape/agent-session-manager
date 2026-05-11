@@ -52,6 +52,103 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertNotNil(viewModel.lastRefreshDisplayText)
     }
 
+    func testScheduledRefreshDefersWhileAppIsActiveUntilAppBecomesInactive() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let refreshedRecord = try makeRecord(
+            sessionID: "deferred-refresh",
+            title: "Deferred Refresh",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Transcript used for deferred scheduled refresh testing."
+        )
+        let refreshExecuted = expectation(description: "Deferred scheduled refresh ran")
+        let loadCallCounter = LoadCallCounter()
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: refreshedRecord.id,
+                    fingerprint: refreshedRecord.fingerprint,
+                    loadRecord: {
+                        loadCallCounter.increment()
+                        refreshExecuted.fulfill()
+                        return refreshedRecord
+                    }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let settings = makeSettingsStore(cadence: .every15Minutes, deferWhileActive: true)
+        let viewModel = SessionBrowserViewModel(catalog: catalog, settings: settings)
+
+        await viewModel.loadInitialData()
+        viewModel.setAppIsActive(true)
+
+        await viewModel.handleScheduledRefreshTrigger()
+
+        XCTAssertTrue(viewModel.hasPendingScheduledRefresh)
+        XCTAssertFalse(viewModel.isRefreshing)
+
+        viewModel.setAppIsActive(false)
+
+        await fulfillment(of: [refreshExecuted], timeout: 1)
+        await waitForCondition { !viewModel.isRefreshing && !viewModel.hasPendingScheduledRefresh }
+
+        XCTAssertEqual(loadCallCounter.value, 1)
+        XCTAssertEqual(viewModel.displayedSessions.map(\.id), [refreshedRecord.id])
+    }
+
+    func testScheduledRefreshCoalescesMultipleActiveTicksIntoOnePendingRefresh() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let refreshedRecord = try makeRecord(
+            sessionID: "coalesced-refresh",
+            title: "Coalesced Refresh",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Transcript used for coalesced scheduled refresh testing."
+        )
+        let refreshExecuted = expectation(description: "Coalesced scheduled refresh ran")
+        let loadCallCounter = LoadCallCounter()
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: refreshedRecord.id,
+                    fingerprint: refreshedRecord.fingerprint,
+                    loadRecord: {
+                        loadCallCounter.increment()
+                        refreshExecuted.fulfill()
+                        return refreshedRecord
+                    }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let settings = makeSettingsStore(cadence: .every15Minutes, deferWhileActive: true)
+        let viewModel = SessionBrowserViewModel(catalog: catalog, settings: settings)
+
+        await viewModel.loadInitialData()
+        viewModel.setAppIsActive(true)
+
+        await viewModel.handleScheduledRefreshTrigger()
+        await viewModel.handleScheduledRefreshTrigger()
+
+        XCTAssertTrue(viewModel.hasPendingScheduledRefresh)
+        XCTAssertFalse(viewModel.isRefreshing)
+
+        viewModel.setAppIsActive(false)
+
+        await fulfillment(of: [refreshExecuted], timeout: 1)
+        await waitForCondition { !viewModel.isRefreshing && !viewModel.hasPendingScheduledRefresh }
+
+        XCTAssertEqual(loadCallCounter.value, 1)
+        XCTAssertEqual(viewModel.displayedSessions.map(\.id), [refreshedRecord.id])
+    }
+
     private func makeRecord(
         sessionID: String,
         title: String,
@@ -87,6 +184,41 @@ final class ViewModelRefreshTests: XCTestCase {
             isNewtonProject: true
         )
     }
+
+    private func makeSettingsStore(
+        cadence: AutoRefreshCadence,
+        deferWhileActive: Bool
+    ) -> AppSettingsStore {
+        let suiteName = "ViewModelRefreshTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let store = AppSettingsStore(
+            userDefaults: defaults,
+            launchAtLoginController: MockLaunchAtLoginController(status: .notRegistered),
+            homeDirectoryURL: URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        )
+        store.setAutoRefreshCadence(cadence)
+        store.setDeferRefreshWhileAppIsActive(deferWhileActive)
+        store.setRefreshOnFirstLaunchAfterBoot(false)
+        store.setRefreshOnSubsequentLaunches(false)
+        return store
+    }
+
+    private func waitForCondition(
+        timeout: TimeInterval = 1,
+        condition: @escaping @MainActor () -> Bool
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTFail("Timed out waiting for condition.")
+    }
 }
 
 private struct BlockingSessionAdapter: SessionSourceAdapter {
@@ -94,5 +226,32 @@ private struct BlockingSessionAdapter: SessionSourceAdapter {
 
     func scanCandidates() throws -> [SessionScanCandidate] {
         candidates
+    }
+}
+
+private final class LoadCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.withLock { count }
+    }
+
+    func increment() {
+        lock.withLock {
+            count += 1
+        }
+    }
+}
+
+private final class MockLaunchAtLoginController: LaunchAtLoginControlling {
+    var status: LaunchAtLoginStatus
+
+    init(status: LaunchAtLoginStatus) {
+        self.status = status
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        status = enabled ? .enabled : .notRegistered
     }
 }

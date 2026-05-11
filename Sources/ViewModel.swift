@@ -97,7 +97,10 @@ final class SessionBrowserViewModel: ObservableObject {
     private let transcriptCache = TranscriptDocumentCache()
     private var searchTask: Task<Void, Never>?
     private var autoRefreshTask: Task<Void, Never>?
+    private var autoRefreshIntervalNanoseconds: UInt64?
     private var settingsCancellables: Set<AnyCancellable> = []
+    private(set) var hasPendingScheduledRefresh = false
+    private var isAppActive = true
 
     init(catalog: SessionCatalog?, settings: AppSettingsStore? = nil) {
         self.catalogController = catalog.map(SessionCatalogController.init)
@@ -154,6 +157,18 @@ final class SessionBrowserViewModel: ObservableObject {
 
     func rebuildSessions() async {
         await performRefresh(activity: .rebuild, operation: { try await self.catalogOrThrow().rebuildSessions() })
+    }
+
+    func setAppIsActive(_ isActive: Bool) {
+        guard isAppActive != isActive else { return }
+
+        isAppActive = isActive
+
+        guard !isActive, hasPendingScheduledRefresh else { return }
+
+        Task { [weak self] in
+            await self?.runPendingScheduledRefreshIfNeeded()
+        }
     }
 
     var isRefreshing: Bool {
@@ -481,6 +496,14 @@ final class SessionBrowserViewModel: ObservableObject {
                 self?.configureAutoRefresh(with: cadence)
             }
             .store(in: &settingsCancellables)
+
+        settings.$deferRefreshWhileAppIsActive
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] isEnabled in
+                self?.handleDeferRefreshWhileAppIsActiveChange(isEnabled)
+            }
+            .store(in: &settingsCancellables)
     }
 
     private func handleNewtonReposRootPathChange() {
@@ -493,40 +516,86 @@ final class SessionBrowserViewModel: ObservableObject {
             }
 
             guard hasCompletedInitialLoad else { return }
-            await refreshSessionsIfIdle()
+            await refreshSessionsIfPossible()
         }
     }
 
     private func configureAutoRefresh(with cadence: AutoRefreshCadence) {
         autoRefreshTask?.cancel()
+        autoRefreshIntervalNanoseconds = cadence.intervalNanoseconds
+        hasPendingScheduledRefresh = false
 
-        guard let intervalNanoseconds = cadence.intervalNanoseconds else {
+        guard autoRefreshIntervalNanoseconds != nil else {
+            autoRefreshTask = nil
+            return
+        }
+
+        scheduleNextAutoRefreshTimer()
+    }
+
+    private func handleDeferRefreshWhileAppIsActiveChange(_ isEnabled: Bool) {
+        guard !isEnabled, hasPendingScheduledRefresh else { return }
+
+        Task { [weak self] in
+            await self?.runPendingScheduledRefreshIfNeeded(ignoreAppActivity: true)
+        }
+    }
+
+    func handleScheduledRefreshTrigger() async {
+        guard hasCompletedInitialLoad else {
+            scheduleNextAutoRefreshTimer()
+            return
+        }
+
+        if shouldDeferScheduledRefreshWhileAppIsActive {
+            hasPendingScheduledRefresh = true
+            return
+        }
+
+        await refreshSessionsIfPossible()
+    }
+
+    private func runPendingScheduledRefreshIfNeeded(ignoreAppActivity: Bool = false) async {
+        guard hasPendingScheduledRefresh else { return }
+        guard ignoreAppActivity || !isAppActive else { return }
+        await refreshSessionsIfPossible()
+    }
+
+    private func refreshSessionsIfPossible() async {
+        guard hasCompletedInitialLoad, !isRefreshing else { return }
+        await refreshSessions()
+    }
+
+    private var shouldDeferScheduledRefreshWhileAppIsActive: Bool {
+        guard let settings else { return false }
+        return settings.autoRefreshCadence != .off && settings.deferRefreshWhileAppIsActive && isAppActive
+    }
+
+    private func scheduleNextAutoRefreshTimer() {
+        autoRefreshTask?.cancel()
+
+        guard let intervalNanoseconds = autoRefreshIntervalNanoseconds else {
             autoRefreshTask = nil
             return
         }
 
         autoRefreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(nanoseconds: intervalNanoseconds)
-                } catch is CancellationError {
-                    return
-                } catch {
-                    continue
-                }
-
-                if Task.isCancelled {
-                    return
-                }
-
-                await self?.refreshSessionsIfIdle()
+            do {
+                try await Task.sleep(nanoseconds: intervalNanoseconds)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.scheduleNextAutoRefreshTimer()
+                return
             }
-        }
-    }
 
-    private func refreshSessionsIfIdle() async {
-        guard hasCompletedInitialLoad, !isRefreshing else { return }
-        await refreshSessions()
+            guard let self, !Task.isCancelled else {
+                return
+            }
+
+            self.autoRefreshTask = nil
+            await self.handleScheduledRefreshTrigger()
+        }
     }
 
     private func shouldRefreshOnLaunch() -> Bool {
@@ -539,12 +608,18 @@ final class SessionBrowserViewModel: ObservableObject {
         operation: @escaping () async throws -> [SessionRecord],
         completesInitialLoad: Bool = false
     ) async {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+        hasPendingScheduledRefresh = false
         refreshActivity = activity
         await Task.yield()
         defer {
             refreshActivity = .idle
             if completesInitialLoad {
                 hasCompletedInitialLoad = true
+            }
+            if autoRefreshIntervalNanoseconds != nil, hasCompletedInitialLoad {
+                scheduleNextAutoRefreshTimer()
             }
         }
 

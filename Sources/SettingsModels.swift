@@ -57,21 +57,25 @@ public enum AutoRefreshCadence: String, CaseIterable, Identifiable, Sendable {
 
 public struct AutoSessionRefreshSettings: Equatable, Sendable {
     public let cadence: AutoRefreshCadence
+    public let deferWhileAppIsActive: Bool
     public let refreshOnFirstLaunchAfterBoot: Bool
     public let refreshOnSubsequentLaunches: Bool
 
     public init(
         cadence: AutoRefreshCadence,
+        deferWhileAppIsActive: Bool,
         refreshOnFirstLaunchAfterBoot: Bool,
         refreshOnSubsequentLaunches: Bool
     ) {
         self.cadence = cadence
+        self.deferWhileAppIsActive = deferWhileAppIsActive
         self.refreshOnFirstLaunchAfterBoot = refreshOnFirstLaunchAfterBoot
         self.refreshOnSubsequentLaunches = refreshOnSubsequentLaunches
     }
 
     public static let standard = AutoSessionRefreshSettings(
         cadence: .everyDay,
+        deferWhileAppIsActive: false,
         refreshOnFirstLaunchAfterBoot: true,
         refreshOnSubsequentLaunches: false
     )
@@ -124,6 +128,7 @@ public struct AppSettingsSnapshot: Equatable, Sendable {
 public enum AppSettingsPersistence {
     public static let newtonReposRootPathKey = "settings.newtonReposRootPath"
     public static let autoRefreshCadenceKey = "settings.autoRefreshCadence"
+    public static let deferRefreshWhileAppIsActiveKey = "settings.deferRefreshWhileAppIsActive"
     public static let refreshOnFirstLaunchAfterBootKey = "settings.refreshOnFirstLaunchAfterBoot"
     public static let refreshOnSubsequentLaunchesKey = "settings.refreshOnSubsequentLaunches"
     public static let lastSeenBootIdentifierKey = "settings.lastSeenBootIdentifier"
@@ -143,6 +148,8 @@ public enum AppSettingsPersistence {
         let defaultRootPath = AppSettingsSnapshot.defaultNewtonReposRootPath(homeDirectory: homeDirectoryURL)
         let storedRootPath = userDefaults.string(forKey: newtonReposRootPathKey) ?? defaultRootPath
         let storedAutoRefreshCadence = userDefaults.string(forKey: autoRefreshCadenceKey)
+        let deferWhileAppIsActive = userDefaults.object(forKey: deferRefreshWhileAppIsActiveKey) as? Bool
+            ?? AutoSessionRefreshSettings.standard.deferWhileAppIsActive
         let refreshOnFirstLaunchAfterBoot = userDefaults.object(forKey: refreshOnFirstLaunchAfterBootKey) as? Bool
             ?? AutoSessionRefreshSettings.standard.refreshOnFirstLaunchAfterBoot
         let refreshOnSubsequentLaunches = userDefaults.object(forKey: refreshOnSubsequentLaunchesKey) as? Bool
@@ -155,6 +162,7 @@ public enum AppSettingsPersistence {
             ),
             autoSessionRefresh: AutoSessionRefreshSettings(
                 cadence: AutoRefreshCadence(rawValue: storedAutoRefreshCadence ?? "") ?? .off,
+                deferWhileAppIsActive: deferWhileAppIsActive,
                 refreshOnFirstLaunchAfterBoot: refreshOnFirstLaunchAfterBoot,
                 refreshOnSubsequentLaunches: refreshOnSubsequentLaunches
             )

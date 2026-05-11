@@ -34,9 +34,9 @@ If you regularly use more than one AI coding tool, your conversation history end
 | **Open plan file** | Jump straight to the session's plan.md if one exists |
 | **Detail pane metadata** | See project, branch, workspace path, model info, session timestamps, and first-message previews at a glance |
 | **Copy buttons** | Quickly copy session ID, workspace path, or transcript path to the clipboard |
-| **Auto-refresh** | Configurable automatic refresh on launch, with separate controls for first launch after startup vs. subsequent launches |
+| **Auto-refresh** | Configurable timer refresh, launch refresh, and optional deferral of scheduled refreshes while the app is active |
 | **Incremental refresh** | Only reparses sessions whose files actually changed — fast even with thousands of sessions |
-| **Settings** | Launch at Login, Newton repos path, and auto-refresh timer (Settings → Preferences) |
+| **Settings** | Launch at Login, Newton repos path, and auto-refresh timing/deferral controls (Settings → Preferences) |
 
 ### Companion CLI
 
@@ -137,7 +137,7 @@ Click "View Transcript" in the detail pane to open the full conversation in a se
 Open **Settings** (⌘,) to configure:
 - **Launch at Login** — start the app automatically
 - **Newton repos path** — root directory for Newton repo detection
-- **Auto Session Refresh** — timer interval and launch-trigger behavior
+- **Auto Session Refresh** — timer interval, active-use deferral, and launch-trigger behavior
 
 ---
 

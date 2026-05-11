@@ -39,6 +39,7 @@ final class AppSettingsTests: XCTestCase {
         )
         store.setNewtonReposRootPath("/Users/tester/repos/")
         store.setAutoRefreshCadence(.every4Hours)
+        store.setDeferRefreshWhileAppIsActive(true)
         store.setRefreshOnFirstLaunchAfterBoot(false)
         store.setRefreshOnSubsequentLaunches(false)
 
@@ -50,6 +51,7 @@ final class AppSettingsTests: XCTestCase {
 
         XCTAssertEqual(reopenedStore.newtonReposRootPath, "/Users/tester/repos")
         XCTAssertEqual(reopenedStore.autoRefreshCadence, .every4Hours)
+        XCTAssertTrue(reopenedStore.deferRefreshWhileAppIsActive)
         XCTAssertFalse(reopenedStore.refreshOnFirstLaunchAfterBoot)
         XCTAssertFalse(reopenedStore.refreshOnSubsequentLaunches)
     }
@@ -92,6 +94,7 @@ final class AppSettingsTests: XCTestCase {
 
         let settings = AutoSessionRefreshSettings(
             cadence: .off,
+            deferWhileAppIsActive: false,
             refreshOnFirstLaunchAfterBoot: false,
             refreshOnSubsequentLaunches: true
         )
@@ -118,6 +121,7 @@ final class AppSettingsTests: XCTestCase {
             AutoSessionRefreshSettings.standard,
             AutoSessionRefreshSettings(
                 cadence: .everyDay,
+                deferWhileAppIsActive: false,
                 refreshOnFirstLaunchAfterBoot: true,
                 refreshOnSubsequentLaunches: false
             )

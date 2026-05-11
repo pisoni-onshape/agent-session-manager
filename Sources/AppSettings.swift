@@ -58,6 +58,7 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var launchAtLoginErrorMessage: String?
     @Published private(set) var newtonReposRootPath: String
     @Published private(set) var autoRefreshCadence: AutoRefreshCadence
+    @Published private(set) var deferRefreshWhileAppIsActive: Bool
     @Published private(set) var refreshOnFirstLaunchAfterBoot: Bool
     @Published private(set) var refreshOnSubsequentLaunches: Bool
 
@@ -81,11 +82,16 @@ final class AppSettingsStore: ObservableObject {
 
         self.newtonReposRootPath = snapshot.newtonReposRootPath
         self.autoRefreshCadence = snapshot.autoSessionRefresh.cadence
+        self.deferRefreshWhileAppIsActive = snapshot.autoSessionRefresh.deferWhileAppIsActive
         self.refreshOnFirstLaunchAfterBoot = snapshot.autoSessionRefresh.refreshOnFirstLaunchAfterBoot
         self.refreshOnSubsequentLaunches = snapshot.autoSessionRefresh.refreshOnSubsequentLaunches
 
         userDefaults.set(self.newtonReposRootPath, forKey: AppSettingsPersistence.newtonReposRootPathKey)
         userDefaults.set(self.autoRefreshCadence.rawValue, forKey: AppSettingsPersistence.autoRefreshCadenceKey)
+        userDefaults.set(
+            self.deferRefreshWhileAppIsActive,
+            forKey: AppSettingsPersistence.deferRefreshWhileAppIsActiveKey
+        )
         userDefaults.set(
             self.refreshOnFirstLaunchAfterBoot,
             forKey: AppSettingsPersistence.refreshOnFirstLaunchAfterBootKey
@@ -108,6 +114,7 @@ final class AppSettingsStore: ObservableObject {
     var autoSessionRefreshSettings: AutoSessionRefreshSettings {
         AutoSessionRefreshSettings(
             cadence: autoRefreshCadence,
+            deferWhileAppIsActive: deferRefreshWhileAppIsActive,
             refreshOnFirstLaunchAfterBoot: refreshOnFirstLaunchAfterBoot,
             refreshOnSubsequentLaunches: refreshOnSubsequentLaunches
         )
@@ -153,6 +160,13 @@ final class AppSettingsStore: ObservableObject {
 
         refreshOnFirstLaunchAfterBoot = enabled
         userDefaults.set(enabled, forKey: AppSettingsPersistence.refreshOnFirstLaunchAfterBootKey)
+    }
+
+    func setDeferRefreshWhileAppIsActive(_ enabled: Bool) {
+        guard enabled != deferRefreshWhileAppIsActive else { return }
+
+        deferRefreshWhileAppIsActive = enabled
+        userDefaults.set(enabled, forKey: AppSettingsPersistence.deferRefreshWhileAppIsActiveKey)
     }
 
     func setRefreshOnSubsequentLaunches(_ enabled: Bool) {
