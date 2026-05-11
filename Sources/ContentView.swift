@@ -704,7 +704,7 @@ private struct SessionDetailView: View {
             Button {
                 viewModel.performPrimaryAction(for: session)
             } label: {
-                Label(viewModel.primaryActionLabel(for: session), systemImage: primaryActionSystemImageName)
+                primaryActionLabel
             }
             .buttonStyle(.borderedProminent)
             .help(primaryActionHelpText)
@@ -779,6 +779,33 @@ private struct SessionDetailView: View {
             return "chevron.left.forwardslash.chevron.right"
         case .revealPath:
             return "folder"
+        }
+    }
+
+    private var primaryActionAppIconAssetName: String? {
+        switch session.resumeKind {
+        case .openInCursor:
+            return "CursorIcon"
+        case .openInVSCode:
+            return "VSCodeIcon"
+        case .copilotConnect, .revealPath:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private var primaryActionLabel: some View {
+        let text = viewModel.primaryActionLabel(for: session)
+        if let assetName = primaryActionAppIconAssetName {
+            HStack(spacing: 4) {
+                Image(assetName)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 14, height: 14)
+                Text(text)
+            }
+        } else {
+            Label(text, systemImage: primaryActionSystemImageName)
         }
     }
 
