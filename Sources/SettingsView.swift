@@ -116,7 +116,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 620, height: 570)
+        .frame(width: 620, height: 620)
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
         }
