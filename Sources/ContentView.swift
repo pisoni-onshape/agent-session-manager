@@ -661,11 +661,9 @@ private struct SessionDetailView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(session.title)
                         .font(.largeTitle.weight(.semibold))
-                        .textSelection(.enabled)
                     Text(session.detailSummary)
                         .font(.body)
                         .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -858,8 +856,16 @@ private struct SessionDetailView: View {
     private var previewSection: some View {
         GroupBox("Early Conversation") {
             VStack(alignment: .leading, spacing: 16) {
-                PreviewBlock(title: "First User Prompt", text: session.firstUserPreview)
-                PreviewBlock(title: "First Assistant Response", text: session.firstAssistantPreview)
+                PreviewBlock(
+                    title: "First User Prompt",
+                    text: session.firstUserPreview,
+                    onCopy: viewModel.copyToClipboard
+                )
+                PreviewBlock(
+                    title: "First Assistant Response",
+                    text: session.firstAssistantPreview,
+                    onCopy: viewModel.copyToClipboard
+                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -868,10 +874,10 @@ private struct SessionDetailView: View {
     private var pathSection: some View {
         GroupBox("Paths") {
             VStack(alignment: .leading, spacing: 12) {
-                PathRow(label: "Workspace", value: session.workspacePath)
-                PathRow(label: "Transcript", value: session.rawTranscriptPath)
-                PathRow(label: "Metadata", value: session.rawMetadataPath)
-                PathRow(label: "Plan", value: session.relatedPlanPath)
+                PathRow(label: "Workspace", value: session.workspacePath, onCopy: viewModel.copyToClipboard)
+                PathRow(label: "Transcript", value: session.rawTranscriptPath, onCopy: viewModel.copyToClipboard)
+                PathRow(label: "Metadata", value: session.rawMetadataPath, onCopy: viewModel.copyToClipboard)
+                PathRow(label: "Plan", value: session.relatedPlanPath, onCopy: viewModel.copyToClipboard)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -899,7 +905,6 @@ private struct SessionDetailView: View {
                 }
 
                 Text(value)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -1074,13 +1079,24 @@ private struct CopyValueButton: View {
 private struct PreviewBlock: View {
     let title: String
     let text: String?
+    let onCopy: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.headline)
+            HStack(spacing: 10) {
+                Text(title)
+                    .font(.headline)
+                Spacer(minLength: 0)
+                CopyValueButton(
+                    value: text,
+                    label: "Copy \(title)"
+                ) {
+                    if let text {
+                        onCopy(text)
+                    }
+                }
+            }
             Text(text ?? "Unavailable")
-                .textSelection(.enabled)
                 .foregroundStyle(text == nil ? .secondary : .primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -1092,13 +1108,24 @@ private struct PreviewBlock: View {
 private struct PathRow: View {
     let label: String
     let value: String?
+    let onCopy: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.headline)
+            HStack(spacing: 10) {
+                Text(label)
+                    .font(.headline)
+                Spacer(minLength: 0)
+                CopyValueButton(
+                    value: value,
+                    label: "Copy \(label) path"
+                ) {
+                    if let value {
+                        onCopy(value)
+                    }
+                }
+            }
             Text(value ?? "Unavailable")
-                .textSelection(.enabled)
                 .foregroundStyle(value == nil ? .secondary : .primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -1179,7 +1206,6 @@ struct TranscriptViewerView: View {
                 Text(transcript.rawTranscriptPath)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
             }
 
             Spacer()
