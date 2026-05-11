@@ -1,105 +1,208 @@
 # Agent Session Manager
 
-Agent Session Manager is a macOS SwiftUI desktop app with a companion CLI that aggregates local session history from:
+A native macOS app (with a companion CLI) that gives you a single, searchable view of every AI coding conversation you've had — across **GitHub Copilot CLI**, **Cursor**, and **VS Code Copilot** — all without modifying any of the original session data.
 
-- GitHub Copilot CLI
-- Cursor
-- GitHub Copilot in VS Code
+If you regularly use more than one AI coding tool, your conversation history ends up fragmented: Copilot CLI sessions live under `~/.copilot/`, Cursor transcripts under `~/.cursor/`, and VS Code Copilot transcripts in `~/Library/Application Support/Code/`. Agent Session Manager indexes all of them into a single local catalog and lets you search, filter, star, and resume any session in seconds.
 
-It keeps a read-only local SQLite catalog, lets you search/filter/sort sessions, and exposes the best available source-aware action for each session:
+---
 
-- **Copilot CLI**: exact resume via `copilot --resume <session-id>`
-- **Cursor**: open the workspace in Cursor when the workspace path can be reconstructed, otherwise reveal the transcript
-- **VS Code**: open the workspace in VS Code
+## Why Use It
 
-It also supports an in-app read-only transcript viewer so you can inspect the conversation without opening raw JSONL files in Finder, and the main toolbar search now searches indexed transcript contents as you type in addition to session metadata.
+- **One place for everything.** Stop hunting across three different storage locations to find that conversation where you debugged a tricky issue last week.
+- **Deep transcript search.** Search not just session titles and metadata, but the full transcript text — find the exact conversation where you discussed a specific class, error message, or design decision.
+- **Instant resume.** One click to resume a Copilot CLI session, reopen a workspace in Cursor, or launch VS Code — right from the session card.
+- **Star and organize.** Star important sessions so they float to the top. Filter by source, project, branch, or starred status.
+- **Completely read-only.** The app never modifies your original session files. It maintains its own lightweight SQLite catalog alongside them.
+- **CLI for automation.** The companion `agent-session-manager` command lets you search your session history from the terminal, pipe results as JSON into scripts, or let other AI agents query your past conversations programmatically.
 
-## Project shape
+---
 
-- `Sources/Models.swift` — normalized session types and filter/sort state
-- `Sources/Utilities.swift` — path helpers, text cleanup, transcript preview extraction, and app launch helpers
-- `Sources/Storage.swift` — SQLite-backed catalog
-- `Sources/Adapters.swift` — read-only scanners for the three local stores
-- `Sources/ViewModel.swift` — app state, refresh, search, filter, and action wiring
-- `Sources/ContentView.swift` — SwiftUI list/detail UI
+## Key Features
 
-## Build and run
+### Session Browser (GUI)
 
-1. Generate the Xcode project:
+| Feature | Description |
+|---------|-------------|
+| **Unified session list** | Card-based list showing sessions from all three sources with official app icons |
+| **Rich filtering** | Filter by source (Copilot CLI / Cursor / VS Code), project name, branch, starred status, and Newton repos |
+| **Full-text search** | Toolbar search matches session metadata and indexed transcript contents as you type |
+| **Label search syntax** | Use `title:`, `project:`, `branch:`, `source:`, `model:`, `id:`, and `transcript:` labels for precise queries |
+| **Star sessions** | Persist star/unstar across refreshes — starred sessions are grouped at the top with a visual divider |
+| **One-click actions** | Resume Copilot CLI sessions, open workspaces in Cursor or VS Code, reveal transcript files in Finder |
+| **Start new conversation** | Launch a new AI session in the same project workspace directly from the detail pane |
+| **In-app transcript viewer** | Read the full conversation in a separate window — no need to open raw JSONL files |
+| **Open plan file** | Jump straight to the session's plan.md if one exists |
+| **Detail pane metadata** | See project, branch, workspace path, model info, session timestamps, and first-message previews at a glance |
+| **Copy buttons** | Quickly copy session ID, workspace path, or transcript path to the clipboard |
+| **Auto-refresh** | Configurable automatic refresh on launch, with separate controls for first launch after startup vs. subsequent launches |
+| **Incremental refresh** | Only reparses sessions whose files actually changed — fast even with thousands of sessions |
+| **Settings** | Launch at Login, Newton repos path, and auto-refresh timer (Settings → Preferences) |
 
-    ```bash
-    xcodegen generate
-    ```
+### Companion CLI
 
-2. Open the app in Xcode:
-
-   ```bash
-   open AgentSessionManager.xcodeproj
-   ```
-
-3. Use the project build script for normal app builds and installs. It builds **Release**, stamps the app version automatically, closes any running `/Applications/AgentSessionManager.app`, and replaces the installed app:
-
-    ```bash
-    ./build.sh
-     ```
-
-4. The standard installed app location after `./build.sh` completes is:
-
-    ```bash
-    /Applications/AgentSessionManager.app
-    ```
-
-5. `./build.sh` also installs a PATH-visible CLI link at:
-
-    ```bash
-    /usr/local/bin/agent-session-manager
-    ```
-
-6. For manual testing without changing the build/install flow, you can still run tests directly:
-
-    ```bash
-    xcodebuild -project AgentSessionManager.xcodeproj -scheme AgentSessionManager -destination 'platform=macOS' test
-    ```
-
-`AGENTS.md` in the repository root and `.github/copilot-instructions.md` tell Copilot to use `./build.sh` as the standard build path for this project.
-
-## Notes
-
-- The app is intentionally **read-only** with respect to the original session stores.
-- The local SQLite catalog lives under `~/Library/Application Support/AgentSessionManager/catalog.sqlite3`.
-- The app now stores its own **local-only starred session preferences** alongside the catalog so stars survive refreshes and app relaunches without modifying the original session sources.
-- The app now runs an **incremental refresh automatically on launch** and the main **Refresh** button uses that same incremental path.
-- The app now includes a standard macOS **Settings** dialog for **Launch at Login**, a configurable **Newton repos path**, and an **Auto Session Refresh** section with a timer plus separate controls for refresh on the first app launch after system startup and on subsequent launches. The default refresh setup is **Every day**, **first launch after startup on**, and **subsequent launches off**.
-- The app now includes a **CLI** menu with **Install CLI to PATH**, which installs a user-level `agent-session-manager` command and, when needed, adds `~/.local/bin` to `~/.zprofile`.
-- Incremental refresh still scans the source directories, but it only reparses sessions whose transcript/metadata files changed and only upserts/deletes affected rows in SQLite, including the persisted transcript search index.
-- The **Newton repos only** filter now matches only workspace paths that live under the configured Newton repos root and whose repo directory starts with `newton`, with path normalization handling either `/path/to/repos` or `/path/to/repos/`.
-- The main session browser now exposes first-class **Open Plan**, persistent metadata **copy buttons**, a **Starred / Unstarred / All** filter with starred sessions grouped ahead of unstarred ones and separated by an inline divider, wider multi-row **Project/Branch** filters, and the conversation **workspace path** directly in metadata.
-- The main toolbar search supports the existing metadata labels plus a new **`transcript:`** label for transcript-only matching; unlabeled searches can match either metadata or indexed transcript text.
-- **Catalog** menu actions now include **Open Index Folder** for quickly revealing the directory that contains `catalog.sqlite3`.
-- A **Rebuild Session Index** command remains available under the **Catalog** menu as a recovery/debug path.
-- Cursor sessions now prefer Cursor workspace metadata from `workspaceStorage/workspace.json` for canonical workspace paths and display names, with the `~/.cursor/projects/<slug>` directory only used as a fallback when that metadata is missing.
-- VS Code Copilot sessions are indexed from both the older `GitHub.copilot-chat/transcripts` store and the current `chatSessions` store; the current `chatSessions` format also preserves the custom chat title you see in VS Code.
-- Model metadata is currently surfaced where it is stored reliably: Copilot CLI (`events.jsonl` model-change events) and VS Code Copilot (legacy event transcripts or current `chatSessions` request model IDs). Cursor transcripts did not show a stable per-session model field in the inspected local store.
-- The in-app transcript viewer now opens in a separate window instead of an attached sheet, preserving the same UI while avoiding parent-window repositioning.
-- The in-app transcript viewer preserves exact per-event timestamps for Copilot CLI and legacy VS Code event transcripts. Current VS Code `chatSessions` and Cursor transcripts are still readable in-app, but the inspected local files do not expose a complete per-message timestamp for every assistant response.
-- The companion CLI supports `agent-session-manager search --query <text>`, `agent-session-manager --search <text>`, `--refresh`, `--within`, `--limit`, `--json`, and `-h` / `--help`.
-- `./build.sh` computes the marketing version as `<incrementing-build-number>.<commit-derived-8-digit-number>`, installs the finished Release app into `/Applications`, and installs `/usr/local/bin/agent-session-manager` as a symlink to the bundled CLI helper.
-
-## CLI usage
+The `agent-session-manager` command provides the same search capabilities from the terminal:
 
 ```bash
-agent-session-manager --help
-agent-session-manager search --query 'project:newton2 transcript:"drag bug"' --newton-only --branch main
-agent-session-manager --search 'title:"plan update"' --within 1w --limit 10
-agent-session-manager search --query 'source:cursor branch:main' --refresh --json
+# Search across all sessions
+agent-session-manager search --query 'auth bug'
+
+# Search within transcript text for a specific term
+agent-session-manager search --query 'transcript:"insertable display data"'
+
+# Filter by project and branch
+agent-session-manager search --query 'project:newton5 branch:master'
+
+# Only Cursor sessions from the last week, as JSON
+agent-session-manager search --query 'source:cursor' --within 1w --json
+
+# Newton repos only, starred sessions
+agent-session-manager search --query 'drag bug' --newton-only --starred
+
+# Refresh the catalog first, then search
+agent-session-manager search --query 'plan update' --refresh --limit 10
 ```
 
-The CLI search accepts the same label syntax as the app toolbar search:
+**CLI options:**
 
-- `title:`
-- `project:`
-- `branch:`
-- `source:`
-- `model:`
-- `id:`
-- `transcript:`
+| Option | Description |
+|--------|-------------|
+| `--query <text>` | Search using label syntax (same as the app toolbar) |
+| `--search <text>` | Top-level alias for `--query` |
+| `--project <name>` | Restrict to one project |
+| `--branch <name>` | Restrict to one branch |
+| `--source <source>` | Restrict to one source: `copilot-cli`, `cursor`, or `vscode-copilot` |
+| `--newton-only` | Restrict to Newton repos only |
+| `--starred` | Only starred sessions |
+| `--unstarred` | Only unstarred sessions |
+| `--refresh` | Refresh the catalog before searching |
+| `--within <duration>` | Time window filter: `30m`, `12h`, `1d`, `1w` |
+| `--limit <count>` | Cap the number of results |
+| `--json` | Emit machine-readable JSON output |
+
+**Use from other AI agents:** The `--json` flag makes it straightforward for Copilot CLI, Cursor, or any scripted workflow to query your past sessions programmatically. For example, an AI agent could search for how you solved a similar problem before, or check which branches you've been working on recently.
+
+---
+
+## How to Use
+
+### Install
+
+1. Clone the repository and run the build script:
+
+   ```bash
+   git clone <repo-url>
+   cd agent-session-manager
+   ./build.sh
+   ```
+
+2. The build script installs:
+   - **App** → `/Applications/AgentSessionManager.app`
+   - **CLI** → `/usr/local/bin/agent-session-manager`
+
+3. Launch the app from `/Applications` or Spotlight.
+
+### First Launch
+
+On first launch the app performs an initial scan of all three session stores and builds the SQLite catalog. This takes a few seconds depending on how many sessions you have. Subsequent launches use incremental refresh — only changed sessions are re-indexed.
+
+### Searching
+
+Type in the toolbar search field (⌘K to focus) to search across session titles, project names, branches, and transcript text. Use label prefixes for targeted searches:
+
+```
+transcript:"memory leak"          # find conversations mentioning "memory leak"
+project:newton5 branch:master     # sessions in newton5 on master
+source:cursor                     # only Cursor sessions
+title:"plan update"               # match session titles
+```
+
+### Starring
+
+Click the star icon on any session card to pin it. Starred sessions are grouped at the top of the list and persist across app relaunches and catalog refreshes.
+
+### Resuming Sessions
+
+Each session card shows a primary action button:
+- **Copilot CLI** → "Resume in Copilot" — reconnects to the exact session via `copilot --resume`
+- **Cursor** → "Open in Cursor" — opens the workspace in Cursor
+- **VS Code** → "Open in VS Code" — opens the workspace in VS Code
+- If the workspace path can't be resolved → "Reveal Transcript" — opens Finder to the raw file
+
+### Viewing Transcripts
+
+Click "View Transcript" in the detail pane to open the full conversation in a separate window. Internal tool-call events are collapsed by default for readability.
+
+### Settings
+
+Open **Settings** (⌘,) to configure:
+- **Launch at Login** — start the app automatically
+- **Newton repos path** — root directory for Newton repo detection
+- **Auto Session Refresh** — timer interval and launch-trigger behavior
+
+---
+
+## Data Storage
+
+| What | Where |
+|------|-------|
+| SQLite catalog | `~/Library/Application Support/AgentSessionManager/catalog.sqlite3` |
+| Starred sessions | Stored alongside the catalog (never modifies source files) |
+| Copilot CLI sessions (source) | `~/.copilot/session-state/` |
+| Cursor sessions (source) | `~/.cursor/projects/` and `~/.cursor/User/workspaceStorage/` |
+| VS Code Copilot sessions (source) | `~/Library/Application Support/Code/User/workspaceStorage/` |
+
+The app is **read-only** — it indexes the source directories but never writes to them.
+
+---
+
+## Building from Source
+
+### Prerequisites
+
+- macOS 14+
+- Xcode 16+
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+
+### Build and Install
+
+```bash
+./build.sh
+```
+
+This:
+1. Runs `xcodegen generate` to produce the Xcode project
+2. Builds a Release configuration
+3. Stamps the version automatically
+4. Closes any running instance of the app
+5. Installs to `/Applications/AgentSessionManager.app`
+6. Symlinks the CLI to `/usr/local/bin/agent-session-manager`
+
+### Development
+
+For iterating in Xcode:
+
+```bash
+xcodegen generate
+open AgentSessionManager.xcodeproj
+```
+
+To run tests:
+
+```bash
+xcodebuild -project AgentSessionManager.xcodeproj -scheme AgentSessionManager -destination 'platform=macOS' test
+```
+
+### Project Structure
+
+| File | Purpose |
+|------|---------|
+| `Sources/Models.swift` | Session types, filter/sort state, source definitions |
+| `Sources/Adapters.swift` | Read-only scanners for Copilot CLI, Cursor, and VS Code stores |
+| `Sources/Storage.swift` | SQLite catalog — persistence, search index, migrations |
+| `Sources/ViewModel.swift` | App state, refresh, search, filter, and action wiring |
+| `Sources/ContentView.swift` | SwiftUI list/detail browser UI |
+| `Sources/SettingsView.swift` | Settings dialog |
+| `Sources/SessionSearchCLI.swift` | CLI search command parser and executor |
+| `Sources/Utilities.swift` | Path helpers, transcript parsing, text cleanup |
+| `build.sh` | Build, version-stamp, and install script |
+| `project.yml` | XcodeGen project definition |
