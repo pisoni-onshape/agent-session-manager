@@ -1430,7 +1430,9 @@ func loadJSONDictionary(from url: URL) throws -> [String: Any]? {
 
 func loadSQLiteItemValue(from databaseURL: URL, key: String) throws -> String? {
     var database: OpaquePointer?
-    guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+    // Use READWRITE so SQLite can create the SHM file required by WAL-mode databases.
+    // READONLY fails when WAL/SHM files are absent (e.g. Cursor's state.vscdb after clean exit).
+    guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
         let message = database.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "Unknown SQLite open error"
         sqlite3_close(database)
         throw SQLiteStoreError.openFailed(message)
