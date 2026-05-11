@@ -187,6 +187,29 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertNotNil(preview.startedAt)
     }
 
+    func testEventTranscriptExtractionPreservesBasicAssistantFormatting() throws {
+        let url = try temporaryFile(
+            named: "event-formatted.jsonl",
+            contents: """
+            {"type":"assistant.message","data":{"content":"Here's my analysis:\\n\\nRoot cause\\n\\tIndented detail\\n\\n1. First item\\n2. Second item"}}
+            """
+        )
+
+        let preview = try TranscriptPreviewExtractor.extractEventTranscript(from: url)
+        XCTAssertEqual(
+            preview.firstAssistant,
+            """
+            Here's my analysis:
+
+            Root cause
+                Indented detail
+
+            1. First item
+            2. Second item
+            """
+        )
+    }
+
     func testCursorTranscriptExtractionFindsFirstTurns() throws {
         let url = try temporaryFile(
             named: "cursor.jsonl",
@@ -255,6 +278,51 @@ final class TranscriptParsingTests: XCTestCase {
             return XCTFail("Expected tool entries to be collapsed.")
         }
         XCTAssertEqual(toolEvents.count, 2)
+    }
+
+    func testTranscriptLoaderPreservesBasicMessageFormatting() throws {
+        let url = try temporaryFile(
+            named: "event-multiline.jsonl",
+            contents: """
+            {"type":"assistant.message","data":{"content":"Here's my analysis:\\n\\nRoot cause\\n\\tIndented detail\\n\\n1. First item\\n2. Second item"},"id":"evt-1","timestamp":"2026-05-07T06:19:10.000Z"}
+            """
+        )
+
+        let record = SessionRecord(
+            source: .copilotCLI,
+            sourceSessionId: "abc-123",
+            workspacePath: nil,
+            projectName: "agent-session-manager",
+            branch: nil,
+            conversationModel: nil,
+            startedAt: nil,
+            updatedAt: nil,
+            title: "Formatted transcript",
+            summary: nil,
+            firstUserPreview: nil,
+            firstAssistantPreview: nil,
+            rawTranscriptPath: url.path,
+            rawMetadataPath: nil,
+            relatedPlanPath: nil,
+            fingerprint: "fingerprint-formatted-event",
+            resumeKind: .copilotConnect,
+            resumePayload: "abc-123",
+            isNewtonProject: false
+        )
+
+        let transcript = try TranscriptPreviewExtractor.loadTranscript(for: record)
+        XCTAssertEqual(
+            transcript.entries.first?.body,
+            """
+            Here's my analysis:
+
+            Root cause
+                Indented detail
+
+            1. First item
+            2. Second item
+            """
+        )
     }
 
     func testTranscriptLoaderBuildsCursorTranscriptWithoutTimestamps() throws {

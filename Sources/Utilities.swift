@@ -49,6 +49,14 @@ enum ISO8601DateCoding {
 
 enum TextSanitizer {
     static func clean(_ rawText: String?) -> String? {
+        sanitize(rawText, preservesLineBreaks: true)
+    }
+
+    static func compact(_ rawText: String?) -> String? {
+        sanitize(rawText, preservesLineBreaks: false)
+    }
+
+    private static func sanitize(_ rawText: String?, preservesLineBreaks: Bool) -> String? {
         guard var text = rawText else { return nil }
         let patterns = [
             "(?s)<current_datetime>.*?</current_datetime>",
@@ -62,14 +70,20 @@ enum TextSanitizer {
             text = text.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
         }
         text = text.replacingOccurrences(of: "\r\n", with: "\n")
-        text = text.replacingOccurrences(of: "\n+", with: "\n", options: .regularExpression)
-        text = text.replacingOccurrences(of: "[ \t]+", with: " ", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\r", with: "\n")
+        if preservesLineBreaks {
+            text = text.replacingOccurrences(of: "\t", with: "    ")
+            text = text.replacingOccurrences(of: "[ \t]+\n", with: "\n", options: .regularExpression)
+            text = text.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+        } else {
+            text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
     }
 
     static func summarize(_ rawText: String?, limit: Int = 220) -> String? {
-        guard let text = clean(rawText) else { return nil }
+        guard let text = compact(rawText) else { return nil }
         guard text.count > limit else { return text }
         let index = text.index(text.startIndex, offsetBy: limit)
         return String(text[..<index]).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
@@ -153,7 +167,7 @@ public enum SearchTextMatcher {
     }
 
     public static func highlightedAttributedString(from rawText: String, query rawQuery: String?) -> AttributedString {
-        let visible = visibleText(from: rawText)
+        let visible = TextSanitizer.clean(rawText) ?? rawText
         var attributed = AttributedString(visible)
 
         guard let query = normalizedQuery(rawQuery) else {
@@ -604,7 +618,7 @@ public enum TranscriptPreviewExtractor {
         let transcript = try loadTranscript(for: record)
         return transcript.entries.enumerated().compactMap { index, entry in
             guard entry.isChatMessage,
-                  let body = TextSanitizer.clean(entry.body) else {
+                  let body = TextSanitizer.compact(entry.body) else {
                 return nil
             }
 
@@ -916,7 +930,7 @@ public enum TranscriptPreviewExtractor {
 
         return VSCodeSessionMetadata(
             sessionId: root["sessionId"] as? String,
-            title: TextSanitizer.clean(root["customTitle"] as? String),
+            title: TextSanitizer.compact(root["customTitle"] as? String),
             startedAt: createdAt,
             updatedAt: updatedAt,
             latestModel: latestModel,
@@ -985,17 +999,17 @@ public enum TranscriptPreviewExtractor {
         }
 
         if let text = message["text"] as? String {
-            return TextSanitizer.clean(SearchTextMatcher.visibleText(from: text))
+            return TextSanitizer.clean(displayVSCodeMarkdownFragment(text))
         }
 
         if let parts = message["parts"] as? [[String: Any]] {
             let combined = parts.compactMap { part -> String? in
                 if let text = part["text"] as? String {
-                    return text
+                    return displayVSCodeMarkdownFragment(text)
                 }
-                return nestedString(in: part, path: ["value", "text"])
+                return nestedString(in: part, path: ["value", "text"]).map(displayVSCodeMarkdownFragment)
             }.joined(separator: "\n\n")
-            return TextSanitizer.clean(SearchTextMatcher.visibleText(from: combined))
+            return TextSanitizer.clean(combined)
         }
 
         return nil
@@ -1014,22 +1028,44 @@ public enum TranscriptPreviewExtractor {
             if let kind = item["kind"] as? String {
                 switch kind {
                 case "markdownContent":
-                    return nestedString(in: item, path: ["content", "value"])
+                    return nestedString(in: item, path: ["content", "value"]).map(displayVSCodeMarkdownFragment)
                 case "warningMessage":
-                    return TextSanitizer.clean(item["warningMessage"] as? String)
+                    return TextSanitizer.clean(displayVSCodeMarkdownFragment(item["warningMessage"] as? String ?? ""))
                 default:
                     return nil
                 }
             }
 
-            return item["value"] as? String
+            return (item["value"] as? String).map(displayVSCodeMarkdownFragment)
         }
 
         guard !fragments.isEmpty else {
             return nil
         }
 
-        return TextSanitizer.clean(SearchTextMatcher.visibleText(from: fragments.joined()))
+        return TextSanitizer.clean(joinTextFragments(fragments))
+    }
+
+    private static func displayVSCodeMarkdownFragment(_ text: String) -> String {
+        guard text.contains("\n") || text.contains("\r") else {
+            return SearchTextMatcher.visibleText(from: text)
+        }
+        return text
+    }
+
+    private static func joinTextFragments(_ fragments: [String]) -> String {
+        guard var combined = fragments.first else { return "" }
+        for fragment in fragments.dropFirst() {
+            guard !fragment.isEmpty else { continue }
+            if let lastCharacter = combined.last,
+               let firstCharacter = fragment.first,
+               !lastCharacter.isWhitespace,
+               !firstCharacter.isWhitespace {
+                combined += " "
+            }
+            combined += fragment
+        }
+        return combined
     }
 
     private static func dateFromEpochMilliseconds(_ rawValue: Any?) -> Date? {
@@ -1282,11 +1318,11 @@ public enum TranscriptPreviewExtractor {
     ) -> String? {
         switch type {
         case "user.message", "assistant.message":
-            return TextSanitizer.clean(payload?["content"] as? String)
+            return TextSanitizer.compact(payload?["content"] as? String)
         case "session.model_change":
             return normalizeModelIdentifier(payload?["newModel"] as? String)
         case "session.info":
-            return TextSanitizer.clean(payload?["message"] as? String)
+            return TextSanitizer.compact(payload?["message"] as? String)
         case "tool.execution_start":
             let toolName = payload?["toolName"] as? String
             let details = flattenedSearchText(from: payload?["arguments"])
@@ -1297,7 +1333,7 @@ public enum TranscriptPreviewExtractor {
             let details = combinedSearchText(
                 parts: [
                     flattenedSearchText(from: payload?["result"]),
-                    TextSanitizer.clean(payload?["error"] as? String)
+                    TextSanitizer.compact(payload?["error"] as? String)
                 ]
             )
             return combinedSearchText(parts: [toolName, details])
@@ -1347,22 +1383,22 @@ public enum TranscriptPreviewExtractor {
         guard let payload else { return nil }
         let success = payload["success"] as? Bool ?? true
         if !success {
-            if let error = TextSanitizer.clean(payload["error"] as? String) {
+            if let error = TextSanitizer.compact(payload["error"] as? String) {
                 return error
             }
             if let failure = nestedString(in: payload, path: ["result", "error"]) {
-                return TextSanitizer.clean(failure)
+                return TextSanitizer.compact(failure)
             }
         }
 
         if let detail = nestedString(in: payload, path: ["result", "content"]),
            detail.count <= 140 {
-            return TextSanitizer.clean(detail)
+            return TextSanitizer.compact(detail)
         }
 
         if let detail = nestedString(in: payload, path: ["result", "detailedContent"]),
            detail.count <= 140 {
-            return TextSanitizer.clean(detail)
+            return TextSanitizer.compact(detail)
         }
 
         return nil
@@ -1377,7 +1413,7 @@ public enum TranscriptPreviewExtractor {
     private static func flattenedSearchStrings(from value: Any?) -> [String] {
         switch value {
         case let string as String:
-            return TextSanitizer.clean(SearchTextMatcher.visibleText(from: string)).map { [$0] } ?? []
+            return TextSanitizer.compact(SearchTextMatcher.visibleText(from: string)).map { [$0] } ?? []
         case let array as [Any]:
             return array.flatMap(flattenedSearchStrings)
         case let dictionary as [String: Any]:
@@ -1392,7 +1428,7 @@ public enum TranscriptPreviewExtractor {
     private static func combinedSearchText(parts: [String?]) -> String? {
         var normalizedParts: [String] = []
         for part in parts {
-            guard let cleaned = TextSanitizer.clean(part),
+            guard let cleaned = TextSanitizer.compact(part),
                   !cleaned.isEmpty else {
                 continue
             }

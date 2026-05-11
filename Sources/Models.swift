@@ -170,7 +170,9 @@ public struct SessionRecord: Identifiable, Equatable, Sendable {
     }
 
     public var detailSummary: String {
-        summary ?? firstAssistantPreview ?? firstUserPreview ?? "No preview available."
+        summary
+            ?? TextSanitizer.summarize(firstAssistantPreview ?? firstUserPreview)
+            ?? "No preview available."
     }
 
     public func with(isNewtonProject: Bool) -> SessionRecord {

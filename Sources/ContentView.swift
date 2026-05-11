@@ -1155,11 +1155,14 @@ private struct PreviewBlock: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.headline)
-            SelectableTextLabel(
-                text: text ?? "Unavailable",
-                font: .preferredFont(forTextStyle: .body),
-                textColor: text == nil ? .secondaryLabelColor : .labelColor
-            )
+            Group {
+                if let text {
+                    MarkdownTextBlock(text: text, highlightQuery: nil)
+                } else {
+                    Text("Unavailable")
+                        .foregroundStyle(.secondary)
+                }
+            }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -1534,14 +1537,25 @@ private struct MarkdownTextBlock: View {
         Group {
             if SearchTextMatcher.normalizedQuery(highlightQuery) != nil {
                 Text(SearchTextMatcher.highlightedAttributedString(from: text, query: highlightQuery))
-            } else if let attributedText = try? AttributedString(markdown: text) {
-                Text(attributedText)
             } else {
-                Text(text)
+                Text(verbatim: text)
             }
         }
+        .font(prefersMonospacedLayout ? .system(.body, design: .monospaced) : .body)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var prefersMonospacedLayout: Bool {
+        text.contains("\t")
+            || text.contains("```")
+            || text.contains("\n|")
+            || text.contains("\n┌")
+            || text.contains("\n│")
+            || text.contains("\n╭")
+            || text.contains("\n╰")
     }
 }
 

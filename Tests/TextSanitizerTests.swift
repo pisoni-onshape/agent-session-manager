@@ -21,6 +21,48 @@ final class TextSanitizerTests: XCTestCase {
         )
     }
 
+    func testCleanPreservesParagraphBreaksForDisplayText() {
+        let raw = """
+        <current_datetime>2026-05-07T13:43:11.463+05:30</current_datetime>
+
+        Here's my analysis:
+
+        Root cause
+        \tIndented detail
+
+
+        1. First item
+        2. Second item
+        """
+
+        XCTAssertEqual(
+            TextSanitizer.clean(raw),
+            """
+            Here's my analysis:
+
+            Root cause
+                Indented detail
+
+            1. First item
+            2. Second item
+            """
+        )
+    }
+
+    func testCompactCollapsesParagraphBreaksForSummariesAndSearch() {
+        let raw = """
+        Here's my analysis:
+
+        Root cause
+        \tIndented detail
+        """
+
+        XCTAssertEqual(
+            TextSanitizer.compact(raw),
+            "Here's my analysis: Root cause Indented detail"
+        )
+    }
+
     func testCursorProjectDecodingHandlesNewtonRepoPaths() {
         XCTAssertEqual(
             PathUtilities.decodeCursorWorkspacePath(from: "Users-pisoni-repos-newton4"),
