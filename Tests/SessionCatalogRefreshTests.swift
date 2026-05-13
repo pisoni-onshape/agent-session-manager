@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import AgentSessionManagerCore
 
@@ -231,6 +232,133 @@ final class SessionCatalogRefreshTests: XCTestCase {
         XCTAssertFalse(refreshed.first?.isNewtonProject == true)
     }
 
+    func testCursorGlobalPlanLinkIsPersistedAndIndexedDuringRebuildAndRefresh() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let projectsRoot = directory.appendingPathComponent(".cursor/projects", isDirectory: true)
+        let workspaceStorageRoot = directory.appendingPathComponent("Cursor/User/workspaceStorage", isDirectory: true)
+        let globalStorageRoot = directory.appendingPathComponent("Cursor/User/globalStorage", isDirectory: true)
+        let copilotRoot = directory.appendingPathComponent(".copilot/session-state", isDirectory: true)
+        let vscodeRoot = directory.appendingPathComponent("Code/User/workspaceStorage", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspaceStorageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: globalStorageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: copilotRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: vscodeRoot, withIntermediateDirectories: true)
+
+        let workspacePath = directory.appendingPathComponent("workspace-root", isDirectory: true).path
+        try FileManager.default.createDirectory(atPath: workspacePath, withIntermediateDirectories: true, attributes: nil)
+        let projectDirectoryName = PathUtilities.cursorProjectDirectoryName(forWorkspacePath: workspacePath)
+        let sessionID = "cursor-rebuild-refresh"
+        let projectDirectory = projectsRoot.appendingPathComponent(projectDirectoryName, isDirectory: true)
+        let sessionDirectory = projectDirectory.appendingPathComponent("agent-transcripts/\(sessionID)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        try """
+        {"role":"user","message":{"content":[{"type":"text","text":"Plan indexing should work."}]}}
+        {"role":"assistant","message":{"content":[{"type":"text","text":"I’ll index the linked plan."}]}}
+        """.write(
+            to: sessionDirectory.appendingPathComponent("\(sessionID).jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let plansRoot = directory.appendingPathComponent(".cursor/plans", isDirectory: true)
+        try FileManager.default.createDirectory(at: plansRoot, withIntermediateDirectories: true)
+        let planURL = plansRoot.appendingPathComponent("linked-plan.plan.md")
+        try """
+        # Cursor Plan
+
+        Linked global plan content for refresh indexing.
+        """.write(
+            to: planURL,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try createCursorItemTableDatabase(
+            at: globalStorageRoot.appendingPathComponent("state.vscdb"),
+            items: [
+                "composer.planRegistry": """
+                {
+                  "linked-plan": {
+                    "id": "linked-plan",
+                    "uri": {
+                      "fsPath": "\(planURL.path)"
+                    }
+                  }
+                }
+                """,
+                "cursor/glass.tabs.v2/workspace-id/\(sessionID)/state.json": """
+                {
+                  "agentId": "\(sessionID)",
+                  "planTabs": [
+                    {
+                      "lastActiveTime": 250,
+                      "props": {
+                        "planId": "linked-plan",
+                        "ownerAgentId": "\(sessionID)"
+                      }
+                    }
+                  ]
+                }
+                """
+            ]
+        )
+
+        let roots = SourceRoots(
+            copilotCLI: copilotRoot,
+            cursorProjects: projectsRoot,
+            cursorWorkspaceStorage: workspaceStorageRoot,
+            cursorGlobalStorage: globalStorageRoot,
+            vscodeWorkspaceStorage: vscodeRoot
+        )
+
+        let rebuildDatabaseURL = directory.appendingPathComponent("catalog-rebuild.sqlite3")
+        let rebuildCatalog = try SessionCatalog(storeURL: rebuildDatabaseURL, roots: roots)
+        let rebuiltRecords = try rebuildCatalog.rebuildSessions()
+        let rebuildStore = try SQLiteSessionStore(databaseURL: rebuildDatabaseURL)
+
+        XCTAssertEqual(rebuiltRecords.count, 1)
+        XCTAssertEqual(rebuiltRecords[0].relatedPlanPath, planURL.path)
+        XCTAssertEqual(
+            try rebuildStore.searchTranscriptEntries(
+                sessionIDs: [rebuiltRecords[0].id],
+                query: "global plan content",
+                scope: .plan
+            ).map(\.sessionRecordID),
+            [rebuiltRecords[0].id]
+        )
+
+        let refreshDatabaseURL = directory.appendingPathComponent("catalog-refresh.sqlite3")
+        let refreshCatalog = try SessionCatalog(storeURL: refreshDatabaseURL, roots: roots)
+        let refreshedRecords = try refreshCatalog.refreshSessions()
+        let refreshStore = try SQLiteSessionStore(databaseURL: refreshDatabaseURL)
+
+        XCTAssertEqual(refreshedRecords.count, 1)
+        XCTAssertEqual(refreshedRecords[0].relatedPlanPath, planURL.path)
+        XCTAssertEqual(
+            try refreshStore.searchTranscriptEntries(
+                sessionIDs: [refreshedRecords[0].id],
+                query: "refresh indexing",
+                scope: .plan
+            ).map(\.sessionRecordID),
+            [refreshedRecords[0].id]
+        )
+    }
+
     private func makeRecord(
         sessionID: String,
         title: String,
@@ -265,6 +393,45 @@ final class SessionCatalogRefreshTests: XCTestCase {
             resumePayload: sessionID,
             isNewtonProject: true
         )
+    }
+}
+
+private func createCursorItemTableDatabase(at url: URL, items: [String: String]) throws {
+    var database: OpaquePointer?
+    guard sqlite3_open(url.path, &database) == SQLITE_OK else {
+        let message = database.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "Failed to open SQLite database"
+        sqlite3_close(database)
+        XCTFail(message)
+        return
+    }
+    defer { sqlite3_close(database) }
+
+    guard sqlite3_exec(database, "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB);", nil, nil, nil) == SQLITE_OK else {
+        let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Failed to create ItemTable"
+        XCTFail(message)
+        return
+    }
+
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, "INSERT INTO ItemTable(key, value) VALUES(?, ?);", -1, &statement, nil) == SQLITE_OK else {
+        let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Failed to prepare insert"
+        XCTFail(message)
+        return
+    }
+    defer { sqlite3_finalize(statement) }
+
+    let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    for key in items.keys.sorted() {
+        sqlite3_reset(statement)
+        sqlite3_clear_bindings(statement)
+        sqlite3_bind_text(statement, 1, key, -1, transient)
+        sqlite3_bind_text(statement, 2, items[key], -1, transient)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Failed to insert SQLite item"
+            XCTFail(message)
+            return
+        }
     }
 }
 

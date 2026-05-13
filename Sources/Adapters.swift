@@ -262,8 +262,10 @@ struct CursorAdapter: SessionSourceAdapter {
     func scanCandidates() throws -> [SessionScanCandidate] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
 
+        let stateDatabaseURL = globalStorageRoot.appendingPathComponent("state.vscdb")
         let workspaceReferences = try loadWorkspaceReferencesByProjectDirectory()
-        let titleReferences = try loadTitleReferencesBySessionID()
+        let titleReferences = try loadTitleReferencesBySessionID(from: stateDatabaseURL)
+        let planReferences = try loadPlanReferencesBySessionID(from: stateDatabaseURL)
         let projectDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
             .filter(\.hasDirectoryPath)
 
@@ -284,7 +286,8 @@ struct CursorAdapter: SessionSourceAdapter {
             return sessionDirectories.map { sessionDirectory in
                 let sessionID = sessionDirectory.lastPathComponent
                 let transcriptFile = sessionDirectory.appendingPathComponent("\(sessionDirectory.lastPathComponent).jsonl")
-                let relatedPlanPath = SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
+                let relatedPlanPath = planReferences[sessionID]?.path
+                    ?? SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
                 let titleReference = titleReferences[sessionID]
                 let fingerprint = combinedFingerprint(
                     paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath],
@@ -343,8 +346,7 @@ struct CursorAdapter: SessionSourceAdapter {
         return references
     }
 
-    private func loadTitleReferencesBySessionID() throws -> [String: CursorTitleReference] {
-        let stateDatabaseURL = globalStorageRoot.appendingPathComponent("state.vscdb")
+    private func loadTitleReferencesBySessionID(from stateDatabaseURL: URL) throws -> [String: CursorTitleReference] {
         guard FileManager.default.fileExists(atPath: stateDatabaseURL.path),
               let rawValue = try loadSQLiteItemValue(from: stateDatabaseURL, key: "composer.composerHeaders"),
               let data = rawValue.data(using: .utf8) else {
@@ -361,6 +363,62 @@ struct CursorAdapter: SessionSourceAdapter {
                 return (header.composerId, CursorTitleReference(title: title))
             }
         )
+    }
+
+    private func loadPlanReferencesBySessionID(from stateDatabaseURL: URL) throws -> [String: CursorPlanReference] {
+        guard FileManager.default.fileExists(atPath: stateDatabaseURL.path),
+              let rawRegistry = try loadSQLiteItemValue(from: stateDatabaseURL, key: "composer.planRegistry"),
+              let registryData = rawRegistry.data(using: .utf8) else {
+            return [:]
+        }
+
+        let registryPayload = try JSONDecoder().decode(CursorPlanRegistryPayload.self, from: registryData)
+        let planPathByID = registryPayload.planEntriesByID.compactMapValues(\.resolvedPath)
+        guard !planPathByID.isEmpty else {
+            return [:]
+        }
+
+        let tabStateValues = try loadSQLiteItemValues(
+            from: stateDatabaseURL,
+            keyLike: "cursor/glass.tabs.v2/%/state.json"
+        )
+        guard !tabStateValues.isEmpty else {
+            return [:]
+        }
+
+        let decoder = JSONDecoder()
+        var referencesBySessionID: [String: CursorPlanReference] = [:]
+        for rawValue in tabStateValues.values {
+            guard let data = rawValue.data(using: .utf8) else { continue }
+            let tabState = try decoder.decode(CursorGlassTabsState.self, from: data)
+
+            for planTab in tabState.planTabs {
+                guard let planID = planTab.props?.planId,
+                      let planPath = planPathByID[planID] else {
+                    continue
+                }
+
+                let sessionID = planTab.props?.ownerAgentId ?? tabState.agentId
+                guard let sessionID, !sessionID.isEmpty else {
+                    continue
+                }
+
+                let candidate = CursorPlanReference(
+                    path: planPath,
+                    planID: planID,
+                    lastActiveTime: planTab.lastActiveTime ?? 0
+                )
+                if let existing = referencesBySessionID[sessionID] {
+                    if candidate.shouldReplace(existing) {
+                        referencesBySessionID[sessionID] = candidate
+                    }
+                } else {
+                    referencesBySessionID[sessionID] = candidate
+                }
+            }
+        }
+
+        return referencesBySessionID
     }
 
     private func loadRecord(
@@ -416,6 +474,22 @@ private struct CursorTitleReference {
     let title: String
 }
 
+private struct CursorPlanReference {
+    let path: String
+    let planID: String
+    let lastActiveTime: Int64
+
+    func shouldReplace(_ existing: CursorPlanReference) -> Bool {
+        if lastActiveTime != existing.lastActiveTime {
+            return lastActiveTime > existing.lastActiveTime
+        }
+        if planID != existing.planID {
+            return planID.localizedStandardCompare(existing.planID) == .orderedAscending
+        }
+        return path.localizedStandardCompare(existing.path) == .orderedAscending
+    }
+}
+
 private struct CursorComposerHeadersPayload: Decodable {
     let allComposers: [CursorComposerHeader]
 }
@@ -423,6 +497,72 @@ private struct CursorComposerHeadersPayload: Decodable {
 private struct CursorComposerHeader: Decodable {
     let composerId: String
     let name: String?
+}
+
+private struct CursorPlanRegistryPayload: Decodable {
+    let planEntriesByID: [String: CursorPlanRegistryEntry]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        planEntriesByID = try container.decode([String: CursorPlanRegistryEntry].self)
+    }
+}
+
+private struct CursorPlanRegistryEntry: Decodable {
+    let uri: CursorPlanURI
+
+    var resolvedPath: String? {
+        uri.resolvedFilePath.flatMap { path in
+            FileManager.default.fileExists(atPath: path) ? path : nil
+        }
+    }
+}
+
+private struct CursorPlanURI: Decodable {
+    let fsPath: String?
+    let path: String?
+    let external: String?
+
+    var resolvedFilePath: String? {
+        if let fsPath, !fsPath.isEmpty {
+            return URL(fileURLWithPath: fsPath).standardizedFileURL.path
+        }
+        if let external,
+           let url = URL(string: external),
+           url.isFileURL {
+            return url.standardizedFileURL.path
+        }
+        if let path, !path.isEmpty, path.hasPrefix("/") {
+            return URL(fileURLWithPath: path).standardizedFileURL.path
+        }
+        return nil
+    }
+}
+
+private struct CursorGlassTabsState: Decodable {
+    let agentId: String?
+    let planTabs: [CursorGlassPlanTab]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
+        planTabs = try container.decodeIfPresent([CursorGlassPlanTab].self, forKey: .planTabs) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case agentId
+        case planTabs
+    }
+}
+
+private struct CursorGlassPlanTab: Decodable {
+    let props: CursorGlassPlanTabProps?
+    let lastActiveTime: Int64?
+}
+
+private struct CursorGlassPlanTabProps: Decodable {
+    let planId: String?
+    let ownerAgentId: String?
 }
 
 private struct VSCodeSessionReference {
