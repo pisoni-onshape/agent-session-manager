@@ -385,10 +385,6 @@ final class SessionBrowserViewModel: ObservableObject {
         }
     }
 
-    func openPlan(for record: SessionRecord) {
-        WorkspaceLauncher.openDocument(path: record.relatedPlanPath)
-    }
-
     func isStarred(_ record: SessionRecord) -> Bool {
         starredSessionIDs.contains(record.id)
     }

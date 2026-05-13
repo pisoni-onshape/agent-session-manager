@@ -149,12 +149,42 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertEqual(viewModel.displayedSessions.map(\.id), [refreshedRecord.id])
     }
 
+    func testLoadPresentedPlanReturnsPresentedPlanForInAppViewer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let planURL = directory.appendingPathComponent("plan.md")
+        try """
+        # Plan
+
+        Keep the **viewer** flow consistent.
+        """.write(to: planURL, atomically: true, encoding: .utf8)
+
+        let record = try makeRecord(
+            sessionID: "plan-viewer",
+            title: "Plan Viewer",
+            fingerprint: "plan-v1",
+            directory: directory,
+            transcriptText: "Transcript text",
+            relatedPlanPath: planURL.path
+        )
+        let viewModel = SessionBrowserViewModel(catalog: nil)
+
+        let presentedPlan = await viewModel.loadPresentedPlan(for: record, initialSearchText: "viewer")
+
+        XCTAssertEqual(presentedPlan?.initialSearchText, "viewer")
+        XCTAssertEqual(presentedPlan?.plan.rawPlanPath, planURL.path)
+        XCTAssertEqual(presentedPlan?.plan.sessionTitle, "Plan Viewer")
+        XCTAssertTrue(presentedPlan?.plan.text.contains("**viewer**") == true)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     private func makeRecord(
         sessionID: String,
         title: String,
         fingerprint: String,
         directory: URL,
-        transcriptText: String
+        transcriptText: String,
+        relatedPlanPath: String? = nil
     ) throws -> SessionRecord {
         let transcriptURL = directory.appendingPathComponent("\(sessionID).jsonl")
         try """
@@ -177,7 +207,7 @@ final class ViewModelRefreshTests: XCTestCase {
             firstAssistantPreview: "Response",
             rawTranscriptPath: transcriptURL.path,
             rawMetadataPath: "/tmp/\(sessionID).yaml",
-            relatedPlanPath: nil,
+            relatedPlanPath: relatedPlanPath,
             fingerprint: fingerprint,
             resumeKind: .copilotConnect,
             resumePayload: sessionID,

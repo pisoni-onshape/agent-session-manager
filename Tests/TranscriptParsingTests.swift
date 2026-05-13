@@ -641,6 +641,53 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(result.highlightQuery, "search")
     }
 
+    func testMarkdownRenderingBuildsStructuredPlanBlocks() {
+        let blocks = MarkdownRendering.blocks(from: """
+        # Plan Title
+
+        Intro paragraph with **bold** guidance.
+
+        - First item
+        - Second item
+
+        1. Step one
+        2. Step two
+
+        > Keep the old button as an escape hatch.
+
+        | Column | Value |
+        | --- | --- |
+        | Viewer | Built-in |
+
+        ```swift
+        let mode = "viewer"
+        ```
+        """)
+
+        XCTAssertEqual(
+            blocks,
+            [
+                .heading(level: 1, text: "Plan Title"),
+                .paragraph(text: "Intro paragraph with **bold** guidance."),
+                .bulletList(items: ["First item", "Second item"]),
+                .numberedList(items: ["Step one", "Step two"]),
+                .blockquote(text: "Keep the old button as an escape hatch."),
+                .table(rows: ["| Column | Value |", "| Viewer | Built-in |"]),
+                .codeBlock(text: #"let mode = "viewer""#)
+            ]
+        )
+    }
+
+    func testMarkdownRenderingPreservesVisibleTextAndHighlightsMatches() {
+        let rendered = MarkdownRendering.inlineAttributedString(
+            from: #"**Plan** uses [viewer](https://example.com/viewer) links and ~~fallback~~ actions."#,
+            highlightQuery: "viewer"
+        )
+
+        XCTAssertEqual(String(rendered.characters), "Plan uses viewer links and fallback actions.")
+        XCTAssertTrue(rendered.runs.contains(where: { $0.link?.absoluteString == "https://example.com/viewer" }))
+    }
+
     func testSearchableTranscriptEntriesIgnoreToolResultContent() throws {
         let longContent = String(repeating: "prefix ", count: 40) + "pickDefaultInferenceId" + String(repeating: " suffix", count: 40)
         let url = try temporaryFile(

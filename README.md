@@ -31,7 +31,7 @@ If you regularly use more than one AI coding tool, your conversation history end
 | **One-click actions** | Resume Copilot CLI sessions, open workspaces in Cursor or VS Code, reveal transcript files in Finder |
 | **Start new conversation** | Launch a new AI session in the same project workspace directly from the detail pane |
 | **In-app transcript viewer** | Read the full conversation in a separate window — no need to open raw JSONL files |
-| **Open plan file** | Jump straight to the session's plan.md if one exists, including Cursor-linked plans stored under `~/.cursor/plans` |
+| **In-app plan viewer** | Open a session's plan.md in the built-in viewer, including Cursor-linked plans stored under `~/.cursor/plans`, with a default-app fallback available from that viewer |
 | **Detail pane metadata** | See project, branch, workspace path, model info, session timestamps, and first-message previews at a glance |
 | **Copy buttons** | Quickly copy session ID, workspace path, or transcript path to the clipboard |
 | **Auto-refresh** | Configurable timer refresh, launch refresh, and optional deferral of scheduled refreshes while the app is active |

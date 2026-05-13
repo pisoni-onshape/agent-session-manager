@@ -70,7 +70,8 @@ struct ContentView: View {
                     viewModel: viewModel,
                     isStarred: viewModel.isStarred(session),
                     onToggleStar: { viewModel.toggleStar(for: session) },
-                    onOpenTranscript: { openTranscript(for: session) }
+                    onOpenTranscript: { openTranscript(for: session) },
+                    onOpenPlan: { openPlanViewer(for: session) }
                 )
                     .padding(24)
             } else if viewModel.shouldShowLoadingPlaceholder {
@@ -732,6 +733,7 @@ private struct SessionDetailView: View {
     let isStarred: Bool
     let onToggleStar: () -> Void
     let onOpenTranscript: () -> Void
+    let onOpenPlan: () -> Void
 
     var body: some View {
         ScrollView {
@@ -830,12 +832,12 @@ private struct SessionDetailView: View {
 
             if session.relatedPlanPath != nil {
                 Button {
-                    viewModel.openPlan(for: session)
+                    onOpenPlan()
                 } label: {
                     Label("Open Plan", systemImage: "doc.text")
                 }
                 .buttonStyle(.bordered)
-                .help("Open the related planning document for this session.")
+                .help("Open the related planning document in the built-in plan viewer.")
             }
         }
         .controlSize(.large)
@@ -1743,32 +1745,118 @@ private struct CollapsedTranscriptEventsView: View {
 }
 
 private struct MarkdownTextBlock: View {
-    let text: String
     let highlightQuery: String?
+    private let rawText: String
+    private let blocks: [MarkdownBlock]
+
+    init(text: String, highlightQuery: String?) {
+        self.highlightQuery = highlightQuery
+        rawText = text
+        blocks = MarkdownRendering.blocks(from: text)
+    }
 
     var body: some View {
-        Group {
-            if SearchTextMatcher.normalizedQuery(highlightQuery) != nil {
-                Text(SearchTextMatcher.highlightedAttributedString(from: text, query: highlightQuery))
+        VStack(alignment: .leading, spacing: 12) {
+            if blocks.isEmpty {
+                Text(MarkdownRendering.plainTextAttributedString(from: rawText, highlightQuery: highlightQuery))
             } else {
-                Text(verbatim: text)
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    MarkdownBlockView(block: block, highlightQuery: highlightQuery)
+                }
             }
         }
-        .font(prefersMonospacedLayout ? .system(.body, design: .monospaced) : .body)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private var prefersMonospacedLayout: Bool {
-        text.contains("\t")
-            || text.contains("```")
-            || text.contains("\n|")
-            || text.contains("\n┌")
-            || text.contains("\n│")
-            || text.contains("\n╭")
-            || text.contains("\n╰")
+private struct MarkdownBlockView: View {
+    let block: MarkdownBlock
+    let highlightQuery: String?
+
+    var body: some View {
+        switch block {
+        case let .heading(level, text):
+            Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery))
+                .font(headingFont(for: level))
+                .fontWeight(.semibold)
+        case let .paragraph(text):
+            Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery))
+                .font(.body)
+        case let .bulletList(items):
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\u{2022}")
+                            .font(.body.weight(.semibold))
+                        Text(MarkdownRendering.inlineAttributedString(from: item, highlightQuery: highlightQuery))
+                            .font(.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        case let .numberedList(items):
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\(index + 1).")
+                            .font(.body.weight(.semibold))
+                        Text(MarkdownRendering.inlineAttributedString(from: item, highlightQuery: highlightQuery))
+                            .font(.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        case let .blockquote(text):
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 999)
+                    .fill(Color.secondary.opacity(0.35))
+                    .frame(width: 4)
+                Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery))
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 2)
+        case let .codeBlock(text):
+            ScrollView(.horizontal) {
+                Text(MarkdownRendering.plainTextAttributedString(from: text, highlightQuery: highlightQuery))
+                    .font(.system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        case let .table(rows):
+            ScrollView(.horizontal) {
+                Text(MarkdownRendering.plainTextAttributedString(from: rows.joined(separator: "\n"), highlightQuery: highlightQuery))
+                    .font(.system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        case .thematicBreak:
+            Divider()
+                .padding(.vertical, 4)
+        }
+    }
+
+    private func headingFont(for level: Int) -> Font {
+        switch level {
+        case 1:
+            return .title
+        case 2:
+            return .title2
+        case 3:
+            return .title3
+        case 4:
+            return .headline
+        case 5:
+            return .subheadline
+        default:
+            return .body
+        }
     }
 }
 

@@ -104,6 +104,264 @@ public struct HighlightedTextSegment: Equatable, Sendable {
     }
 }
 
+public enum MarkdownBlock: Equatable, Sendable {
+    case heading(level: Int, text: String)
+    case paragraph(text: String)
+    case bulletList(items: [String])
+    case numberedList(items: [String])
+    case blockquote(text: String)
+    case codeBlock(text: String)
+    case table(rows: [String])
+    case thematicBreak
+}
+
+public enum MarkdownRendering {
+    public static func inlineAttributedString(from rawText: String, highlightQuery rawQuery: String? = nil) -> AttributedString {
+        let attributed = parseInlineMarkdown(rawText) ?? AttributedString(rawText)
+        return highlightedAttributedString(from: attributed, query: rawQuery)
+    }
+
+    public static func plainTextAttributedString(from rawText: String, highlightQuery rawQuery: String? = nil) -> AttributedString {
+        highlightedAttributedString(from: AttributedString(rawText), query: rawQuery)
+    }
+
+    public static func visibleText(from rawText: String) -> String {
+        if let attributed = parseFullMarkdown(rawText) {
+            return String(attributed.characters)
+        }
+        return rawText
+    }
+
+    public static func blocks(from rawText: String) -> [MarkdownBlock] {
+        let normalizedText = rawText
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalizedText.components(separatedBy: "\n")
+
+        var blocks: [MarkdownBlock] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.isEmpty {
+                index += 1
+                continue
+            }
+
+            if let fence = codeFenceDelimiter(in: trimmed) {
+                index += 1
+                var codeLines: [String] = []
+                while index < lines.count {
+                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    if candidate.hasPrefix(fence) {
+                        index += 1
+                        break
+                    }
+                    codeLines.append(lines[index])
+                    index += 1
+                }
+                blocks.append(.codeBlock(text: codeLines.joined(separator: "\n")))
+                continue
+            }
+
+            if isThematicBreak(trimmed) {
+                blocks.append(.thematicBreak)
+                index += 1
+                continue
+            }
+
+            if let heading = heading(in: line) {
+                blocks.append(.heading(level: heading.level, text: heading.text))
+                index += 1
+                continue
+            }
+
+            let nextLine = index + 1 < lines.count ? lines[index + 1] : nil
+            if isTableHeader(line, nextLine: nextLine) {
+                var rows = [trimmed]
+                index += 2
+                while index < lines.count {
+                    let candidate = lines[index]
+                    let candidateTrimmed = candidate.trimmingCharacters(in: .whitespaces)
+                    let candidateNextLine = index + 1 < lines.count ? lines[index + 1] : nil
+                    guard !candidateTrimmed.isEmpty,
+                          candidate.contains("|"),
+                          !startsStandaloneBlock(candidate, nextLine: candidateNextLine) else {
+                        break
+                    }
+                    rows.append(candidateTrimmed)
+                    index += 1
+                }
+                blocks.append(.table(rows: rows))
+                continue
+            }
+
+            if let firstItem = bulletListItem(in: line) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count, let item = bulletListItem(in: lines[index]) {
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.bulletList(items: items))
+                continue
+            }
+
+            if let firstItem = numberedListItem(in: line) {
+                var items = [firstItem]
+                index += 1
+                while index < lines.count, let item = numberedListItem(in: lines[index]) {
+                    items.append(item)
+                    index += 1
+                }
+                blocks.append(.numberedList(items: items))
+                continue
+            }
+
+            if let quoteLine = blockquoteLine(in: line) {
+                var quoteLines = [quoteLine]
+                index += 1
+                while index < lines.count, let nextQuoteLine = blockquoteLine(in: lines[index]) {
+                    quoteLines.append(nextQuoteLine)
+                    index += 1
+                }
+                let quoteText = TextSanitizer.clean(quoteLines.joined(separator: "\n")) ?? quoteLines.joined(separator: "\n")
+                blocks.append(.blockquote(text: quoteText))
+                continue
+            }
+
+            var paragraphLines = [line]
+            index += 1
+            while index < lines.count {
+                let candidate = lines[index]
+                let candidateTrimmed = candidate.trimmingCharacters(in: .whitespaces)
+                let candidateNextLine = index + 1 < lines.count ? lines[index + 1] : nil
+                if candidateTrimmed.isEmpty || startsStandaloneBlock(candidate, nextLine: candidateNextLine) {
+                    break
+                }
+                paragraphLines.append(candidate)
+                index += 1
+            }
+
+            let paragraphText = TextSanitizer.clean(paragraphLines.joined(separator: "\n")) ?? paragraphLines.joined(separator: "\n")
+            blocks.append(.paragraph(text: paragraphText))
+        }
+
+        return blocks
+    }
+
+    private static func parseInlineMarkdown(_ rawText: String) -> AttributedString? {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        return try? AttributedString(markdown: rawText, options: options)
+    }
+
+    private static func parseFullMarkdown(_ rawText: String) -> AttributedString? {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        return try? AttributedString(markdown: rawText, options: options)
+    }
+
+    private static func highlightedAttributedString(from attributed: AttributedString, query rawQuery: String?) -> AttributedString {
+        var highlighted = attributed
+
+        guard let query = SearchTextMatcher.normalizedQuery(rawQuery) else {
+            return highlighted
+        }
+
+        let visible = String(highlighted.characters)
+        for range in SearchTextMatcher.matchRanges(in: visible, query: query) {
+            guard let lowerBound = AttributedString.Index(range.lowerBound, within: highlighted),
+                  let upperBound = AttributedString.Index(range.upperBound, within: highlighted) else {
+                continue
+            }
+            highlighted[lowerBound..<upperBound].backgroundColor = NSColor.systemYellow.withAlphaComponent(0.35)
+        }
+
+        return highlighted
+    }
+
+    private static func startsStandaloneBlock(_ line: String, nextLine: String?) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return false }
+        return codeFenceDelimiter(in: trimmed) != nil
+            || isThematicBreak(trimmed)
+            || heading(in: line) != nil
+            || bulletListItem(in: line) != nil
+            || numberedListItem(in: line) != nil
+            || blockquoteLine(in: line) != nil
+            || isTableHeader(line, nextLine: nextLine)
+    }
+
+    private static func heading(in line: String) -> (level: Int, text: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let hashes = trimmed.prefix { $0 == "#" }
+        guard !hashes.isEmpty,
+              hashes.count <= 6,
+              trimmed.dropFirst(hashes.count).first?.isWhitespace == true else {
+            return nil
+        }
+
+        let text = trimmed.dropFirst(hashes.count).trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return nil }
+        return (hashes.count, text)
+    }
+
+    private static func bulletListItem(in line: String) -> String? {
+        guard let range = line.range(of: #"^\s*[-*+]\s+(.+)$"#, options: .regularExpression) else {
+            return nil
+        }
+        let matched = String(line[range])
+        return matched.replacingOccurrences(of: #"^\s*[-*+]\s+"#, with: "", options: .regularExpression)
+    }
+
+    private static func numberedListItem(in line: String) -> String? {
+        guard let range = line.range(of: #"^\s*\d+[.)]\s+(.+)$"#, options: .regularExpression) else {
+            return nil
+        }
+        let matched = String(line[range])
+        return matched.replacingOccurrences(of: #"^\s*\d+[.)]\s+"#, with: "", options: .regularExpression)
+    }
+
+    private static func blockquoteLine(in line: String) -> String? {
+        guard let range = line.range(of: #"^\s*>\s?(.*)$"#, options: .regularExpression) else {
+            return nil
+        }
+        let matched = String(line[range])
+        return matched.replacingOccurrences(of: #"^\s*>\s?"#, with: "", options: .regularExpression)
+    }
+
+    private static func isTableHeader(_ line: String, nextLine: String?) -> Bool {
+        guard line.contains("|"), let nextLine else { return false }
+        let trimmed = nextLine.trimmingCharacters(in: .whitespaces)
+        return trimmed.range(
+            of: #"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
+    private static func isThematicBreak(_ trimmedLine: String) -> Bool {
+        trimmedLine.range(of: #"^([-*_])(?:\s*\1){2,}$"#, options: .regularExpression) != nil
+    }
+
+    private static func codeFenceDelimiter(in trimmedLine: String) -> String? {
+        guard let first = trimmedLine.first,
+              first == "`" || first == "~" else {
+            return nil
+        }
+
+        let fenceLength = trimmedLine.prefix { $0 == first }.count
+        guard fenceLength >= 3 else { return nil }
+        return String(repeating: String(first), count: fenceLength)
+    }
+}
+
 public enum SearchTextMatcher {
     public static func normalizedQuery(_ rawQuery: String?) -> String? {
         guard let rawQuery else { return nil }
@@ -112,10 +370,7 @@ public enum SearchTextMatcher {
     }
 
     public static func visibleText(from rawText: String) -> String {
-        if let attributed = try? AttributedString(markdown: rawText) {
-            return String(attributed.characters)
-        }
-        return rawText
+        MarkdownRendering.visibleText(from: rawText)
     }
 
     public static func matchCount(in rawText: String?, query: String) -> Int {
@@ -167,22 +422,7 @@ public enum SearchTextMatcher {
     }
 
     public static func highlightedAttributedString(from rawText: String, query rawQuery: String?) -> AttributedString {
-        let visible = TextSanitizer.clean(rawText) ?? rawText
-        var attributed = AttributedString(visible)
-
-        guard let query = normalizedQuery(rawQuery) else {
-            return attributed
-        }
-
-        for range in matchRanges(in: visible, query: query) {
-            guard let lowerBound = AttributedString.Index(range.lowerBound, within: attributed),
-                  let upperBound = AttributedString.Index(range.upperBound, within: attributed) else {
-                continue
-            }
-            attributed[lowerBound..<upperBound].backgroundColor = NSColor.systemYellow.withAlphaComponent(0.35)
-        }
-
-        return attributed
+        MarkdownRendering.inlineAttributedString(from: rawText, highlightQuery: rawQuery)
     }
 
     public static func snippet(in rawText: String, query rawQuery: String?, limit: Int = 120) -> String? {
