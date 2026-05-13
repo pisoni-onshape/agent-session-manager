@@ -32,9 +32,10 @@ final class SessionSearchCLITests: XCTestCase {
             ],
             snapshot: snapshot,
             referenceDate: ISO8601DateCoding.parse("2026-05-08T06:30:14.516Z") ?? Date()
-        ) { sessionIDs, query in
+        ) { sessionIDs, query, scope in
             XCTAssertEqual(sessionIDs, ["copilot-cli::drag-session"])
             XCTAssertEqual(query, "drag")
+            XCTAssertEqual(scope, .all)
             return [
                 TranscriptIndexSearchHit(
                     sessionRecordID: "copilot-cli::drag-session",
@@ -62,6 +63,37 @@ final class SessionSearchCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.standardError.contains("Expected --within"))
         XCTAssertTrue(result.standardError.contains("Usage:"))
+    }
+
+    func testHumanReadableOutputShowsSeparatePlanMatches() {
+        let snapshot = SessionCatalogSnapshot(
+            sessions: [makeRecord(sessionID: "plan-session", title: "Plan search", branch: "main")],
+            starredSessionIDs: []
+        )
+
+        let result = SessionSearchCLI.execute(
+            arguments: [
+                "agent-session-manager",
+                "search",
+                "--query", "plan:\"search service\""
+            ],
+            snapshot: snapshot
+        ) { sessionIDs, query, scope in
+            XCTAssertEqual(sessionIDs, ["copilot-cli::plan-session"])
+            XCTAssertEqual(query, "search service")
+            XCTAssertEqual(scope, .plan)
+            return [
+                TranscriptIndexSearchHit(
+                    sessionRecordID: "copilot-cli::plan-session",
+                    entryIndex: -1,
+                    text: "Plan the search service refactor."
+                )
+            ]
+        }
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.standardOutput.contains("plan matches: 1"))
+        XCTAssertTrue(result.standardOutput.contains("plan snippet:"))
     }
 
     private func makeRecord(sessionID: String, title: String, branch: String?) -> SessionRecord {

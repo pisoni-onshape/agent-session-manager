@@ -33,6 +33,28 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(query.transcriptFieldValues, ["drag bug", "cursor"])
     }
 
+    func testFieldedSearchParserRecognizesPlanClausesAndScopedQueries() {
+        let query = SessionSearchQueryParser.parse(#"project:newton transcript:"drag bug" plan:"search service" refactor"#)
+
+        XCTAssertEqual(
+            query.fieldClauses,
+            [
+                SessionSearchFieldClause(field: .project, value: "newton"),
+                SessionSearchFieldClause(field: .transcript, value: "drag bug"),
+                SessionSearchFieldClause(field: .plan, value: "search service")
+            ]
+        )
+        XCTAssertEqual(query.planFieldValues, ["search service"])
+        XCTAssertEqual(
+            query.scopedSearchQueries,
+            [
+                ScopedTranscriptSearchQuery(query: "drag bug", scope: .transcript),
+                ScopedTranscriptSearchQuery(query: "search service", scope: .plan),
+                ScopedTranscriptSearchQuery(query: "refactor", scope: .all)
+            ]
+        )
+    }
+
     func testUnlabeledToolbarSearchKeepsWholeQueryBehavior() {
         var filters = SessionFilterState()
         filters.searchText = "refresh behavior"
@@ -60,7 +82,7 @@ final class TranscriptParsingTests: XCTestCase {
         let matches = SessionSearchEvaluator.matches(
             record,
             parsedQuery: parsedQuery,
-            transcriptSessionIDsByQuery: ["drag": [record.id]]
+            transcriptSessionIDsByQuery: [ScopedTranscriptSearchQuery(query: "drag", scope: .all).resultKey: [record.id]]
         )
 
         XCTAssertTrue(matches)
@@ -465,8 +487,8 @@ final class TranscriptParsingTests: XCTestCase {
         let matches = try await cache.search(records: [matchingRecord, nonMatchingRecord], query: "drag")
 
         XCTAssertEqual(matches.map(\.sessionRecordID), [matchingRecord.id])
-        XCTAssertEqual(matches.first?.matchCount, 2)
-        XCTAssertEqual(matches.first?.snippets.count, 2)
+        XCTAssertEqual(matches.first?.transcriptMatchCount, 2)
+        XCTAssertEqual(matches.first?.transcriptSnippets.count, 2)
     }
 
     func testSessionSearchServiceReturnsTranscriptMatchesForStructuredQueries() throws {
@@ -477,9 +499,10 @@ final class TranscriptParsingTests: XCTestCase {
         let other = makeRecord(sessionID: "other", title: "Other session", summary: "Also in the same project.")
         let snapshot = SessionCatalogSnapshot(sessions: [matching, other], starredSessionIDs: [])
 
-        let execution = try SessionSearchService.search(snapshot: snapshot, request: SessionSearchRequest(filters: filters)) { sessionIDs, query in
+        let execution = try SessionSearchService.search(snapshot: snapshot, request: SessionSearchRequest(filters: filters)) { sessionIDs, query, scope in
             XCTAssertEqual(Set(sessionIDs), Set([matching.id, other.id]))
             XCTAssertEqual(query, "drag")
+            XCTAssertEqual(scope, .all)
             return [
                 TranscriptIndexSearchHit(
                     sessionRecordID: matching.id,
@@ -492,7 +515,39 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(execution.displayedSessions.map(\.sourceSessionId), ["matching"])
         XCTAssertEqual(execution.searchState.searchedSessionCount, 2)
         XCTAssertEqual(execution.searchState.totalMatchCount, 1)
-        XCTAssertEqual(execution.searchState.mergedResultsBySessionID[matching.id]?.snippets.count, 1)
+        XCTAssertEqual(execution.searchState.mergedResultsBySessionID[matching.id]?.transcriptSnippets.count, 1)
+    }
+
+    func testSessionSearchServiceSeparatesTranscriptAndPlanMatches() throws {
+        var filters = SessionFilterState()
+        filters.searchText = "drag"
+
+        let matching = makeRecord(sessionID: "matching", title: "Investigate drag", summary: nil)
+        let snapshot = SessionCatalogSnapshot(sessions: [matching], starredSessionIDs: [])
+
+        let execution = try SessionSearchService.search(snapshot: snapshot, request: SessionSearchRequest(filters: filters)) { sessionIDs, query, scope in
+            XCTAssertEqual(sessionIDs, [matching.id])
+            XCTAssertEqual(query, "drag")
+            XCTAssertEqual(scope, .all)
+            return [
+                TranscriptIndexSearchHit(
+                    sessionRecordID: matching.id,
+                    entryIndex: 0,
+                    text: "Find the terminal drag bug."
+                ),
+                TranscriptIndexSearchHit(
+                    sessionRecordID: matching.id,
+                    entryIndex: -1,
+                    text: "Plan the drag bug search flow."
+                )
+            ]
+        }
+
+        let match = execution.searchState.mergedResultsBySessionID[matching.id]
+        XCTAssertEqual(match?.transcriptMatchCount, 1)
+        XCTAssertEqual(match?.planMatchCount, 1)
+        XCTAssertEqual(match?.transcriptSnippets.count, 1)
+        XCTAssertEqual(match?.planSnippets.count, 1)
     }
 
     func testSessionSearchServiceSkipsTranscriptSearchForMetadataOnlyQueries() throws {
@@ -503,7 +558,7 @@ final class TranscriptParsingTests: XCTestCase {
         let other = makeRecord(sessionID: "other", title: "Different project", summary: nil).withProjectName("other-project")
         let snapshot = SessionCatalogSnapshot(sessions: [matching, other], starredSessionIDs: [])
 
-        let execution = try SessionSearchService.search(snapshot: snapshot, request: SessionSearchRequest(filters: filters)) { _, _ in
+        let execution = try SessionSearchService.search(snapshot: snapshot, request: SessionSearchRequest(filters: filters)) { _, _, _ in
             XCTFail("Metadata-only searches should not hit the transcript index.")
             return []
         }
@@ -533,6 +588,57 @@ final class TranscriptParsingTests: XCTestCase {
 
         XCTAssertEqual(entries.map(\.entryIndex), [0, 2])
         XCTAssertEqual(entries.map(\.text), ["Find the terminal drag bug.", "I’ll inspect the drag target next."])
+    }
+
+    func testSearchableEntriesIncludePlanChunksWithNegativeIndices() throws {
+        let transcriptURL = try temporaryFile(
+            named: "searchable-plan.jsonl",
+            contents: """
+            {"type":"user.message","data":{"content":"Find the terminal drag bug."},"id":"evt-1","timestamp":"2026-05-07T06:19:00.000Z"}
+            """
+        )
+        let planURL = try temporaryFile(
+            named: "plan.md",
+            contents: """
+            # Plan
+
+            Search service refactor for plan indexing.
+
+            Add scoped search and viewer wiring.
+            """
+        )
+
+        let record = makeRecord(
+            sessionID: "searchable-plan",
+            title: "Searchable plan",
+            summary: nil,
+            rawTranscriptPath: transcriptURL.path,
+            relatedPlanPath: planURL.path
+        )
+
+        let entries = try TranscriptPreviewExtractor.searchableEntries(for: record)
+
+        XCTAssertEqual(entries.first?.entryIndex, 0)
+        XCTAssertTrue(entries.dropFirst().allSatisfy { $0.entryIndex < 0 })
+        XCTAssertTrue(entries.contains(where: { $0.text.contains("Search service refactor") }))
+    }
+
+    func testPlanViewerSearchResultCountsMatches() {
+        let plan = PlanDocument(
+            sessionID: "plan-1",
+            sessionTitle: "Plan Search",
+            source: .copilotCLI,
+            rawPlanPath: "/tmp/plan.md",
+            text: """
+            Plan search should find the word search twice.
+            Search wiring is important.
+            """
+        )
+
+        let result = plan.viewerSearchResult(for: "search")
+
+        XCTAssertEqual(result.totalMatchCount, 3)
+        XCTAssertEqual(result.highlightQuery, "search")
     }
 
     func testSearchableTranscriptEntriesIgnoreToolResultContent() throws {
@@ -592,7 +698,8 @@ final class TranscriptParsingTests: XCTestCase {
         sessionID: String,
         title: String,
         summary: String?,
-        rawTranscriptPath: String = "/tmp/test.jsonl"
+        rawTranscriptPath: String = "/tmp/test.jsonl",
+        relatedPlanPath: String? = nil
     ) -> SessionRecord {
         SessionRecord(
             source: .copilotCLI,
@@ -609,7 +716,7 @@ final class TranscriptParsingTests: XCTestCase {
             firstAssistantPreview: "Response",
             rawTranscriptPath: rawTranscriptPath,
             rawMetadataPath: nil,
-            relatedPlanPath: nil,
+            relatedPlanPath: relatedPlanPath,
             fingerprint: "fingerprint-\(sessionID)",
             resumeKind: .copilotConnect,
             resumePayload: sessionID,

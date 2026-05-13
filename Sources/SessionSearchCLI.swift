@@ -67,7 +67,7 @@ public enum SessionSearchCLI {
         arguments: [String],
         snapshot: SessionCatalogSnapshot,
         referenceDate: Date = Date(),
-        transcriptSearcher: ([String], String) throws -> [TranscriptIndexSearchHit]
+        transcriptSearcher: ([String], String, TranscriptSearchScope) throws -> [TranscriptIndexSearchHit]
     ) -> SessionSearchCLIResult {
         do {
             let command = try parse(arguments: arguments)
@@ -102,7 +102,7 @@ public enum SessionSearchCLI {
         Examples:
           \(executableName) search --query 'project:newton2 transcript:"drag bug"' --newton-only --branch main
           \(executableName) --search 'title:"plan update"' --within 1w --limit 10
-          \(executableName) search --query 'source:cursor branch:main' --json
+          \(executableName) search --query 'source:cursor branch:main plan:"search service"' --json
         """
     }
 
@@ -278,9 +278,17 @@ public enum SessionSearchCLI {
                 lines.append("   plan: \(planPath)")
             }
             if let match = execution.searchState.mergedResultsBySessionID[session.id] {
-                lines.append("   transcript matches: \(match.matchCount)")
-                for snippet in match.snippets {
-                    lines.append("   snippet: \(snippet)")
+                if match.transcriptMatchCount > 0 {
+                    lines.append("   transcript matches: \(match.transcriptMatchCount)")
+                    for snippet in match.transcriptSnippets {
+                        lines.append("   transcript snippet: \(snippet)")
+                    }
+                }
+                if match.planMatchCount > 0 {
+                    lines.append("   plan matches: \(match.planMatchCount)")
+                    for snippet in match.planSnippets {
+                        lines.append("   plan snippet: \(snippet)")
+                    }
                 }
             }
         }
@@ -316,13 +324,15 @@ public enum SessionSearchCLI {
                     summary: session.summary,
                     transcriptPath: session.rawTranscriptPath,
                     metadataPath: session.rawMetadataPath,
-                    planPath: session.relatedPlanPath,
-                    starred: execution.snapshot.starredSessionIDs.contains(session.id),
-                    newtonProject: session.isNewtonProject,
-                    transcriptMatchCount: match?.matchCount,
-                    transcriptSnippets: match?.snippets ?? []
-                )
-            }
+                     planPath: session.relatedPlanPath,
+                     starred: execution.snapshot.starredSessionIDs.contains(session.id),
+                     newtonProject: session.isNewtonProject,
+                     transcriptMatchCount: match?.transcriptMatchCount,
+                     planMatchCount: match?.planMatchCount,
+                     transcriptSnippets: match?.transcriptSnippets ?? [],
+                     planSnippets: match?.planSnippets ?? []
+                 )
+             }
         )
 
         let encoder = JSONEncoder()
@@ -430,5 +440,7 @@ private struct SessionSearchCLIJSONSession: Encodable {
     let starred: Bool
     let newtonProject: Bool
     let transcriptMatchCount: Int?
+    let planMatchCount: Int?
     let transcriptSnippets: [String]
+    let planSnippets: [String]
 }

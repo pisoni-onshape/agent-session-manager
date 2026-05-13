@@ -56,8 +56,12 @@ public final class SessionCatalog {
         try store.setSessionStarred(isStarred, for: sessionID)
     }
 
-    public func searchTranscriptIndex(sessionIDs: [String], query: String) throws -> [TranscriptIndexSearchHit] {
-        try store.searchTranscriptEntries(sessionIDs: sessionIDs, query: query)
+    public func searchTranscriptIndex(
+        sessionIDs: [String],
+        query: String,
+        scope: TranscriptSearchScope = .all
+    ) throws -> [TranscriptIndexSearchHit] {
+        try store.searchTranscriptEntries(sessionIDs: sessionIDs, query: query, scope: scope)
     }
 
     public func reclassifySessions(_ records: [SessionRecord]) -> [SessionRecord] {

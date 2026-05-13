@@ -24,7 +24,7 @@ public actor TranscriptDocumentCache {
         return document
     }
 
-    public func search(records: [SessionRecord], query: String) throws -> [TranscriptSessionSearchMatch] {
+    public func search(records: [SessionRecord], query: String) throws -> [SessionSearchMatch] {
         try records.compactMap { record in
             try document(for: record).sessionSearchMatch(for: query)
         }

@@ -63,6 +63,22 @@ struct AgentSessionManagerApp: App {
             }
         }
         .defaultSize(width: 920, height: 720)
+        WindowGroup("Plan", for: PresentedPlan.self) { presentedPlan in
+            if let presentedPlan = presentedPlan.wrappedValue {
+                PlanViewerView(
+                    plan: presentedPlan.plan,
+                    initialSearchText: presentedPlan.initialSearchText
+                )
+            } else {
+                ContentUnavailableView(
+                    "No Plan Selected",
+                    systemImage: "doc.text",
+                    description: Text("Open a plan from the main window to inspect it here.")
+                )
+                .frame(minWidth: 920, minHeight: 720)
+            }
+        }
+        .defaultSize(width: 920, height: 720)
         Settings {
             SettingsView(settings: settings)
         }

@@ -56,8 +56,8 @@ private final class SessionCatalogController: @unchecked Sendable {
 
     func search(snapshot: SessionCatalogSnapshot, request: SessionSearchRequest) async throws -> SessionSearchExecution {
         try await run { catalog in
-            try SessionSearchService.search(snapshot: snapshot, request: request) { sessionIDs, query in
-                try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query)
+            try SessionSearchService.search(snapshot: snapshot, request: request) { sessionIDs, query, scope in
+                try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query, scope: scope)
             }
         }
     }
@@ -286,13 +286,21 @@ final class SessionBrowserViewModel: ObservableObject {
 
     var transcriptViewerSearchText: String {
         let parsedQuery = parsedSearchQuery
-        if let firstTranscriptQuery = parsedQuery.transcriptQueries.first {
+        if let firstTranscriptQuery = parsedQuery.firstSearchQuery(includedScopes: [.all, .transcript]) {
             return firstTranscriptQuery
         }
         return filters.searchText
     }
 
-    func searchMatch(for record: SessionRecord) -> TranscriptSessionSearchMatch? {
+    var planViewerSearchText: String {
+        let parsedQuery = parsedSearchQuery
+        if let firstPlanQuery = parsedQuery.firstSearchQuery(includedScopes: [.all, .plan]) {
+            return firstPlanQuery
+        }
+        return filters.searchText
+    }
+
+    func searchMatch(for record: SessionRecord) -> SessionSearchMatch? {
         searchState.mergedResultsBySessionID[record.id]
     }
 
@@ -357,6 +365,20 @@ final class SessionBrowserViewModel: ObservableObject {
             )
             errorMessage = nil
             return presentedTranscript
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func loadPresentedPlan(for record: SessionRecord, initialSearchText: String = "") async -> PresentedPlan? {
+        do {
+            let presentedPlan = PresentedPlan(
+                plan: try TranscriptPreviewExtractor.loadPlan(for: record),
+                initialSearchText: initialSearchText
+            )
+            errorMessage = nil
+            return presentedPlan
         } catch {
             errorMessage = error.localizedDescription
             return nil

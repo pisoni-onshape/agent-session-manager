@@ -208,6 +208,27 @@ public enum SessionSearchField: String, CaseIterable, Sendable {
     case model
     case id
     case transcript
+    case plan
+}
+
+public enum TranscriptSearchScope: String, CaseIterable, Codable, Sendable {
+    case all
+    case transcript
+    case plan
+}
+
+public struct ScopedTranscriptSearchQuery: Equatable, Sendable {
+    public let query: String
+    public let scope: TranscriptSearchScope
+
+    public init(query: String, scope: TranscriptSearchScope) {
+        self.query = query
+        self.scope = scope
+    }
+
+    public var resultKey: String {
+        "\(scope.rawValue)::\(query)"
+    }
 }
 
 public struct SessionSearchFieldClause: Equatable, Sendable {
@@ -239,7 +260,7 @@ public struct ParsedSessionSearchQuery: Equatable, Sendable {
     }
 
     public var metadataFieldClauses: [SessionSearchFieldClause] {
-        fieldClauses.filter { $0.field != .transcript }
+        fieldClauses.filter { $0.field != .transcript && $0.field != .plan }
     }
 
     public var transcriptFieldValues: [String] {
@@ -248,14 +269,39 @@ public struct ParsedSessionSearchQuery: Equatable, Sendable {
             .map(\.value)
     }
 
-    public var transcriptQueries: [String] {
+    public var planFieldValues: [String] {
+        fieldClauses
+            .filter { $0.field == .plan }
+            .map(\.value)
+    }
+
+    public var scopedSearchQueries: [ScopedTranscriptSearchQuery] {
         if isEmpty {
             return []
         }
         if !usesStructuredSyntax {
-            return [normalizedWholeText]
+            return [ScopedTranscriptSearchQuery(query: normalizedWholeText, scope: .all)]
         }
-        return orderedUnique(transcriptFieldValues + freeTextTerms)
+        return orderedUniqueScoped(
+            transcriptFieldValues.map { ScopedTranscriptSearchQuery(query: $0, scope: .transcript) }
+                + planFieldValues.map { ScopedTranscriptSearchQuery(query: $0, scope: .plan) }
+                + freeTextTerms.map { ScopedTranscriptSearchQuery(query: $0, scope: .all) }
+        )
+    }
+
+    public func firstSearchQuery(includedScopes: Set<TranscriptSearchScope>) -> String? {
+        scopedSearchQueries.first { includedScopes.contains($0.scope) }?.query
+    }
+
+    private func orderedUniqueScoped(_ values: [ScopedTranscriptSearchQuery]) -> [ScopedTranscriptSearchQuery] {
+        var seen: Set<String> = []
+        var ordered: [ScopedTranscriptSearchQuery] = []
+        for value in values where !value.query.isEmpty {
+            if seen.insert(value.resultKey).inserted {
+                ordered.append(value)
+            }
+        }
+        return ordered
     }
 
     private func orderedUnique(_ values: [String]) -> [String] {
@@ -424,7 +470,7 @@ extension SessionRecord {
             return [conversationModel?.lowercased()].compactMap { $0 }
         case .id:
             return [sourceSessionId.lowercased(), id.lowercased()]
-        case .transcript:
+        case .transcript, .plan:
             return []
         }
     }
@@ -507,6 +553,15 @@ public struct TranscriptViewerSearchResult: Equatable, Sendable {
     }
 }
 
+public struct PlanViewerSearchResult: Equatable, Sendable {
+    public let totalMatchCount: Int
+    public let highlightQuery: String?
+
+    public var isActive: Bool {
+        highlightQuery != nil
+    }
+}
+
 public struct PresentedTranscript: Codable, Hashable, Identifiable, Sendable {
     public let transcript: TranscriptDocument
     public let initialSearchText: String
@@ -521,13 +576,59 @@ public struct PresentedTranscript: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-public struct TranscriptSessionSearchMatch: Identifiable, Equatable, Sendable {
+public struct PresentedPlan: Codable, Hashable, Identifiable, Sendable {
+    public let plan: PlanDocument
+    public let initialSearchText: String
+
+    public init(plan: PlanDocument, initialSearchText: String) {
+        self.plan = plan
+        self.initialSearchText = initialSearchText
+    }
+
+    public var id: String {
+        plan.id
+    }
+}
+
+public struct SessionSearchMatch: Identifiable, Equatable, Sendable {
     public let sessionRecordID: String
-    public let matchCount: Int
-    public let snippets: [String]
+    public let transcriptMatchCount: Int
+    public let planMatchCount: Int
+    public let transcriptSnippets: [String]
+    public let planSnippets: [String]
+
+    public init(
+        sessionRecordID: String,
+        transcriptMatchCount: Int,
+        planMatchCount: Int,
+        transcriptSnippets: [String],
+        planSnippets: [String]
+    ) {
+        self.sessionRecordID = sessionRecordID
+        self.transcriptMatchCount = transcriptMatchCount
+        self.planMatchCount = planMatchCount
+        self.transcriptSnippets = transcriptSnippets
+        self.planSnippets = planSnippets
+    }
 
     public var id: String {
         sessionRecordID
+    }
+
+    public var totalMatchCount: Int {
+        transcriptMatchCount + planMatchCount
+    }
+
+    public var hasTranscriptMatches: Bool {
+        transcriptMatchCount > 0
+    }
+
+    public var hasPlanMatches: Bool {
+        planMatchCount > 0
+    }
+
+    public var primarySnippet: String? {
+        transcriptSnippets.first ?? planSnippets.first
     }
 }
 
@@ -560,7 +661,7 @@ public struct SessionSearchState: Equatable, Sendable {
     public var searchedScopeSignature = ""
     public var searchedSessionCount = 0
     public var resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:]
-    public var mergedResultsBySessionID: [String: TranscriptSessionSearchMatch] = [:]
+    public var mergedResultsBySessionID: [String: SessionSearchMatch] = [:]
     public var isSearching = false
     public var lastError: String?
 
@@ -569,7 +670,7 @@ public struct SessionSearchState: Equatable, Sendable {
         searchedScopeSignature: String = "",
         searchedSessionCount: Int = 0,
         resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:],
-        mergedResultsBySessionID: [String: TranscriptSessionSearchMatch] = [:],
+        mergedResultsBySessionID: [String: SessionSearchMatch] = [:],
         isSearching: Bool = false,
         lastError: String? = nil
     ) {
@@ -591,7 +692,7 @@ public struct SessionSearchState: Equatable, Sendable {
     }
 
     public var totalMatchCount: Int {
-        mergedResultsBySessionID.values.reduce(0) { $0 + $1.matchCount }
+        mergedResultsBySessionID.values.reduce(0) { $0 + $1.totalMatchCount }
     }
 
     public var hasRequestedQuery: Bool {
@@ -619,7 +720,9 @@ public enum SessionSearchEvaluator {
 
         if !parsedQuery.usesStructuredSyntax {
             return record.matchesBroadSearch(parsedQuery.normalizedWholeText)
-                || transcriptSessionIDsByQuery[parsedQuery.normalizedWholeText]?.contains(record.id) == true
+                || transcriptSessionIDsByQuery[
+                    ScopedTranscriptSearchQuery(query: parsedQuery.normalizedWholeText, scope: .all).resultKey
+                ]?.contains(record.id) == true
         }
 
         guard parsedQuery.metadataFieldClauses.allSatisfy(record.matchesFieldClause) else {
@@ -627,7 +730,17 @@ public enum SessionSearchEvaluator {
         }
 
         for transcriptQuery in parsedQuery.transcriptFieldValues {
-            guard transcriptSessionIDsByQuery[transcriptQuery]?.contains(record.id) == true else {
+            guard transcriptSessionIDsByQuery[
+                ScopedTranscriptSearchQuery(query: transcriptQuery, scope: .transcript).resultKey
+            ]?.contains(record.id) == true else {
+                return false
+            }
+        }
+
+        for planQuery in parsedQuery.planFieldValues {
+            guard transcriptSessionIDsByQuery[
+                ScopedTranscriptSearchQuery(query: planQuery, scope: .plan).resultKey
+            ]?.contains(record.id) == true else {
                 return false
             }
         }
@@ -636,7 +749,9 @@ public enum SessionSearchEvaluator {
             if record.matchesBroadSearch(freeTextTerm) {
                 continue
             }
-            guard transcriptSessionIDsByQuery[freeTextTerm]?.contains(record.id) == true else {
+            guard transcriptSessionIDsByQuery[
+                ScopedTranscriptSearchQuery(query: freeTextTerm, scope: .all).resultKey
+            ]?.contains(record.id) == true else {
                 return false
             }
         }
@@ -701,6 +816,32 @@ public struct TranscriptDocument: Codable, Hashable, Identifiable, Sendable {
 
     public var id: String {
         "\(source.rawValue)::\(sessionID)"
+    }
+}
+
+public struct PlanDocument: Codable, Hashable, Identifiable, Sendable {
+    public let sessionID: String
+    public let sessionTitle: String
+    public let source: SessionSource
+    public let rawPlanPath: String
+    public let text: String
+
+    public init(
+        sessionID: String,
+        sessionTitle: String,
+        source: SessionSource,
+        rawPlanPath: String,
+        text: String
+    ) {
+        self.sessionID = sessionID
+        self.sessionTitle = sessionTitle
+        self.source = source
+        self.rawPlanPath = rawPlanPath
+        self.text = text
+    }
+
+    public var id: String {
+        "\(source.rawValue)::\(sessionID)::plan"
     }
 }
 
@@ -783,7 +924,7 @@ public extension TranscriptDocument {
         )
     }
 
-    func sessionSearchMatch(for rawQuery: String) -> TranscriptSessionSearchMatch? {
+    func sessionSearchMatch(for rawQuery: String) -> SessionSearchMatch? {
         guard let query = SearchTextMatcher.normalizedQuery(rawQuery) else { return nil }
 
         var totalMatchCount = 0
@@ -811,10 +952,25 @@ public extension TranscriptDocument {
         }
 
         guard totalMatchCount > 0 else { return nil }
-        return TranscriptSessionSearchMatch(
+        return SessionSearchMatch(
             sessionRecordID: id,
-            matchCount: totalMatchCount,
-            snippets: Array(snippets.prefix(2))
+            transcriptMatchCount: totalMatchCount,
+            planMatchCount: 0,
+            transcriptSnippets: Array(snippets.prefix(2)),
+            planSnippets: []
+        )
+    }
+}
+
+public extension PlanDocument {
+    func viewerSearchResult(for rawQuery: String) -> PlanViewerSearchResult {
+        guard let query = SearchTextMatcher.normalizedQuery(rawQuery) else {
+            return PlanViewerSearchResult(totalMatchCount: 0, highlightQuery: nil)
+        }
+
+        return PlanViewerSearchResult(
+            totalMatchCount: SearchTextMatcher.matchCount(in: text, query: query),
+            highlightQuery: query
         )
     }
 }

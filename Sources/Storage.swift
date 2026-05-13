@@ -209,7 +209,11 @@ final class SQLiteSessionStore {
         }
     }
 
-    func searchTranscriptEntries(sessionIDs: [String], query: String) throws -> [TranscriptIndexSearchHit] {
+    func searchTranscriptEntries(
+        sessionIDs: [String],
+        query: String,
+        scope: TranscriptSearchScope = .all
+    ) throws -> [TranscriptIndexSearchHit] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty, !sessionIDs.isEmpty else {
             return []
@@ -218,6 +222,15 @@ final class SQLiteSessionStore {
         let placeholders = Array(repeating: "?", count: sessionIDs.count).joined(separator: ", ")
         let predicate: String?
         let sql: String
+        let scopeFilter: String
+        switch scope {
+        case .all:
+            scopeFilter = ""
+        case .transcript:
+            scopeFilter = "\n  AND entry_index >= 0"
+        case .plan:
+            scopeFilter = "\n  AND entry_index < 0"
+        }
         switch transcriptIndexMode {
         case .trigram:
             predicate = escapeLikePattern(normalizedQuery)
@@ -226,6 +239,7 @@ final class SQLiteSessionStore {
             FROM transcript_entries
             WHERE session_id IN (\(placeholders))
               AND entry_text LIKE '%' || ? || '%' ESCAPE '\\'
+            \(scopeFilter)
             ORDER BY session_id ASC, entry_index ASC;
             """
         case .tokenPrefix:
@@ -238,6 +252,7 @@ final class SQLiteSessionStore {
             FROM transcript_entries
             WHERE session_id IN (\(placeholders))
               AND transcript_entries MATCH ?
+            \(scopeFilter)
             ORDER BY session_id ASC, entry_index ASC;
             """
         }

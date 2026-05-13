@@ -97,7 +97,7 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     ToolbarSearchField(
                         text: $viewModel.filters.searchText,
-                        placeholder: "Search sessions and transcripts (Cmd-K)",
+                        placeholder: "Search sessions, transcripts, and plans (Cmd-K)",
                         controller: searchFieldController
                     )
                     .frame(width: 390)
@@ -199,12 +199,15 @@ struct ContentView: View {
             session: session,
             isSelected: viewModel.selectedSessionID == session.id,
             isStarred: viewModel.isStarred(session),
-            transcriptMatch: viewModel.searchMatch(for: session),
+            searchMatch: viewModel.searchMatch(for: session),
             onToggleStar: {
                 viewModel.toggleStar(for: session)
             },
             onOpenTranscriptMatch: {
                 openTranscript(for: session, initialSearchText: viewModel.transcriptViewerSearchText)
+            },
+            onOpenPlanMatch: {
+                openPlanViewer(for: session, initialSearchText: viewModel.planViewerSearchText)
             }
         )
         .tag(session.id)
@@ -223,6 +226,19 @@ struct ContentView: View {
             }
 
             openWindow(value: presentedTranscript)
+        }
+    }
+
+    private func openPlanViewer(for record: SessionRecord, initialSearchText: String = "") {
+        Task {
+            guard let presentedPlan = await viewModel.loadPresentedPlan(
+                for: record,
+                initialSearchText: initialSearchText
+            ) else {
+                return
+            }
+
+            openWindow(value: presentedPlan)
         }
     }
 
@@ -487,7 +503,8 @@ private struct SearchLabelHintMenu: View {
             ("source:", "source:", "Match Copilot CLI, Cursor, or VS Code"),
             ("model:", "model:", "Match conversation models"),
             ("id:", "id:", "Match source session IDs"),
-            ("transcript:", "transcript:", "Search transcript text only")
+            ("transcript:", "transcript:", "Search transcript text only"),
+            ("plan:", "plan:", "Search plan text only")
         ]
     }
 
@@ -496,7 +513,8 @@ private struct SearchLabelHintMenu: View {
             #"project:"agent session manager" branch:main"#,
             #"title:"session index" source:copilot"#,
             #"model:gpt-5.4 id:abc-123"#,
-            #"transcript:"drag bug" project:newton"#
+            #"transcript:"drag bug" project:newton"#,
+            #"plan:"search service" source:copilot"#
         ]
     }
 }
@@ -552,9 +570,10 @@ private struct SessionRowView: View {
     let session: SessionRecord
     let isSelected: Bool
     let isStarred: Bool
-    let transcriptMatch: TranscriptSessionSearchMatch?
+    let searchMatch: SessionSearchMatch?
     let onToggleStar: () -> Void
     let onOpenTranscriptMatch: () -> Void
+    let onOpenPlanMatch: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -597,17 +616,36 @@ private struct SessionRowView: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(3)
 
-            if let transcriptMatch {
-                Button(action: onOpenTranscriptMatch) {
-                    Label(transcriptMatchLabel(transcriptMatch.matchCount), systemImage: "text.magnifyingglass")
-                        .font(.caption)
-                        .foregroundStyle(Color.accentColor)
+            if let searchMatch {
+                HStack(spacing: 8) {
+                    if searchMatch.hasTranscriptMatches {
+                        SearchMatchPillButton(
+                            label: transcriptMatchLabel(searchMatch.transcriptMatchCount),
+                            systemImage: "text.bubble",
+                            tint: .blue,
+                            action: onOpenTranscriptMatch
+                        )
+                    }
+                    if searchMatch.hasPlanMatches {
+                        SearchMatchPillButton(
+                            label: planMatchLabel(searchMatch.planMatchCount),
+                            systemImage: "doc.text",
+                            tint: .indigo,
+                            action: onOpenPlanMatch
+                        )
+                    }
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .pointingHandCursor()
 
-                if let snippet = transcriptMatch.snippets.first {
-                    Text(snippet)
+                if let transcriptSnippet = searchMatch.transcriptSnippets.first {
+                    Text(transcriptSnippet)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                if let planSnippet = searchMatch.planSnippets.first {
+                    Text(planSnippet)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -644,6 +682,31 @@ private struct SessionRowView: View {
 
     private func transcriptMatchLabel(_ count: Int) -> String {
         count == 1 ? "1 transcript match" : "\(count) transcript matches"
+    }
+
+    private func planMatchLabel(_ count: Int) -> String {
+        count == 1 ? "1 plan match" : "\(count) plan matches"
+    }
+}
+
+private struct SearchMatchPillButton: View {
+    let label: String
+    let systemImage: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(label, systemImage: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(tint, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityLabel(label)
     }
 }
 
@@ -1348,6 +1411,122 @@ struct TranscriptViewerView: View {
         let chatCount = transcript.chatDisplayItems.count
         let noun = chatCount == 1 ? "chat message" : "chat messages"
         return "\(chatCount) \(noun)"
+    }
+}
+
+struct PlanViewerView: View {
+    let plan: PlanDocument
+    let initialSearchText: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText: String
+
+    init(plan: PlanDocument, initialSearchText: String = "") {
+        self.plan = plan
+        self.initialSearchText = initialSearchText
+        _searchText = State(initialValue: initialSearchText)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if plan.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        ContentUnavailableView(
+                            "Plan Unavailable",
+                            systemImage: "doc.text",
+                            description: Text("No readable plan text was found in this file.")
+                        )
+                    } else if searchResult.isActive, searchResult.totalMatchCount == 0 {
+                        ContentUnavailableView(
+                            "No Matching Plan Text",
+                            systemImage: "magnifyingglass",
+                            description: Text("Try a different search term.")
+                        )
+                    } else {
+                        MarkdownTextBlock(text: plan.text, highlightQuery: searchResult.highlightQuery)
+                            .padding(20)
+                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                }
+                .padding(24)
+            }
+        }
+        .frame(minWidth: 920, minHeight: 720)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Plan")
+                    .font(.title2.weight(.semibold))
+                SelectableTextLabel(
+                    text: plan.sessionTitle,
+                    font: .preferredFont(forTextStyle: .title3),
+                    textColor: .labelColor
+                )
+                SourceBadge(source: plan.source)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                SelectableTextLabel(
+                    text: plan.rawPlanPath,
+                    font: .preferredFont(forTextStyle: .caption1),
+                    textColor: .secondaryLabelColor
+                )
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 10) {
+                Text(itemSummary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    TextField("Search plan text", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 280)
+
+                    if !searchText.isEmpty {
+                        Button("Clear") {
+                            searchText = ""
+                        }
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button("Reveal Raw File") {
+                        WorkspaceLauncher.reveal(path: plan.rawPlanPath)
+                    }
+
+                    Button("Open in Default App") {
+                        WorkspaceLauncher.openDocument(path: plan.rawPlanPath)
+                    }
+
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+            }
+        }
+        .padding(20)
+    }
+
+    private var searchResult: PlanViewerSearchResult {
+        plan.viewerSearchResult(for: searchText)
+    }
+
+    private var itemSummary: String {
+        if searchResult.isActive {
+            let matchNoun = searchResult.totalMatchCount == 1 ? "match" : "matches"
+            return "\(searchResult.totalMatchCount) \(matchNoun)"
+        }
+
+        let lineCount = plan.text.split(separator: "\n", omittingEmptySubsequences: false).count
+        let noun = lineCount == 1 ? "line" : "lines"
+        return "\(lineCount) \(noun)"
     }
 }
 

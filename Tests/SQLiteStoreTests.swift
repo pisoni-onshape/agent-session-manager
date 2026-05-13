@@ -95,6 +95,33 @@ final class SQLiteStoreTests: XCTestCase {
         XCTAssertEqual(hits.map(\.entryIndex), [0, 1])
     }
 
+    func testTranscriptIndexQueriesRespectSearchScope() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        let record = makeRecord(sessionID: "session-1", title: "Scoped", fingerprint: "v1")
+
+        try store.replaceAll(
+            records: [record],
+            transcriptEntriesBySessionID: [
+                record.id: [
+                    TranscriptIndexEntry(sessionRecordID: record.id, entryIndex: 0, text: "Find the terminal drag bug."),
+                    TranscriptIndexEntry(sessionRecordID: record.id, entryIndex: -1, text: "Plan the drag bug search flow.")
+                ]
+            ]
+        )
+
+        let allHits = try store.searchTranscriptEntries(sessionIDs: [record.id], query: "drag", scope: .all)
+        let transcriptHits = try store.searchTranscriptEntries(sessionIDs: [record.id], query: "drag", scope: .transcript)
+        let planHits = try store.searchTranscriptEntries(sessionIDs: [record.id], query: "drag", scope: .plan)
+
+        XCTAssertEqual(allHits.map(\.entryIndex), [-1, 0])
+        XCTAssertEqual(transcriptHits.map(\.entryIndex), [0])
+        XCTAssertEqual(planHits.map(\.entryIndex), [-1])
+    }
+
     func testStarredSessionPreferencesPersistAcrossStoreReloads() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -50,7 +50,7 @@ public enum SessionSearchService {
     ) -> SessionSearchState {
         let requestedQuery = request.filters.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedQuery = SessionSearchQueryParser.parse(requestedQuery)
-        guard !requestedQuery.isEmpty, !parsedQuery.transcriptQueries.isEmpty else {
+        guard !requestedQuery.isEmpty, !parsedQuery.scopedSearchQueries.isEmpty else {
             return SessionSearchState()
         }
 
@@ -73,8 +73,8 @@ public enum SessionSearchService {
         referenceDate: Date = Date()
     ) throws -> SessionSearchExecution {
         let snapshot = try loadSnapshot(from: catalog, refresh: refresh)
-        return try search(snapshot: snapshot, request: request, referenceDate: referenceDate) { sessionIDs, query in
-            try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query)
+        return try search(snapshot: snapshot, request: request, referenceDate: referenceDate) { sessionIDs, query, scope in
+            try catalog.searchTranscriptIndex(sessionIDs: sessionIDs, query: query, scope: scope)
         }
     }
 
@@ -82,7 +82,7 @@ public enum SessionSearchService {
         snapshot: SessionCatalogSnapshot,
         request: SessionSearchRequest,
         referenceDate: Date = Date(),
-        transcriptSearcher: ([String], String) throws -> [TranscriptIndexSearchHit]
+        transcriptSearcher: ([String], String, TranscriptSearchScope) throws -> [TranscriptIndexSearchHit]
     ) throws -> SessionSearchExecution {
         let scope = scopeSessions(in: snapshot, request: request, referenceDate: referenceDate)
         let parsedQuery = SessionSearchQueryParser.parse(request.filters.searchText)
@@ -91,8 +91,12 @@ public enum SessionSearchService {
         if searchState.hasRequestedQuery, searchState.searchedSessionCount > 0 {
             let sessionIDs = scope.map(\.id)
             var resultsByQuery: [String: [TranscriptIndexSearchHit]] = [:]
-            for query in parsedQuery.transcriptQueries {
-                resultsByQuery[query] = try transcriptSearcher(sessionIDs, query)
+            for scopedQuery in parsedQuery.scopedSearchQueries {
+                resultsByQuery[scopedQuery.resultKey] = try transcriptSearcher(
+                    sessionIDs,
+                    scopedQuery.query,
+                    scopedQuery.scope
+                )
             }
 
             searchState = SessionSearchState(
@@ -102,7 +106,7 @@ public enum SessionSearchService {
                 resultsByQuery: resultsByQuery,
                 mergedResultsBySessionID: makeMergedSearchMatches(
                     from: resultsByQuery,
-                    queries: parsedQuery.transcriptQueries
+                    queries: parsedQuery.scopedSearchQueries
                 ),
                 isSearching: false,
                 lastError: nil
@@ -169,36 +173,75 @@ public enum SessionSearchService {
 
     private static func makeMergedSearchMatches(
         from resultsByQuery: [String: [TranscriptIndexSearchHit]],
-        queries: [String]
-    ) -> [String: TranscriptSessionSearchMatch] {
-        let orderedHits = queries.flatMap { resultsByQuery[$0] ?? [] }
-        var groupedBySession: [String: [Int: TranscriptIndexSearchHit]] = [:]
+        queries: [ScopedTranscriptSearchQuery]
+    ) -> [String: SessionSearchMatch] {
+        let transcriptQueries = queries
+            .filter { $0.scope == .all || $0.scope == .transcript }
+            .map(\.query)
+        let planQueries = queries
+            .filter { $0.scope == .all || $0.scope == .plan }
+            .map(\.query)
 
-        for hit in orderedHits {
-            groupedBySession[hit.sessionRecordID, default: [:]][hit.entryIndex] = hit
+        var groupedBySession: [String: [TranscriptSearchScope: [Int: TranscriptIndexSearchHit]]] = [:]
+        for scopedQuery in queries {
+            for hit in resultsByQuery[scopedQuery.resultKey] ?? [] {
+                let resultScope: TranscriptSearchScope = hit.entryIndex < 0 ? .plan : .transcript
+                groupedBySession[hit.sessionRecordID, default: [:]][resultScope, default: [:]][hit.entryIndex] = hit
+            }
         }
 
         return Dictionary(
-            uniqueKeysWithValues: groupedBySession.map { sessionID, hitsByIndex in
-                let orderedEntries = hitsByIndex.values.sorted { $0.entryIndex < $1.entryIndex }
-                let snippets = orderedEntries.compactMap { hit in
-                    SearchTextMatcher.snippet(in: hit.text, queries: queries) ?? TextSanitizer.summarize(hit.text, limit: 120)
-                }
-                let uniqueSnippets = snippets.reduce(into: [String]()) { partialResult, snippet in
-                    if !partialResult.contains(snippet) {
-                        partialResult.append(snippet)
-                    }
-                }
+            uniqueKeysWithValues: groupedBySession.map { sessionID, hitsByScope in
+                let transcriptEntries = orderedHits(
+                    Array(hitsByScope[.transcript, default: [:]].values),
+                    scope: .transcript
+                )
+                let planEntries = orderedHits(
+                    Array(hitsByScope[.plan, default: [:]].values),
+                    scope: .plan
+                )
+                let transcriptSnippets = uniqueSnippets(for: transcriptEntries, queries: transcriptQueries)
+                let planSnippets = uniqueSnippets(for: planEntries, queries: planQueries)
 
                 return (
                     sessionID,
-                    TranscriptSessionSearchMatch(
+                    SessionSearchMatch(
                         sessionRecordID: sessionID,
-                        matchCount: orderedEntries.count,
-                        snippets: Array(uniqueSnippets.prefix(2))
+                        transcriptMatchCount: transcriptEntries.count,
+                        planMatchCount: planEntries.count,
+                        transcriptSnippets: Array(transcriptSnippets.prefix(2)),
+                        planSnippets: Array(planSnippets.prefix(2))
                     )
                 )
             }
         )
+    }
+
+    private static func orderedHits<S: Sequence>(
+        _ hits: S,
+        scope: TranscriptSearchScope
+    ) -> [TranscriptIndexSearchHit] where S.Element == TranscriptIndexSearchHit {
+        hits.sorted {
+            switch scope {
+            case .plan:
+                return $0.entryIndex > $1.entryIndex
+            case .all, .transcript:
+                return $0.entryIndex < $1.entryIndex
+            }
+        }
+    }
+
+    private static func uniqueSnippets(
+        for hits: [TranscriptIndexSearchHit],
+        queries: [String]
+    ) -> [String] {
+        hits.compactMap { hit in
+            SearchTextMatcher.snippet(in: hit.text, queries: queries) ?? TextSanitizer.summarize(hit.text, limit: 120)
+        }
+        .reduce(into: [String]()) { partialResult, snippet in
+            if !partialResult.contains(snippet) {
+                partialResult.append(snippet)
+            }
+        }
     }
 }

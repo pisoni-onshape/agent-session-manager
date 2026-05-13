@@ -551,6 +551,20 @@ public enum TranscriptLoadingError: LocalizedError {
     }
 }
 
+public enum PlanLoadingError: LocalizedError {
+    case planUnavailable
+    case planUnreadable(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .planUnavailable:
+            return "This session does not have a readable plan file."
+        case let .planUnreadable(path):
+            return "The plan at \(path) could not be read."
+        }
+    }
+}
+
 struct VSCodeSessionMetadata {
     let sessionId: String?
     let title: String?
@@ -614,9 +628,30 @@ public enum TranscriptPreviewExtractor {
         }
     }
 
+    public static func loadPlan(for record: SessionRecord) throws -> PlanDocument {
+        guard let planPath = record.relatedPlanPath else {
+            throw PlanLoadingError.planUnavailable
+        }
+
+        let url = URL(fileURLWithPath: planPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw PlanLoadingError.planUnreadable(url.path)
+        }
+
+        let text = try String(contentsOf: url, encoding: .utf8)
+        return PlanDocument(
+            sessionID: record.sourceSessionId,
+            sessionTitle: record.title,
+            source: record.source,
+            rawPlanPath: url.path,
+            text: text
+        )
+    }
+
     public static func searchableEntries(for record: SessionRecord) throws -> [TranscriptIndexEntry] {
         let transcript = try loadTranscript(for: record)
-        return transcript.entries.enumerated().compactMap { index, entry in
+        var entries: [TranscriptIndexEntry] = transcript.entries.enumerated().compactMap { element in
+            let (index, entry) = element
             guard entry.isChatMessage,
                   let body = TextSanitizer.compact(entry.body) else {
                 return nil
@@ -628,6 +663,71 @@ public enum TranscriptPreviewExtractor {
                 text: body
             )
         }
+
+        if let plan = try? loadPlan(for: record) {
+            entries.append(contentsOf: searchablePlanEntries(for: record, plan: plan))
+        }
+
+        return entries
+    }
+
+    private static func searchablePlanEntries(for record: SessionRecord, plan: PlanDocument) -> [TranscriptIndexEntry] {
+        chunkedPlanText(plan.text).enumerated().map { element in
+            let (index, chunk) = element
+            return TranscriptIndexEntry(
+                sessionRecordID: record.id,
+                entryIndex: -(index + 1),
+                text: chunk
+            )
+        }
+    }
+
+    private static func chunkedPlanText(_ rawText: String, chunkLimit: Int = 800) -> [String] {
+        let visibleText = SearchTextMatcher.visibleText(from: rawText)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+
+        let paragraphs = visibleText
+            .components(separatedBy: "\n\n")
+            .compactMap { TextSanitizer.compact($0) }
+
+        var chunks: [String] = []
+        for paragraph in paragraphs {
+            if paragraph.count <= chunkLimit {
+                chunks.append(paragraph)
+                continue
+            }
+
+            var current = ""
+            for word in paragraph.split(separator: " ", omittingEmptySubsequences: true) {
+                let candidate = current.isEmpty ? String(word) : "\(current) \(word)"
+                if candidate.count <= chunkLimit {
+                    current = candidate
+                    continue
+                }
+
+                if !current.isEmpty {
+                    chunks.append(current)
+                    current = String(word)
+                    continue
+                }
+
+                var remaining = String(word)
+                while remaining.count > chunkLimit {
+                    let splitIndex = remaining.index(remaining.startIndex, offsetBy: chunkLimit)
+                    chunks.append(String(remaining[..<splitIndex]))
+                    remaining = String(remaining[splitIndex...])
+                }
+                current = remaining
+            }
+
+            if !current.isEmpty {
+                chunks.append(current)
+            }
+        }
+
+        return chunks
     }
 
     static func extractEventTranscript(from url: URL) throws -> TranscriptPreview {
