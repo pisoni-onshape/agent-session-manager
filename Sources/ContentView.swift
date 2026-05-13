@@ -630,7 +630,8 @@ private struct SessionRowView: View {
                         SearchMatchPillButton(
                             label: planMatchLabel(searchMatch.planMatchCount),
                             systemImage: "doc.text",
-                            tint: .indigo,
+                            tint: Color(red: 0.76, green: 0.91, blue: 0.78),
+                            foreground: Color(red: 0.12, green: 0.36, blue: 0.18),
                             action: onOpenPlanMatch
                         )
                     }
@@ -693,13 +694,28 @@ private struct SearchMatchPillButton: View {
     let label: String
     let systemImage: String
     let tint: Color
+    let foreground: Color
     let action: () -> Void
+
+    init(
+        label: String,
+        systemImage: String,
+        tint: Color,
+        foreground: Color = .white,
+        action: @escaping () -> Void
+    ) {
+        self.label = label
+        self.systemImage = systemImage
+        self.tint = tint
+        self.foreground = foreground
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
             Label(label, systemImage: systemImage)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(foreground)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(tint, in: Capsule())
