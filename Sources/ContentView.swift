@@ -759,6 +759,7 @@ private struct SessionDetailView: View {
 
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
+    @State private var showInProgressResumeWarning = false
     @FocusState private var titleFieldFocused: Bool
 
     var body: some View {
@@ -885,12 +886,25 @@ private struct SessionDetailView: View {
     private var primaryActionButtons: some View {
         HStack(spacing: 10) {
             Button {
-                viewModel.performPrimaryAction(for: session)
+                if session.isInProgress && session.resumeKind == .copilotConnect {
+                    showInProgressResumeWarning = true
+                } else {
+                    viewModel.performPrimaryAction(for: session)
+                }
             } label: {
                 primaryActionLabel
             }
             .buttonStyle(.borderedProminent)
+            .tint(session.isInProgress && session.resumeKind == .copilotConnect ? .orange : nil)
             .help(primaryActionHelpText)
+            .alert("Session Currently Active", isPresented: $showInProgressResumeWarning) {
+                Button("Resume Anyway", role: .destructive) {
+                    viewModel.performPrimaryAction(for: session)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This session is currently in use in another terminal. Resuming it here may cause conflicts with the existing session.")
+            }
 
             if viewModel.canStartNewConversation(for: session) {
                 Button {
