@@ -787,9 +787,16 @@ private struct SessionDetailView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         if isEditingTitle {
                             TextField("Session title", text: $editedTitle, onCommit: commitRename)
-                                .textFieldStyle(.roundedBorder)
+                                .textFieldStyle(.plain)
                                 .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
-                                .frame(height: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize * 2.0)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(Color(nsColor: .textBackgroundColor))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1.5)
+                                )
                                 .focused($titleFieldFocused)
                                 .onExitCommand { cancelRename() }
                         } else {
