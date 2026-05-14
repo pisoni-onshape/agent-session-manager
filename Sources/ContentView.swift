@@ -25,19 +25,7 @@ struct ContentView: View {
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
 
-                        ForEach(viewModel.displayedSessionSections.starred) { session in
-                            sessionListRow(for: session)
-                        }
-
-                        if viewModel.displayedSessionSections.showsUnstarredDivider {
-                            SessionListDividerView()
-                                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                                .allowsHitTesting(false)
-                        }
-
-                        ForEach(viewModel.displayedSessionSections.unstarred) { session in
+                        ForEach(viewModel.displayedSessions) { session in
                             sessionListRow(for: session)
                         }
                     }
@@ -370,13 +358,6 @@ struct ContentView: View {
         }
         .padding(16)
         .background(.bar)
-    }
-}
-
-private struct SessionListDividerView: View {
-    var body: some View {
-        Divider()
-        .padding(.vertical, 4)
     }
 }
 

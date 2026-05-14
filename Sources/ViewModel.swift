@@ -293,16 +293,7 @@ final class SessionBrowserViewModel: ObservableObject {
                 parsedQuery: parsedSearchQuery,
                 transcriptSessionIDsByQuery: searchState.sessionIDsByQuery
             ),
-            filters: filters,
-            starredSessionIDs: starredSessionIDs
-        )
-    }
-
-    var displayedSessionSections: SessionListSections {
-        SessionListSectionBuilder.build(
-            displayedSessions,
-            filters: filters,
-            starredSessionIDs: starredSessionIDs
+            filters: filters
         )
     }
 

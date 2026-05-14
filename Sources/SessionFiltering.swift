@@ -62,26 +62,18 @@ public enum SessionFilterEvaluator {
 public enum SessionListOrdering {
     public static func sort(
         _ sessions: [SessionRecord],
-        filters: SessionFilterState,
-        starredSessionIDs: Set<String>
+        filters: SessionFilterState
     ) -> [SessionRecord] {
         sessions.sorted { lhs, rhs in
-            compare(lhs, rhs, filters: filters, starredSessionIDs: starredSessionIDs)
+            compare(lhs, rhs, filters: filters)
         }
     }
 
     private static func compare(
         _ lhs: SessionRecord,
         _ rhs: SessionRecord,
-        filters: SessionFilterState,
-        starredSessionIDs: Set<String>
+        filters: SessionFilterState
     ) -> Bool {
-        let lhsIsStarred = starredSessionIDs.contains(lhs.id)
-        let rhsIsStarred = starredSessionIDs.contains(rhs.id)
-        if lhsIsStarred != rhsIsStarred {
-            return lhsIsStarred && !rhsIsStarred
-        }
-
         switch filters.sortMode {
         case .recentlyUpdated:
             return compareDates(lhs.updatedAt ?? lhs.startedAt, rhs.updatedAt ?? rhs.startedAt, fallback: {
@@ -119,28 +111,5 @@ public enum SessionListOrdering {
         default:
             return fallback()
         }
-    }
-}
-
-public struct SessionListSections: Equatable {
-    public let starred: [SessionRecord]
-    public let unstarred: [SessionRecord]
-    public let showsUnstarredDivider: Bool
-}
-
-public enum SessionListSectionBuilder {
-    public static func build(
-        _ sessions: [SessionRecord],
-        filters: SessionFilterState,
-        starredSessionIDs: Set<String>
-    ) -> SessionListSections {
-        let starred = sessions.filter { starredSessionIDs.contains($0.id) }
-        let unstarred = sessions.filter { !starredSessionIDs.contains($0.id) }
-
-        return SessionListSections(
-            starred: starred,
-            unstarred: unstarred,
-            showsUnstarredDivider: filters.starFilter == .all && !starred.isEmpty && !unstarred.isEmpty
-        )
     }
 }

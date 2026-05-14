@@ -111,11 +111,11 @@ final class TranscriptParsingTests: XCTestCase {
         )
     }
 
-    func testSessionListOrderingKeepsStarredSessionsAtTop() {
-        let olderStarred = makeRecord(sessionID: "starred", title: "Zebra", summary: nil)
-        let newerUnstarred = SessionRecord(
+    func testSessionListOrderingSortsPurelyBySortMode() {
+        let olderSession = makeRecord(sessionID: "older", title: "Zebra", summary: nil)
+        let newerSession = SessionRecord(
             source: .copilotCLI,
-            sourceSessionId: "unstarred",
+            sourceSessionId: "newer",
             workspacePath: "/Users/pisoni/Development/LocalProjects/agent-session-manager",
             projectName: "agent-session-manager",
             branch: "main",
@@ -129,49 +129,18 @@ final class TranscriptParsingTests: XCTestCase {
             rawTranscriptPath: "/tmp/test.jsonl",
             rawMetadataPath: nil,
             relatedPlanPath: nil,
-            fingerprint: "fingerprint-unstarred",
+            fingerprint: "fingerprint-newer",
             resumeKind: .copilotConnect,
-            resumePayload: "unstarred",
+            resumePayload: "newer",
             isNewtonProject: false
         )
 
         let sorted = SessionListOrdering.sort(
-            [newerUnstarred, olderStarred],
-            filters: SessionFilterState(),
-            starredSessionIDs: [olderStarred.id]
+            [olderSession, newerSession],
+            filters: SessionFilterState()
         )
 
-        XCTAssertEqual(sorted.map(\.sourceSessionId), ["starred", "unstarred"])
-    }
-
-    func testSessionListSectionsInsertDividerBetweenStarredAndUnstarredSessions() {
-        let starred = makeRecord(sessionID: "starred", title: "Starred Session", summary: nil)
-        let unstarred = makeRecord(sessionID: "plain", title: "Plain Session", summary: nil)
-
-        let sections = SessionListSectionBuilder.build(
-            [starred, unstarred],
-            filters: SessionFilterState(),
-            starredSessionIDs: [starred.id]
-        )
-
-        XCTAssertEqual(sections.starred.map(\.sourceSessionId), ["starred"])
-        XCTAssertEqual(sections.unstarred.map(\.sourceSessionId), ["plain"])
-        XCTAssertTrue(sections.showsUnstarredDivider)
-    }
-
-    func testSessionListSectionsHideDividerOutsideAllSessionsFilter() {
-        let starred = makeRecord(sessionID: "starred", title: "Starred Session", summary: nil)
-        let unstarred = makeRecord(sessionID: "plain", title: "Plain Session", summary: nil)
-        var filters = SessionFilterState()
-        filters.starFilter = .unstarred
-
-        let sections = SessionListSectionBuilder.build(
-            [starred, unstarred],
-            filters: filters,
-            starredSessionIDs: [starred.id]
-        )
-
-        XCTAssertFalse(sections.showsUnstarredDivider)
+        XCTAssertEqual(sorted.map(\.sourceSessionId), ["newer", "older"])
     }
 
     func testCursorFallbackProjectNamePreservesKnownProjectName() {

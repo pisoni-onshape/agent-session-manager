@@ -119,8 +119,7 @@ public enum SessionSearchService {
                 parsedQuery: parsedQuery,
                 transcriptSessionIDsByQuery: searchState.sessionIDsByQuery
             ),
-            filters: request.filters,
-            starredSessionIDs: snapshot.starredSessionIDs
+            filters: request.filters
         )
 
         if let resultLimit = request.resultLimit, resultLimit >= 0 {
