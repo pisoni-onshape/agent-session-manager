@@ -748,6 +748,10 @@ private struct SessionDetailView: View {
     let onOpenTranscript: () -> Void
     let onOpenPlan: () -> Void
 
+    @State private var isEditingTitle = false
+    @State private var editedTitle = ""
+    @FocusState private var titleFieldFocused: Bool
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -771,11 +775,37 @@ private struct SessionDetailView: View {
                 .padding(.top, 5)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    SelectableTextLabel(
-                        text: session.title,
-                        font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold),
-                        textColor: .labelColor
-                    )
+                    HStack(alignment: .top, spacing: 8) {
+                        if isEditingTitle {
+                            TextField("Session title", text: $editedTitle, onCommit: commitRename)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
+                                .focused($titleFieldFocused)
+                                .onExitCommand { cancelRename() }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            SelectableTextLabel(
+                                text: session.title,
+                                font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold),
+                                textColor: .labelColor
+                            )
+                        }
+                        if session.source == .copilotCLI && !isEditingTitle {
+                            Button {
+                                editedTitle = session.title
+                                isEditingTitle = true
+                                titleFieldFocused = true
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(session.isInProgress ? .tertiary : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(session.isInProgress)
+                            .help(session.isInProgress ? "Editing title is disabled for in-progress sessions" : "Rename session")
+                            .padding(.top, 6)
+                        }
+                    }
                     if session.isInProgress {
                         HStack(spacing: 6) {
                             Circle()
@@ -805,6 +835,21 @@ private struct SessionDetailView: View {
             fill: Color.primary.opacity(0.035),
             stroke: Color.primary.opacity(0.06)
         )
+    }
+
+    private func commitRename() {
+        let trimmed = editedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != session.title else {
+            cancelRename()
+            return
+        }
+        isEditingTitle = false
+        Task { await viewModel.renameSession(session, to: trimmed) }
+    }
+
+    private func cancelRename() {
+        isEditingTitle = false
+        editedTitle = ""
     }
 
     private var actionBar: some View {

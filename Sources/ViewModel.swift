@@ -54,6 +54,12 @@ private final class SessionCatalogController: @unchecked Sendable {
         }
     }
 
+    func renameSession(_ session: SessionRecord, to newTitle: String) async throws -> SessionRecord? {
+        try await run { catalog in
+            try catalog.renameSession(session, to: newTitle)
+        }
+    }
+
     func search(snapshot: SessionCatalogSnapshot, request: SessionSearchRequest) async throws -> SessionSearchExecution {
         try await run { catalog in
             try SessionSearchService.search(snapshot: snapshot, request: request) { sessionIDs, query, scope in
@@ -166,6 +172,20 @@ final class SessionBrowserViewModel: ObservableObject {
         let isActive = Self.liveInProgressCheck(for: session)
         guard isActive != session.isInProgress else { return }
         allSessions[index] = session.with(isInProgress: isActive)
+    }
+
+    /// Renames a Copilot CLI session. Updates workspace.yaml, the catalog DB, and in-memory state.
+    func renameSession(_ session: SessionRecord, to newTitle: String) async {
+        guard let controller = catalogController else { return }
+        do {
+            if let updated = try await controller.renameSession(session, to: newTitle) {
+                if let index = allSessions.firstIndex(where: { $0.id == session.id }) {
+                    allSessions[index] = updated.with(isInProgress: allSessions[index].isInProgress)
+                }
+            }
+        } catch {
+            errorMessage = "Rename failed: \(error.localizedDescription)"
+        }
     }
 
     private static func liveInProgressCheck(for session: SessionRecord) -> Bool {

@@ -227,6 +227,31 @@ public struct SessionRecord: Identifiable, Equatable, Sendable {
             isInProgress: isInProgress
         )
     }
+
+    public func with(title newTitle: String) -> SessionRecord {
+        SessionRecord(
+            source: source,
+            sourceSessionId: sourceSessionId,
+            workspacePath: workspacePath,
+            projectName: projectName,
+            branch: branch,
+            conversationModel: conversationModel,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            title: newTitle,
+            summary: summary,
+            firstUserPreview: firstUserPreview,
+            firstAssistantPreview: firstAssistantPreview,
+            rawTranscriptPath: rawTranscriptPath,
+            rawMetadataPath: rawMetadataPath,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: resumeKind,
+            resumePayload: resumePayload,
+            isNewtonProject: isNewtonProject,
+            isInProgress: isInProgress
+        )
+    }
 }
 
 public enum SessionSearchField: String, CaseIterable, Sendable {

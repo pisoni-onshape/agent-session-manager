@@ -739,6 +739,37 @@ enum FlatYAMLParser {
     }
 }
 
+/// Rewrites specific key-value pairs in a flat YAML file while preserving order, comments, and other entries.
+public enum FlatYAMLWriter {
+    /// Updates the given keys in the YAML file at `path`. Keys that exist are rewritten in-place;
+    /// keys that don't exist are appended at the end. Returns true on success.
+    @discardableResult
+    public static func updateValues(at path: String, updates: [String: String]) -> Bool {
+        guard let data = FileManager.default.contents(atPath: path),
+              let text = String(data: data, encoding: .utf8) else { return false }
+
+        var lines = text.components(separatedBy: "\n")
+        var remaining = updates
+
+        for i in lines.indices {
+            let line = lines[i]
+            guard let separatorIndex = line.firstIndex(of: ":") else { continue }
+            let key = line[..<separatorIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let newValue = remaining[key] else { continue }
+            lines[i] = "\(key): \(newValue)"
+            remaining.removeValue(forKey: key)
+        }
+
+        // Append any keys that weren't found
+        for (key, value) in remaining.sorted(by: { $0.key < $1.key }) {
+            lines.append("\(key): \(value)")
+        }
+
+        let output = lines.joined(separator: "\n")
+        return FileManager.default.createFile(atPath: path, contents: output.data(using: .utf8))
+    }
+}
+
 enum SessionArtifactLocator {
     static func preferredPlanPath(in directory: URL) -> String? {
         guard FileManager.default.fileExists(atPath: directory.path) else { return nil }

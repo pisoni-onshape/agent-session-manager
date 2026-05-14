@@ -152,6 +152,27 @@ public final class SessionCatalog {
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
     }
+
+    /// Renames a Copilot CLI session by updating workspace.yaml (name + user_named) and the catalog DB.
+    /// Returns the updated SessionRecord on success, nil if the session can't be renamed.
+    public func renameSession(_ session: SessionRecord, to newTitle: String) throws -> SessionRecord? {
+        guard session.source == .copilotCLI,
+              let metadataPath = session.rawMetadataPath else { return nil }
+
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Write name and user_named to workspace.yaml
+        guard FlatYAMLWriter.updateValues(at: metadataPath, updates: [
+            "name": trimmed,
+            "user_named": "true"
+        ]) else { return nil }
+
+        // Update the in-memory record
+        let updated = session.with(title: trimmed)
+        try store.updateTitle(for: session.id, newTitle: trimmed)
+        return updated
+    }
 }
 
 public struct CopilotCLIAdapter: SessionSourceAdapter {

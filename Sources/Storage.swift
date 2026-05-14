@@ -163,6 +163,21 @@ final class SQLiteSessionStore {
         }
     }
 
+    func updateTitle(for sessionID: String, newTitle: String) throws {
+        let sql = "UPDATE sessions SET title = ? WHERE id = ?;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bind(newTitle, to: statement, index: 1)
+        bind(sessionID, to: statement, index: 2)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+        }
+    }
+
     func replaceAll(
         records: [SessionRecord],
         transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
