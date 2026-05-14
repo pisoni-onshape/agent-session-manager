@@ -787,16 +787,14 @@ private struct SessionDetailView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         if isEditingTitle {
                             TextField("Session title", text: $editedTitle, onCommit: commitRename)
-                                .textFieldStyle(.plain)
+                                .textFieldStyle(.roundedBorder)
                                 .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
                                 .focused($titleFieldFocused)
                                 .onExitCommand { cancelRename() }
                         } else {
-                            SelectableTextLabel(
-                                text: session.title,
-                                font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold),
-                                textColor: .labelColor
-                            )
+                            Text(session.title)
+                                .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
+                                .textSelection(.enabled)
                         }
                         if session.source == .copilotCLI && !isEditingTitle {
                             Button {

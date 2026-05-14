@@ -141,6 +141,7 @@ final class SessionBrowserViewModel: ObservableObject {
             starredSessionIDs = try await catalogController.starredSessionIDs()
             let persisted = try await catalogController.loadPersistedSessions()
             applySessions(persisted)
+            applyInProgressStateToAll()
             lastRefreshDate = catalogModifiedDate()
             if shouldRefreshOnLaunch() {
                 await performRefresh(
@@ -172,6 +173,34 @@ final class SessionBrowserViewModel: ObservableObject {
         let isActive = Self.liveInProgressCheck(for: session)
         guard isActive != session.isInProgress else { return }
         allSessions[index] = session.with(isInProgress: isActive)
+    }
+
+    /// Applies in-progress state to all sessions by checking lock files / PIDs.
+    private func applyInProgressStateToAll() {
+        var vscodeCaches: [String: Set<String>] = [:]
+        for i in allSessions.indices {
+            let session = allSessions[i]
+            let isActive: Bool
+            switch session.source {
+            case .copilotCLI:
+                guard let metadataPath = session.rawMetadataPath else { continue }
+                let dir = URL(fileURLWithPath: metadataPath).deletingLastPathComponent()
+                isActive = CopilotCLIAdapter.checkInProgress(in: dir).isActive
+            case .vscodeCopilot:
+                guard let metadataPath = session.rawMetadataPath else { continue }
+                let workspaceDir = URL(fileURLWithPath: metadataPath).deletingLastPathComponent()
+                let cacheKey = workspaceDir.path
+                if vscodeCaches[cacheKey] == nil {
+                    vscodeCaches[cacheKey] = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDir)
+                }
+                isActive = vscodeCaches[cacheKey]!.contains(session.sourceSessionId)
+            case .cursor:
+                continue
+            }
+            if isActive != session.isInProgress {
+                allSessions[i] = session.with(isInProgress: isActive)
+            }
+        }
     }
 
     /// Renames a Copilot CLI session. Updates workspace.yaml, the catalog DB, and in-memory state.
