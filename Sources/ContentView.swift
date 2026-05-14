@@ -789,6 +789,7 @@ private struct SessionDetailView: View {
                             TextField("Session title", text: $editedTitle, onCommit: commitRename)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
+                                .frame(height: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize * 2.0)
                                 .focused($titleFieldFocused)
                                 .onExitCommand { cancelRename() }
                         } else {
