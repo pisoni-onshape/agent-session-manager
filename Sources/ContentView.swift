@@ -285,30 +285,33 @@ struct ContentView: View {
                 Toggle("Newton repos only", isOn: $viewModel.filters.newtonOnly)
                     .toggleStyle(.switch)
                     .fixedSize()
+            }
+
+            HStack(spacing: 10) {
+                FilterMenuChip(
+                    title: "Project",
+                    valueText: viewModel.filters.selectedProject == SessionFilterState.allProjectsToken ? "All Projects" : viewModel.filters.selectedProject,
+                    systemImage: "folder",
+                    isActive: viewModel.filters.hasCustomProjectSelection,
+                    prominence: .expanded,
+                    items: viewModel.availableProjects.map { project in
+                        let isDefault = project == SessionFilterState.allProjectsToken
+                        let title = isDefault ? "All Projects" : project
+                        return FilterMenuItem(
+                            id: project,
+                            title: title,
+                            isSelected: viewModel.filters.selectedProject == project,
+                            highlightsSelection: !isDefault,
+                            action: { viewModel.filters.selectedProject = project }
+                        )
+                    }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Toggle("In-progress only", isOn: $viewModel.filters.inProgressOnly)
                     .toggleStyle(.switch)
                     .fixedSize()
             }
-
-            FilterMenuChip(
-                title: "Project",
-                valueText: viewModel.filters.selectedProject == SessionFilterState.allProjectsToken ? "All Projects" : viewModel.filters.selectedProject,
-                systemImage: "folder",
-                isActive: viewModel.filters.hasCustomProjectSelection,
-                prominence: .expanded,
-                items: viewModel.availableProjects.map { project in
-                    let isDefault = project == SessionFilterState.allProjectsToken
-                    let title = isDefault ? "All Projects" : project
-                    return FilterMenuItem(
-                        id: project,
-                        title: title,
-                        isSelected: viewModel.filters.selectedProject == project,
-                        highlightsSelection: !isDefault,
-                        action: { viewModel.filters.selectedProject = project }
-                    )
-                }
-            )
 
             FilterMenuChip(
                 title: "Branch",
@@ -592,14 +595,6 @@ private struct SessionRowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if session.isInProgress {
-                    Text("In Progress")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.orange.opacity(0.12), in: Capsule())
-                }
                 if session.isNewtonProject {
                     Text("newton")
                         .font(.caption2.weight(.semibold))
@@ -607,6 +602,14 @@ private struct SessionRowView: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Color.blue.opacity(0.12), in: Capsule())
+                }
+                if session.isInProgress {
+                    Text("In Progress")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.12), in: Capsule())
                 }
             }
 
@@ -681,7 +684,9 @@ private struct SessionRowView: View {
         .padding(14)
         .background {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.035))
+                .fill(isSelected ? Color.accentColor.opacity(0.12)
+                      : session.isInProgress ? Color(red: 0.922, green: 0.906, blue: 0.890)
+                      : Color.primary.opacity(0.035))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -792,7 +797,6 @@ private struct SessionDetailView: View {
                                 font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold),
                                 textColor: .labelColor
                             )
-                            .layoutPriority(1)
                         }
                         if session.source == .copilotCLI && !isEditingTitle {
                             Button {
@@ -808,7 +812,6 @@ private struct SessionDetailView: View {
                             .disabled(session.isInProgress)
                             .help(session.isInProgress ? "Editing title is disabled for in-progress sessions" : "Rename session")
                         }
-                        Spacer(minLength: 0)
                     }
                     if session.isInProgress {
                         HStack(spacing: 6) {
