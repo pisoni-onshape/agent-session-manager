@@ -285,6 +285,10 @@ struct ContentView: View {
                 Toggle("Newton repos only", isOn: $viewModel.filters.newtonOnly)
                     .toggleStyle(.switch)
                     .fixedSize()
+
+                Toggle("In-progress only", isOn: $viewModel.filters.inProgressOnly)
+                    .toggleStyle(.switch)
+                    .fixedSize()
             }
 
             FilterMenuChip(
@@ -775,20 +779,20 @@ private struct SessionDetailView: View {
                 .padding(.top, 5)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         if isEditingTitle {
                             TextField("Session title", text: $editedTitle, onCommit: commitRename)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
                                 .focused($titleFieldFocused)
                                 .onExitCommand { cancelRename() }
-                                .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
                             SelectableTextLabel(
                                 text: session.title,
                                 font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold),
                                 textColor: .labelColor
                             )
+                            .layoutPriority(1)
                         }
                         if session.source == .copilotCLI && !isEditingTitle {
                             Button {
@@ -797,14 +801,14 @@ private struct SessionDetailView: View {
                                 titleFieldFocused = true
                             } label: {
                                 Image(systemName: "pencil")
-                                    .font(.system(size: 14))
+                                    .font(.system(size: 20, weight: .medium))
                                     .foregroundStyle(session.isInProgress ? .tertiary : .secondary)
                             }
                             .buttonStyle(.plain)
                             .disabled(session.isInProgress)
                             .help(session.isInProgress ? "Editing title is disabled for in-progress sessions" : "Rename session")
-                            .padding(.top, 6)
                         }
+                        Spacer(minLength: 0)
                     }
                     if session.isInProgress {
                         HStack(spacing: 6) {

@@ -31,6 +31,9 @@ public enum SessionFilterEvaluator {
             if filters.newtonOnly, !record.isNewtonProject {
                 return false
             }
+            if filters.inProgressOnly, !record.isInProgress {
+                return false
+            }
             return true
         }
     }

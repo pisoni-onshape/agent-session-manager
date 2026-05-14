@@ -3,6 +3,7 @@ import Foundation
 struct SessionScanCandidate {
     let id: String
     let fingerprint: String
+    let isInProgress: Bool
     let loadRecord: () throws -> SessionRecord?
 }
 
@@ -86,9 +87,9 @@ public final class SessionCatalog {
             if let existingRecord = existingByID[candidate.id],
                existingRecord.fingerprint == candidate.fingerprint,
                indexedSessionIDs.contains(candidate.id) {
-                let reclassifiedRecord = existingRecord.with(
-                    isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath)
-                )
+                let reclassifiedRecord = existingRecord
+                    .with(isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath))
+                    .with(isInProgress: candidate.isInProgress)
                 refreshedRecordsByID[candidate.id] = reclassifiedRecord
                 if reclassifiedRecord.isNewtonProject != existingRecord.isNewtonProject {
                     changedRecords.append(reclassifiedRecord)
@@ -102,9 +103,9 @@ public final class SessionCatalog {
                 changedRecords.append(reclassifiedRecord)
                 transcriptEntriesBySessionID[reclassifiedRecord.id] = try TranscriptPreviewExtractor.searchableEntries(for: reclassifiedRecord)
             } else if let existingRecord = existingByID[candidate.id] {
-                let reclassifiedRecord = existingRecord.with(
-                    isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath)
-                )
+                let reclassifiedRecord = existingRecord
+                    .with(isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath))
+                    .with(isInProgress: candidate.isInProgress)
                 refreshedRecordsByID[candidate.id] = reclassifiedRecord
                 if reclassifiedRecord.isNewtonProject != existingRecord.isNewtonProject {
                     changedRecords.append(reclassifiedRecord)
@@ -203,6 +204,7 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
             return SessionScanCandidate(
                 id: "\(SessionSource.copilotCLI.rawValue)::\(sessionID)",
                 fingerprint: fingerprint,
+                isInProgress: inProgressState.isActive,
                 loadRecord: {
                     try loadRecord(
                         sessionDirectory: sessionDirectory,
@@ -352,6 +354,7 @@ struct CursorAdapter: SessionSourceAdapter {
                 return SessionScanCandidate(
                     id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
                     fingerprint: fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         try loadRecord(
                             sessionID: sessionID,
@@ -671,6 +674,7 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                 return SessionScanCandidate(
                     id: "\(SessionSource.vscodeCopilot.rawValue)::\(sessionID)",
                     fingerprint: fingerprint,
+                    isInProgress: isActive,
                     loadRecord: {
                         try loadRecord(
                             transcriptFile: reference.transcriptFile,

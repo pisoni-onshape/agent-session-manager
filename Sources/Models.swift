@@ -567,6 +567,7 @@ public struct SessionFilterState: Equatable, Sendable {
     public var selectedBranch = allBranchesToken
     public var starFilter: SessionStarFilter = .all
     public var newtonOnly = false
+    public var inProgressOnly = false
     public var sortMode: SessionSortMode = .recentlyUpdated
 
     public init() {}
