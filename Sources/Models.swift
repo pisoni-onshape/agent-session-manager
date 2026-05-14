@@ -114,6 +114,7 @@ public struct SessionRecord: Identifiable, Equatable, Sendable {
     public let resumeKind: ResumeActionKind
     public let resumePayload: String
     public let isNewtonProject: Bool
+    public let isInProgress: Bool
 
     public init(
         source: SessionSource,
@@ -134,7 +135,8 @@ public struct SessionRecord: Identifiable, Equatable, Sendable {
         fingerprint: String,
         resumeKind: ResumeActionKind,
         resumePayload: String,
-        isNewtonProject: Bool
+        isNewtonProject: Bool,
+        isInProgress: Bool = false
     ) {
         self.source = source
         self.sourceSessionId = sourceSessionId
@@ -155,6 +157,7 @@ public struct SessionRecord: Identifiable, Equatable, Sendable {
         self.resumeKind = resumeKind
         self.resumePayload = resumePayload
         self.isNewtonProject = isNewtonProject
+        self.isInProgress = isInProgress
     }
 
     public var id: String {
@@ -195,7 +198,33 @@ public struct SessionRecord: Identifiable, Equatable, Sendable {
             fingerprint: fingerprint,
             resumeKind: resumeKind,
             resumePayload: resumePayload,
-            isNewtonProject: isNewtonProject
+            isNewtonProject: isNewtonProject,
+            isInProgress: isInProgress
+        )
+    }
+
+    public func with(isInProgress: Bool) -> SessionRecord {
+        SessionRecord(
+            source: source,
+            sourceSessionId: sourceSessionId,
+            workspacePath: workspacePath,
+            projectName: projectName,
+            branch: branch,
+            conversationModel: conversationModel,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            title: title,
+            summary: summary,
+            firstUserPreview: firstUserPreview,
+            firstAssistantPreview: firstAssistantPreview,
+            rawTranscriptPath: rawTranscriptPath,
+            rawMetadataPath: rawMetadataPath,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: resumeKind,
+            resumePayload: resumePayload,
+            isNewtonProject: isNewtonProject,
+            isInProgress: isInProgress
         )
     }
 }

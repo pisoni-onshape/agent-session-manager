@@ -159,6 +159,31 @@ final class SessionBrowserViewModel: ObservableObject {
         await performRefresh(activity: .rebuild, operation: { try await self.catalogOrThrow().rebuildSessions() })
     }
 
+    /// Performs a lightweight live check of in-progress state for a single session and updates the model.
+    func checkInProgressState(for sessionID: String) {
+        guard let index = allSessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        let session = allSessions[index]
+        let isActive = Self.liveInProgressCheck(for: session)
+        guard isActive != session.isInProgress else { return }
+        allSessions[index] = session.with(isInProgress: isActive)
+    }
+
+    private static func liveInProgressCheck(for session: SessionRecord) -> Bool {
+        switch session.source {
+        case .copilotCLI:
+            guard let metadataPath = session.rawMetadataPath else { return false }
+            let sessionDirectory = URL(fileURLWithPath: metadataPath).deletingLastPathComponent()
+            return CopilotCLIAdapter.checkInProgress(in: sessionDirectory).isActive
+        case .vscodeCopilot:
+            guard let metadataPath = session.rawMetadataPath else { return false }
+            let workspaceDirectory = URL(fileURLWithPath: metadataPath).deletingLastPathComponent()
+            let activeIDs = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDirectory)
+            return activeIDs.contains(session.sourceSessionId)
+        case .cursor:
+            return false
+        }
+    }
+
     func setAppIsActive(_ isActive: Bool) {
         guard isAppActive != isActive else { return }
 

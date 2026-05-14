@@ -193,6 +193,11 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             viewModel.setAppIsActive(newPhase == .active)
         }
+        .onChange(of: viewModel.selectedSessionID) { _, newID in
+            if let newID {
+                viewModel.checkInProgressState(for: newID)
+            }
+        }
     }
 
     private func sessionListRow(for session: SessionRecord) -> some View {
@@ -583,6 +588,14 @@ private struct SessionRowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                if session.isInProgress {
+                    Text("In Progress")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.12), in: Capsule())
+                }
                 if session.isNewtonProject {
                     Text("newton")
                         .font(.caption2.weight(.semibold))
@@ -763,6 +776,16 @@ private struct SessionDetailView: View {
                         font: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold),
                         textColor: .labelColor
                     )
+                    if session.isInProgress {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.orange)
+                                .frame(width: 8, height: 8)
+                            Text("This session is currently active in another terminal")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                        }
+                    }
                     SelectableTextLabel(
                         text: session.detailSummary,
                         font: .preferredFont(forTextStyle: .body),

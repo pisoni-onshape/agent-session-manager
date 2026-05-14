@@ -154,7 +154,7 @@ public final class SessionCatalog {
     }
 }
 
-struct CopilotCLIAdapter: SessionSourceAdapter {
+public struct CopilotCLIAdapter: SessionSourceAdapter {
     let root: URL
 
     func scanCandidates() throws -> [SessionScanCandidate] {
@@ -169,12 +169,14 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
             let checkpointIndexURL = sessionDirectory.appendingPathComponent("checkpoints/index.md")
             let relatedPlanPath = SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
             let sessionID = sessionDirectory.lastPathComponent
+            let inProgressState = Self.checkInProgress(in: sessionDirectory)
             let fingerprint = combinedFingerprint(
                 paths: [
                     workspaceURL.path,
                     FileManager.default.fileExists(atPath: eventLogURL.path) ? eventLogURL.path : checkpointIndexURL.path,
                     relatedPlanPath
-                ]
+                ],
+                values: [inProgressState.fingerprintValue]
             )
 
             return SessionScanCandidate(
@@ -187,11 +189,41 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
                         eventLogURL: eventLogURL,
                         checkpointIndexURL: checkpointIndexURL,
                         relatedPlanPath: relatedPlanPath,
-                        fingerprint: fingerprint
+                        fingerprint: fingerprint,
+                        isInProgress: inProgressState.isActive
                     )
                 }
             )
         }
+    }
+
+    /// Checks whether the session directory has an active `inuse.{PID}.lock` file with a live PID.
+    public static func checkInProgress(in sessionDirectory: URL) -> InProgressState {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(at: sessionDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return InProgressState(isActive: false, fingerprintValue: "none")
+        }
+
+        let lockFiles = contents.filter { $0.lastPathComponent.hasPrefix("inuse.") && $0.lastPathComponent.hasSuffix(".lock") }
+        guard !lockFiles.isEmpty else {
+            return InProgressState(isActive: false, fingerprintValue: "none")
+        }
+
+        for lockFile in lockFiles {
+            if let pidString = try? String(contentsOf: lockFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+               let pid = Int32(pidString) {
+                if kill(pid, 0) == 0 {
+                    return InProgressState(isActive: true, fingerprintValue: "active:\(pid)")
+                }
+            }
+        }
+
+        return InProgressState(isActive: false, fingerprintValue: "stale:\(lockFiles.count)")
+    }
+
+    public struct InProgressState {
+        public let isActive: Bool
+        public let fingerprintValue: String
     }
 
     private func loadRecord(
@@ -200,7 +232,8 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
         eventLogURL: URL,
         checkpointIndexURL: URL,
         relatedPlanPath: String?,
-        fingerprint: String
+        fingerprint: String,
+        isInProgress: Bool
     ) throws -> SessionRecord? {
         guard FileManager.default.fileExists(atPath: workspaceURL.path) else { return nil }
 
@@ -249,7 +282,8 @@ struct CopilotCLIAdapter: SessionSourceAdapter {
             fingerprint: fingerprint,
             resumeKind: .copilotConnect,
             resumePayload: metadata["id"] ?? sessionDirectory.lastPathComponent,
-            isNewtonProject: false
+            isNewtonProject: false,
+            isInProgress: isInProgress
         )
     }
 }
@@ -570,7 +604,7 @@ private struct VSCodeSessionReference {
     let transcriptFile: URL
 }
 
-struct VSCodeCopilotAdapter: SessionSourceAdapter {
+public struct VSCodeCopilotAdapter: SessionSourceAdapter {
     let root: URL
 
     func scanCandidates() throws -> [SessionScanCandidate] {
@@ -593,6 +627,8 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
                 return []
             }
 
+            let activeSessionIDs = Self.activeSessionIDs(in: workspaceDirectory)
+
             return try sessionReferences.map { reference in
                 let sessionMetadata = try TranscriptPreviewExtractor.extractVSCodeSessionMetadata(from: reference.transcriptFile)
                 let sessionID = sessionMetadata.sessionId ?? reference.sessionID
@@ -601,12 +637,14 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
                     fallback: sessionID
                 )
                 let relatedPlanPath = SessionArtifactLocator.vscodePlanPath(workspaceDirectory: workspaceDirectory, sessionId: sessionID)
+                let isActive = activeSessionIDs.contains(sessionID)
                 let fingerprint = combinedFingerprint(
                     paths: [
                         reference.transcriptFile.path,
                         workspaceJSONURL.path,
                         relatedPlanPath
-                    ]
+                    ],
+                    values: [isActive ? "active" : "inactive"]
                 )
 
                 return SessionScanCandidate(
@@ -622,12 +660,39 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
                             sessionID: sessionID,
                             sessionMetadata: sessionMetadata,
                             title: title,
-                            fingerprint: fingerprint
+                            fingerprint: fingerprint,
+                            isInProgress: isActive
                         )
                     }
                 )
             }
         }
+    }
+
+    /// Reads `chat.terminalSessions` from the workspace's state.vscdb and returns session IDs with at least one live PID.
+    public static func activeSessionIDs(in workspaceDirectory: URL) -> Set<String> {
+        let stateDBURL = workspaceDirectory.appendingPathComponent("state.vscdb")
+        guard FileManager.default.fileExists(atPath: stateDBURL.path) else { return [] }
+
+        guard let jsonString = try? loadSQLiteItemValue(from: stateDBURL, key: "chat.terminalSessions"),
+              let jsonData = jsonString.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            return []
+        }
+
+        // parsed is {pidString: {sessionId: "...", ...}, ...}
+        var liveSessionIDs: Set<String> = []
+        for (pidString, value) in parsed {
+            guard let pid = Int32(pidString),
+                  let info = value as? [String: Any],
+                  let sessionId = info["sessionId"] as? String else {
+                continue
+            }
+            if kill(pid, 0) == 0 {
+                liveSessionIDs.insert(sessionId)
+            }
+        }
+        return liveSessionIDs
     }
 
     private func discoverSessionReferences(in workspaceDirectory: URL) throws -> [VSCodeSessionReference] {
@@ -696,7 +761,8 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
         sessionID: String,
         sessionMetadata: VSCodeSessionMetadata,
         title: String,
-        fingerprint: String
+        fingerprint: String,
+        isInProgress: Bool
     ) throws -> SessionRecord? {
         guard FileManager.default.fileExists(atPath: transcriptFile.path),
               FileManager.default.fileExists(atPath: workspaceJSONURL.path) else {
@@ -728,7 +794,8 @@ struct VSCodeCopilotAdapter: SessionSourceAdapter {
             fingerprint: fingerprint,
             resumeKind: workspacePath == nil ? .revealPath : .openInVSCode,
             resumePayload: workspacePath ?? transcriptFile.path,
-            isNewtonProject: false
+            isNewtonProject: false,
+            isInProgress: isInProgress
         )
     }
 }
