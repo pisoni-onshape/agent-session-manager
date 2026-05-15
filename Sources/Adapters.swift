@@ -224,27 +224,35 @@ public final class SessionCatalog {
             "\($0.adapterName): \($0.candidates.count) candidates in \(Self.formatDurationForLog($0.duration))"
         }
 
-        var loadedRecords: [SessionRecord] = []
-        loadedRecords.reserveCapacity(candidates.count)
-        var recordLoadDuration: Duration = .zero
-        for candidate in candidates {
+        let loadResults = try parallelMap(candidates) { candidate in
             let loadStart = clock.now
             let record = try candidate.loadRecord()
-            recordLoadDuration += clock.now - loadStart
-            if let record {
-                loadedRecords.append(record)
-            }
+            return RebuildLoadResult(
+                record: record,
+                loadDuration: clock.now - loadStart
+            )
         }
+        let recordLoadDuration = loadResults.reduce(into: Duration.zero) { partialResult, result in
+            partialResult += result.loadDuration
+        }
+        let loadedRecords = loadResults.compactMap(\.record)
 
         let records = reclassifySessions(loadedRecords.sorted(by: SessionCatalog.sort(lhs:rhs:)))
-        var transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
-        transcriptEntriesBySessionID.reserveCapacity(records.count)
-        var transcriptExtractionDuration: Duration = .zero
-        for record in records {
+        let indexResults = try parallelMap(records) { record in
             let transcriptExtractionStart = clock.now
-            transcriptEntriesBySessionID[record.id] = try TranscriptPreviewExtractor.searchableEntries(for: record)
-            transcriptExtractionDuration += clock.now - transcriptExtractionStart
+            let transcriptEntries = try TranscriptPreviewExtractor.searchableEntries(for: record)
+            return RebuildIndexResult(
+                sessionID: record.id,
+                transcriptEntries: transcriptEntries,
+                duration: clock.now - transcriptExtractionStart
+            )
         }
+        let transcriptExtractionDuration = indexResults.reduce(into: Duration.zero) { partialResult, result in
+            partialResult += result.duration
+        }
+        let transcriptEntriesBySessionID = Dictionary(
+            uniqueKeysWithValues: indexResults.map { ($0.sessionID, $0.transcriptEntries) }
+        )
 
         let storeReplaceStart = clock.now
         try store.replaceAll(records: records, transcriptEntriesBySessionID: transcriptEntriesBySessionID)
@@ -346,6 +354,17 @@ public final class SessionCatalog {
         let transcriptEntries: [TranscriptIndexEntry]
         let loadDuration: Duration
         let transcriptExtractionDuration: Duration
+    }
+
+    private struct RebuildLoadResult {
+        let record: SessionRecord?
+        let loadDuration: Duration
+    }
+
+    private struct RebuildIndexResult {
+        let sessionID: String
+        let transcriptEntries: [TranscriptIndexEntry]
+        let duration: Duration
     }
 
     private func parallelMap<Input, Output>(
