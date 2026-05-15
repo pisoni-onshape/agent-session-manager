@@ -110,6 +110,7 @@ public final class SessionCatalog {
         var reusedCandidateCount = 0
         var loadedCandidateCount = 0
         var fallbackCandidateCount = 0
+        var candidatesNeedingLoad: [SessionScanCandidate] = []
 
         for candidate in candidates {
             if let existingRecord = existingByID[candidate.id],
@@ -125,25 +126,57 @@ public final class SessionCatalog {
                 }
                 continue
             }
+            candidatesNeedingLoad.append(candidate)
+        }
 
+        let loadResults = try parallelMap(candidatesNeedingLoad) { candidate in
             let loadStart = clock.now
             let loadedRecord = try candidate.loadRecord()
-            recordLoadDuration += clock.now - loadStart
+            let loadDuration = clock.now - loadStart
 
-            if let record = loadedRecord {
+            guard let loadedRecord else {
+                return RefreshLoadResult(
+                    candidateID: candidate.id,
+                    isInProgress: candidate.isInProgress,
+                    record: nil,
+                    transcriptEntries: [],
+                    loadDuration: loadDuration,
+                    transcriptExtractionDuration: .zero
+                )
+            }
+
+            let transcriptExtractionStart = clock.now
+            let transcriptEntries = try TranscriptPreviewExtractor.searchableEntries(for: loadedRecord)
+            let transcriptExtractionDuration = clock.now - transcriptExtractionStart
+            return RefreshLoadResult(
+                candidateID: candidate.id,
+                isInProgress: candidate.isInProgress,
+                record: loadedRecord,
+                transcriptEntries: transcriptEntries,
+                loadDuration: loadDuration,
+                transcriptExtractionDuration: transcriptExtractionDuration
+            )
+        }
+        recordLoadDuration = loadResults.reduce(into: Duration.zero) { partialResult, result in
+            partialResult += result.loadDuration
+        }
+        transcriptExtractionDuration = loadResults.reduce(into: Duration.zero) { partialResult, result in
+            partialResult += result.transcriptExtractionDuration
+        }
+
+        for result in loadResults {
+            if let record = result.record {
                 loadedCandidateCount += 1
                 let reclassifiedRecord = record.with(isNewtonProject: matcher.matches(workspacePath: record.workspacePath))
                 refreshedRecordsByID[reclassifiedRecord.id] = reclassifiedRecord
                 changedRecords.append(reclassifiedRecord)
-                let transcriptExtractionStart = clock.now
-                transcriptEntriesBySessionID[reclassifiedRecord.id] = try TranscriptPreviewExtractor.searchableEntries(for: reclassifiedRecord)
-                transcriptExtractionDuration += clock.now - transcriptExtractionStart
-            } else if let existingRecord = existingByID[candidate.id] {
+                transcriptEntriesBySessionID[reclassifiedRecord.id] = result.transcriptEntries
+            } else if let existingRecord = existingByID[result.candidateID] {
                 fallbackCandidateCount += 1
                 let reclassifiedRecord = existingRecord
                     .with(isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath))
-                    .with(isInProgress: candidate.isInProgress)
-                refreshedRecordsByID[candidate.id] = reclassifiedRecord
+                    .with(isInProgress: result.isInProgress)
+                refreshedRecordsByID[result.candidateID] = reclassifiedRecord
                 if reclassifiedRecord.isNewtonProject != existingRecord.isNewtonProject {
                     changedRecords.append(reclassifiedRecord)
                 }
@@ -304,6 +337,15 @@ public final class SessionCatalog {
         let adapterName: String
         let candidates: [SessionScanCandidate]
         let duration: Duration
+    }
+
+    private struct RefreshLoadResult {
+        let candidateID: String
+        let isInProgress: Bool
+        let record: SessionRecord?
+        let transcriptEntries: [TranscriptIndexEntry]
+        let loadDuration: Duration
+        let transcriptExtractionDuration: Duration
     }
 
     private func parallelMap<Input, Output>(
