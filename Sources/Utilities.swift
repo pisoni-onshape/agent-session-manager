@@ -24,26 +24,32 @@ public enum AppPaths {
 }
 
 enum ISO8601DateCoding {
-    private static func fractionalFormatter() -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
+    private final class FormatterBox: @unchecked Sendable {
+        let formatter: ISO8601DateFormatter
+
+        init(formatOptions: ISO8601DateFormatter.Options) {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = formatOptions
+            self.formatter = formatter
+        }
     }
 
-    private static func regularFormatter() -> ISO8601DateFormatter {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }
+    private static let fractionalFormatter = FormatterBox(
+        formatOptions: [.withInternetDateTime, .withFractionalSeconds]
+    )
+
+    private static let regularFormatter = FormatterBox(
+        formatOptions: [.withInternetDateTime]
+    )
 
     static func parse(_ rawValue: String?) -> Date? {
         guard let rawValue else { return nil }
-        return fractionalFormatter().date(from: rawValue) ?? regularFormatter().date(from: rawValue)
+        return fractionalFormatter.formatter.date(from: rawValue) ?? regularFormatter.formatter.date(from: rawValue)
     }
 
     static func string(_ date: Date?) -> String? {
         guard let date else { return nil }
-        return fractionalFormatter().string(from: date)
+        return fractionalFormatter.formatter.string(from: date)
     }
 }
 
