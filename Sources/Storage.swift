@@ -27,6 +27,11 @@ enum TranscriptIndexMode {
 }
 
 final class SQLiteSessionStore {
+    private struct BulkWritePragmaSnapshot {
+        let synchronous: Int32
+        let cacheSize: Int32
+    }
+
     private let databaseURL: URL
     private var database: OpaquePointer?
     private var transcriptIndexMode: TranscriptIndexMode = .tokenPrefix
@@ -182,17 +187,19 @@ final class SQLiteSessionStore {
         records: [SessionRecord],
         transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
     ) throws {
-        try execute("BEGIN IMMEDIATE TRANSACTION;")
-        do {
-            try execute("DELETE FROM sessions;")
-            try execute("DELETE FROM transcript_entries;")
-            try upsert(records: records)
-            try insertTranscriptEntries(transcriptEntriesBySessionID)
+        try withBulkWritePragmas {
+            try execute("BEGIN IMMEDIATE TRANSACTION;")
+            do {
+                try execute("DELETE FROM sessions;")
+                try execute("DELETE FROM transcript_entries;")
+                try upsert(records: records)
+                try insertTranscriptEntries(transcriptEntriesBySessionID)
 
-            try execute("COMMIT;")
-        } catch {
-            try? execute("ROLLBACK;")
-            throw error
+                try execute("COMMIT;")
+            } catch {
+                try? execute("ROLLBACK;")
+                throw error
+            }
         }
     }
 
@@ -205,22 +212,24 @@ final class SQLiteSessionStore {
             return
         }
 
-        try execute("BEGIN IMMEDIATE TRANSACTION;")
-        do {
-            let transcriptSessionIDs = Array(Set(removedIDs + transcriptEntriesBySessionID.keys))
-            if !removedIDs.isEmpty {
-                try deleteRecords(withIDs: removedIDs, from: "sessions", idColumn: "id")
-            }
+        try withBulkWritePragmas {
+            try execute("BEGIN IMMEDIATE TRANSACTION;")
+            do {
+                let transcriptSessionIDs = Array(Set(removedIDs + transcriptEntriesBySessionID.keys))
+                if !removedIDs.isEmpty {
+                    try deleteRecords(withIDs: removedIDs, from: "sessions", idColumn: "id")
+                }
 
-            if !transcriptSessionIDs.isEmpty {
-                try deleteRecords(withIDs: transcriptSessionIDs, from: "transcript_entries", idColumn: "session_id")
+                if !transcriptSessionIDs.isEmpty {
+                    try deleteRecords(withIDs: transcriptSessionIDs, from: "transcript_entries", idColumn: "session_id")
+                }
+                try upsert(records: records)
+                try insertTranscriptEntries(transcriptEntriesBySessionID)
+                try execute("COMMIT;")
+            } catch {
+                try? execute("ROLLBACK;")
+                throw error
             }
-            try upsert(records: records)
-            try insertTranscriptEntries(transcriptEntriesBySessionID)
-            try execute("COMMIT;")
-        } catch {
-            try? execute("ROLLBACK;")
-            throw error
         }
     }
 
@@ -397,6 +406,51 @@ final class SQLiteSessionStore {
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
             throw SQLiteStoreError.executionFailed(lastErrorMessage())
         }
+    }
+
+    private func withBulkWritePragmas<T>(_ body: () throws -> T) throws -> T {
+        let snapshot = try BulkWritePragmaSnapshot(
+            synchronous: pragmaInt32(named: "synchronous"),
+            cacheSize: pragmaInt32(named: "cache_size")
+        )
+
+        try execute("PRAGMA synchronous = NORMAL;")
+        try execute("PRAGMA cache_size = -32768;")
+
+        do {
+            let result = try body()
+            try restoreBulkWritePragmas(snapshot)
+            return result
+        } catch {
+            let operationError = error
+            do {
+                try restoreBulkWritePragmas(snapshot)
+            } catch {
+                throw SQLiteStoreError.executionFailed(
+                    "Bulk write failed with: \(operationError.localizedDescription). Failed to restore SQLite PRAGMAs: \(error.localizedDescription)"
+                )
+            }
+            throw operationError
+        }
+    }
+
+    private func restoreBulkWritePragmas(_ snapshot: BulkWritePragmaSnapshot) throws {
+        try execute("PRAGMA synchronous = \(snapshot.synchronous);")
+        try execute("PRAGMA cache_size = \(snapshot.cacheSize);")
+    }
+
+    private func pragmaInt32(named name: String) throws -> Int32 {
+        let sql = "PRAGMA \(name);"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+        }
+        defer { sqlite3_finalize(statement) }
+
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw SQLiteStoreError.stepFailed("Failed to query PRAGMA \(name) for \(databaseURL.lastPathComponent)")
+        }
+        return sqlite3_column_int(statement, 0)
     }
 
     private func bind(_ value: String?, to statement: OpaquePointer?, index: Int32) {
