@@ -54,6 +54,26 @@ enum ISO8601DateCoding {
 }
 
 enum TextSanitizer {
+    private final class RegexBox: @unchecked Sendable {
+        let regex: NSRegularExpression
+
+        init(_ pattern: String, options: NSRegularExpression.Options = []) {
+            self.regex = try! NSRegularExpression(pattern: pattern, options: options)
+        }
+    }
+
+    private static let wrapperPatterns = [
+        RegexBox("<current_datetime>.*?</current_datetime>", options: [.dotMatchesLineSeparators]),
+        RegexBox("<timestamp>.*?</timestamp>", options: [.dotMatchesLineSeparators]),
+        RegexBox("<system_reminder>.*?</system_reminder>", options: [.dotMatchesLineSeparators]),
+        RegexBox("<reminder>.*?</reminder>", options: [.dotMatchesLineSeparators]),
+        RegexBox("<sql_tables>.*?</sql_tables>", options: [.dotMatchesLineSeparators]),
+        RegexBox("</?user_query>")
+    ]
+    private static let trailingWhitespaceBeforeNewlinePattern = RegexBox("[ \\t]+\\n")
+    private static let excessiveNewlinesPattern = RegexBox("\\n{3,}")
+    private static let collapsedWhitespacePattern = RegexBox("\\s+")
+
     static func clean(_ rawText: String?) -> String? {
         sanitize(rawText, preservesLineBreaks: true)
     }
@@ -64,28 +84,29 @@ enum TextSanitizer {
 
     private static func sanitize(_ rawText: String?, preservesLineBreaks: Bool) -> String? {
         guard var text = rawText else { return nil }
-        let patterns = [
-            "(?s)<current_datetime>.*?</current_datetime>",
-            "(?s)<timestamp>.*?</timestamp>",
-            "(?s)<system_reminder>.*?</system_reminder>",
-            "(?s)<reminder>.*?</reminder>",
-            "(?s)<sql_tables>.*?</sql_tables>",
-            "</?user_query>"
-        ]
-        for pattern in patterns {
-            text = text.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        for pattern in wrapperPatterns {
+            text = replacingMatches(in: text, using: pattern, with: " ")
         }
         text = text.replacingOccurrences(of: "\r\n", with: "\n")
         text = text.replacingOccurrences(of: "\r", with: "\n")
         if preservesLineBreaks {
             text = text.replacingOccurrences(of: "\t", with: "    ")
-            text = text.replacingOccurrences(of: "[ \t]+\n", with: "\n", options: .regularExpression)
-            text = text.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+            text = replacingMatches(in: text, using: trailingWhitespaceBeforeNewlinePattern, with: "\n")
+            text = replacingMatches(in: text, using: excessiveNewlinesPattern, with: "\n\n")
         } else {
-            text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            text = replacingMatches(in: text, using: collapsedWhitespacePattern, with: " ")
         }
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
+    }
+
+    private static func replacingMatches(in text: String, using pattern: RegexBox, with template: String) -> String {
+        pattern.regex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(text.startIndex..<text.endIndex, in: text),
+            withTemplate: template
+        )
     }
 
     static func summarize(_ rawText: String?, limit: Int = 220) -> String? {
