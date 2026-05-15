@@ -780,6 +780,11 @@ private struct SessionDetailView: View {
                                         .strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1.5)
                                 )
                                 .focused($titleFieldFocused)
+                                .onChange(of: editedTitle) { _, newValue in
+                                    if newValue.count > 100 {
+                                        editedTitle = String(newValue.prefix(100))
+                                    }
+                                }
                                 .onExitCommand { cancelRename() }
                         } else {
                             Text(session.title)
