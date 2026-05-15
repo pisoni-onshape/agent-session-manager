@@ -24,6 +24,7 @@ final class ViewModelRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: refreshedRecord.id,
                     fingerprint: refreshedRecord.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         refreshStarted.fulfill()
                         XCTAssertEqual(releaseRefresh.wait(timeout: .now() + 5), .success)
@@ -48,8 +49,41 @@ final class ViewModelRefreshTests: XCTestCase {
 
         XCTAssertFalse(viewModel.isRefreshing)
         XCTAssertNil(viewModel.refreshStatusText)
-        XCTAssertEqual(viewModel.displayedSessions.map(\.id), [refreshedRecord.id])
-        XCTAssertNotNil(viewModel.lastRefreshDisplayText)
+        XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [refreshedRecord.id])
+        XCTAssertNotNil(viewModel.lastRefreshDuration)
+        XCTAssertTrue(viewModel.lastRefreshDisplayText?.contains("Refreshed in") == true)
+    }
+
+    func testRebuildDisplaysElapsedDuration() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let rebuiltRecord = try makeRecord(
+            sessionID: "rebuilt-session",
+            title: "Rebuilt Session",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Transcript used for rebuild timing display testing."
+        )
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: rebuiltRecord.id,
+                    fingerprint: rebuiltRecord.fingerprint,
+                    isInProgress: false,
+                    loadRecord: { rebuiltRecord }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let viewModel = SessionBrowserViewModel(catalog: catalog)
+
+        await viewModel.rebuildSessions()
+
+        XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [rebuiltRecord.id])
+        XCTAssertNotNil(viewModel.lastRefreshDuration)
+        XCTAssertTrue(viewModel.lastRefreshDisplayText?.contains("Rebuilt in") == true)
     }
 
     func testScheduledRefreshDefersWhileAppIsActiveUntilAppBecomesInactive() async throws {
@@ -71,6 +105,7 @@ final class ViewModelRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: refreshedRecord.id,
                     fingerprint: refreshedRecord.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         loadCallCounter.increment()
                         refreshExecuted.fulfill()
@@ -97,7 +132,7 @@ final class ViewModelRefreshTests: XCTestCase {
         await waitForCondition { !viewModel.isRefreshing && !viewModel.hasPendingScheduledRefresh }
 
         XCTAssertEqual(loadCallCounter.value, 1)
-        XCTAssertEqual(viewModel.displayedSessions.map(\.id), [refreshedRecord.id])
+        XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [refreshedRecord.id])
     }
 
     func testScheduledRefreshCoalescesMultipleActiveTicksIntoOnePendingRefresh() async throws {
@@ -119,6 +154,7 @@ final class ViewModelRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: refreshedRecord.id,
                     fingerprint: refreshedRecord.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         loadCallCounter.increment()
                         refreshExecuted.fulfill()
@@ -146,7 +182,7 @@ final class ViewModelRefreshTests: XCTestCase {
         await waitForCondition { !viewModel.isRefreshing && !viewModel.hasPendingScheduledRefresh }
 
         XCTAssertEqual(loadCallCounter.value, 1)
-        XCTAssertEqual(viewModel.displayedSessions.map(\.id), [refreshedRecord.id])
+        XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [refreshedRecord.id])
     }
 
     func testLoadPresentedPlanReturnsPresentedPlanForInAppViewer() async throws {

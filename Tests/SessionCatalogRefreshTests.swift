@@ -61,6 +61,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: unchanged.id,
                     fingerprint: unchanged.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         XCTFail("Unchanged sessions should be reused without reparsing.")
                         return unchanged
@@ -69,6 +70,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: changed.id,
                     fingerprint: changedNewRecord.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         parseCount += 1
                         return changedNewRecord
@@ -77,6 +79,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: addedRecord.id,
                     fingerprint: addedRecord.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         parseCount += 1
                         return addedRecord
@@ -123,6 +126,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: record.id,
                     fingerprint: record.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         parseCount += 1
                         return record
@@ -171,6 +175,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: original.id,
                     fingerprint: refreshed.fingerprint,
+                    isInProgress: false,
                     loadRecord: { refreshed }
                 )
             ]
@@ -206,6 +211,7 @@ final class SessionCatalogRefreshTests: XCTestCase {
                 SessionScanCandidate(
                     id: original.id,
                     fingerprint: original.fingerprint,
+                    isInProgress: false,
                     loadRecord: {
                         parseCount += 1
                         return original

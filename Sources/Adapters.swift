@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 struct SessionScanCandidate {
     let id: String
@@ -21,6 +22,7 @@ public final class SessionCatalog {
     private let store: SQLiteSessionStore
     private let adapters: [SessionSourceAdapter]
     private let settingsProvider: () -> AppSettingsSnapshot
+    private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "SessionCatalog")
 
     init(
         storeURL: URL,
@@ -73,20 +75,44 @@ public final class SessionCatalog {
     }
 
     public func refreshSessions() throws -> [SessionRecord] {
+        let clock = ContinuousClock()
+        let refreshStart = clock.now
+
+        let stateLoadStart = clock.now
         let existingRecords = try store.fetchAll()
         let existingByID = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.id, $0) })
         let indexedSessionIDs = try store.indexedSessionIDs(for: Array(existingByID.keys))
-        let candidates = try adapters.flatMap { try $0.scanCandidates() }
+        let stateLoadDuration = clock.now - stateLoadStart
+
+        var candidates: [SessionScanCandidate] = []
+        var adapterScanDuration: Duration = .zero
+        var adapterScanSummaries: [String] = []
+        for adapter in adapters {
+            let scanStart = clock.now
+            let scannedCandidates = try adapter.scanCandidates()
+            let scanDuration = clock.now - scanStart
+            adapterScanDuration += scanDuration
+            adapterScanSummaries.append(
+                "\(String(describing: type(of: adapter))): \(scannedCandidates.count) candidates in \(Self.formatDurationForLog(scanDuration))"
+            )
+            candidates.append(contentsOf: scannedCandidates)
+        }
         let matcher = NewtonProjectMatcher(reposRootPath: settingsProvider().newtonReposRootPath)
 
         var refreshedRecordsByID: [String: SessionRecord] = [:]
         var changedRecords: [SessionRecord] = []
         var transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
+        var recordLoadDuration: Duration = .zero
+        var transcriptExtractionDuration: Duration = .zero
+        var reusedCandidateCount = 0
+        var loadedCandidateCount = 0
+        var fallbackCandidateCount = 0
 
         for candidate in candidates {
             if let existingRecord = existingByID[candidate.id],
                existingRecord.fingerprint == candidate.fingerprint,
                indexedSessionIDs.contains(candidate.id) {
+                reusedCandidateCount += 1
                 let reclassifiedRecord = existingRecord
                     .with(isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath))
                     .with(isInProgress: candidate.isInProgress)
@@ -97,12 +123,20 @@ public final class SessionCatalog {
                 continue
             }
 
-            if let record = try candidate.loadRecord() {
+            let loadStart = clock.now
+            let loadedRecord = try candidate.loadRecord()
+            recordLoadDuration += clock.now - loadStart
+
+            if let record = loadedRecord {
+                loadedCandidateCount += 1
                 let reclassifiedRecord = record.with(isNewtonProject: matcher.matches(workspacePath: record.workspacePath))
                 refreshedRecordsByID[reclassifiedRecord.id] = reclassifiedRecord
                 changedRecords.append(reclassifiedRecord)
+                let transcriptExtractionStart = clock.now
                 transcriptEntriesBySessionID[reclassifiedRecord.id] = try TranscriptPreviewExtractor.searchableEntries(for: reclassifiedRecord)
+                transcriptExtractionDuration += clock.now - transcriptExtractionStart
             } else if let existingRecord = existingByID[candidate.id] {
+                fallbackCandidateCount += 1
                 let reclassifiedRecord = existingRecord
                     .with(isNewtonProject: matcher.matches(workspacePath: existingRecord.workspacePath))
                     .with(isInProgress: candidate.isInProgress)
@@ -114,27 +148,76 @@ public final class SessionCatalog {
         }
 
         let removedIDs = Set(existingByID.keys).subtracting(refreshedRecordsByID.keys)
+        let storeUpdateStart = clock.now
         try store.applyIncrementalUpdate(
             records: changedRecords,
             removedIDs: Array(removedIDs),
             transcriptEntriesBySessionID: transcriptEntriesBySessionID
         )
+        let storeUpdateDuration = clock.now - storeUpdateStart
+        let totalDuration = clock.now - refreshStart
+
+        Self.logger.info(
+            "\(self.refreshLogSummary(candidates: candidates.count, reused: reusedCandidateCount, loaded: loadedCandidateCount, fallback: fallbackCandidateCount, removed: removedIDs.count, stateLoadDuration: stateLoadDuration, adapterScanDuration: adapterScanDuration, recordLoadDuration: recordLoadDuration, transcriptExtractionDuration: transcriptExtractionDuration, storeDuration: storeUpdateDuration, totalDuration: totalDuration), privacy: .public)"
+        )
+        if !adapterScanSummaries.isEmpty {
+            Self.logger.info("Refresh adapter timings: \(adapterScanSummaries.joined(separator: ", "), privacy: .public)")
+        }
 
         return refreshedRecordsByID.values.sorted(by: SessionCatalog.sort(lhs:rhs:))
     }
 
     public func rebuildSessions() throws -> [SessionRecord] {
-        let records = reclassifySessions(
-            try adapters
-            .flatMap { try $0.discover() }
-            .sorted(by: SessionCatalog.sort(lhs:rhs:))
-        )
-        let transcriptEntriesBySessionID = try Dictionary(
-            uniqueKeysWithValues: records.map { record in
-                (record.id, try TranscriptPreviewExtractor.searchableEntries(for: record))
+        let clock = ContinuousClock()
+        let rebuildStart = clock.now
+
+        var candidates: [SessionScanCandidate] = []
+        var adapterScanDuration: Duration = .zero
+        var adapterScanSummaries: [String] = []
+        for adapter in adapters {
+            let scanStart = clock.now
+            let scannedCandidates = try adapter.scanCandidates()
+            let scanDuration = clock.now - scanStart
+            adapterScanDuration += scanDuration
+            adapterScanSummaries.append(
+                "\(String(describing: type(of: adapter))): \(scannedCandidates.count) candidates in \(Self.formatDurationForLog(scanDuration))"
+            )
+            candidates.append(contentsOf: scannedCandidates)
+        }
+
+        var loadedRecords: [SessionRecord] = []
+        loadedRecords.reserveCapacity(candidates.count)
+        var recordLoadDuration: Duration = .zero
+        for candidate in candidates {
+            let loadStart = clock.now
+            let record = try candidate.loadRecord()
+            recordLoadDuration += clock.now - loadStart
+            if let record {
+                loadedRecords.append(record)
             }
-        )
+        }
+
+        let records = reclassifySessions(loadedRecords.sorted(by: SessionCatalog.sort(lhs:rhs:)))
+        var transcriptEntriesBySessionID: [String: [TranscriptIndexEntry]] = [:]
+        transcriptEntriesBySessionID.reserveCapacity(records.count)
+        var transcriptExtractionDuration: Duration = .zero
+        for record in records {
+            let transcriptExtractionStart = clock.now
+            transcriptEntriesBySessionID[record.id] = try TranscriptPreviewExtractor.searchableEntries(for: record)
+            transcriptExtractionDuration += clock.now - transcriptExtractionStart
+        }
+
+        let storeReplaceStart = clock.now
         try store.replaceAll(records: records, transcriptEntriesBySessionID: transcriptEntriesBySessionID)
+        let storeReplaceDuration = clock.now - storeReplaceStart
+        let totalDuration = clock.now - rebuildStart
+
+        Self.logger.info(
+            "\(self.rebuildLogSummary(candidates: candidates.count, records: records.count, adapterScanDuration: adapterScanDuration, recordLoadDuration: recordLoadDuration, transcriptExtractionDuration: transcriptExtractionDuration, storeDuration: storeReplaceDuration, totalDuration: totalDuration), privacy: .public)"
+        )
+        if !adapterScanSummaries.isEmpty {
+            Self.logger.info("Rebuild adapter timings: \(adapterScanSummaries.joined(separator: ", "), privacy: .public)")
+        }
         return records
     }
 
@@ -152,6 +235,63 @@ public final class SessionCatalog {
             }
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
+    }
+
+    private func refreshLogSummary(
+        candidates: Int,
+        reused: Int,
+        loaded: Int,
+        fallback: Int,
+        removed: Int,
+        stateLoadDuration: Duration,
+        adapterScanDuration: Duration,
+        recordLoadDuration: Duration,
+        transcriptExtractionDuration: Duration,
+        storeDuration: Duration,
+        totalDuration: Duration
+    ) -> String {
+        "Refresh completed in \(Self.formatDurationForLog(totalDuration)) - state load: \(Self.formatDurationForLog(stateLoadDuration)), adapter scan: \(Self.formatDurationForLog(adapterScanDuration)), record load: \(Self.formatDurationForLog(recordLoadDuration)), transcript indexing: \(Self.formatDurationForLog(transcriptExtractionDuration)), sqlite update: \(Self.formatDurationForLog(storeDuration)); candidates: \(candidates), reused: \(reused), loaded: \(loaded), fallback: \(fallback), removed: \(removed)"
+    }
+
+    private func rebuildLogSummary(
+        candidates: Int,
+        records: Int,
+        adapterScanDuration: Duration,
+        recordLoadDuration: Duration,
+        transcriptExtractionDuration: Duration,
+        storeDuration: Duration,
+        totalDuration: Duration
+    ) -> String {
+        "Rebuild completed in \(Self.formatDurationForLog(totalDuration)) - adapter scan: \(Self.formatDurationForLog(adapterScanDuration)), record load: \(Self.formatDurationForLog(recordLoadDuration)), transcript indexing: \(Self.formatDurationForLog(transcriptExtractionDuration)), sqlite replace: \(Self.formatDurationForLog(storeDuration)); candidates: \(candidates), records: \(records)"
+    }
+
+    private static func formatDurationForLog(_ duration: Duration) -> String {
+        let seconds = timeInterval(for: duration)
+        if seconds < 1 {
+            return String(format: "%.0fms", seconds * 1_000)
+        }
+        if seconds < 10 {
+            return String(format: "%.2fs", seconds)
+        }
+        if seconds < 60 {
+            return String(format: "%.1fs", seconds)
+        }
+
+        let totalSeconds = Int(seconds.rounded())
+        let minutes = totalSeconds / 60
+        let remainingSeconds = totalSeconds % 60
+        if minutes < 60 {
+            return "\(minutes)m \(remainingSeconds)s"
+        }
+
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        return "\(hours)h \(remainingMinutes)m \(remainingSeconds)s"
+    }
+
+    private static func timeInterval(for duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) + (TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000)
     }
 
     /// Renames a Copilot CLI session by updating workspace.yaml (name + user_named) and the catalog DB.

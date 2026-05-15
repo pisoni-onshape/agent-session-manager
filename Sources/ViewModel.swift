@@ -96,6 +96,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var hasCompletedInitialLoad = false
     @Published var errorMessage: String?
     @Published private(set) var lastRefreshDate: Date?
+    @Published private(set) var lastRefreshDuration: Duration?
     @Published private(set) var loadingTranscriptTitle: String?
 
     private let catalogController: SessionCatalogController?
@@ -107,6 +108,7 @@ final class SessionBrowserViewModel: ObservableObject {
     private var settingsCancellables: Set<AnyCancellable> = []
     private(set) var hasPendingScheduledRefresh = false
     private var isAppActive = true
+    private var lastCompletedRefreshActivity: RefreshActivity?
 
     init(catalog: SessionCatalog?, settings: AppSettingsStore? = nil) {
         self.catalogController = catalog.map(SessionCatalogController.init)
@@ -143,6 +145,8 @@ final class SessionBrowserViewModel: ObservableObject {
             applySessions(persisted)
             applyInProgressStateToAll()
             lastRefreshDate = catalogModifiedDate()
+            lastRefreshDuration = nil
+            lastCompletedRefreshActivity = nil
             if shouldRefreshOnLaunch() {
                 await performRefresh(
                     activity: .incremental,
@@ -251,7 +255,13 @@ final class SessionBrowserViewModel: ObservableObject {
 
     var lastRefreshDisplayText: String? {
         guard let lastRefreshDate else { return nil }
-        return lastRefreshDate.formatted(date: .abbreviated, time: .shortened)
+        let timestamp = lastRefreshDate.formatted(date: .abbreviated, time: .shortened)
+        guard let lastRefreshDuration,
+              let lastCompletedRefreshActivity,
+              let completionLabel = Self.completionLabel(for: lastCompletedRefreshActivity) else {
+            return timestamp
+        }
+        return "\(timestamp) - \(completionLabel) in \(Self.formatRefreshDuration(lastRefreshDuration))"
     }
 
     var refreshStatusText: String? {
@@ -695,6 +705,8 @@ final class SessionBrowserViewModel: ObservableObject {
         autoRefreshTask = nil
         hasPendingScheduledRefresh = false
         refreshActivity = activity
+        let clock = ContinuousClock()
+        let refreshStart = clock.now
         await Task.yield()
         defer {
             refreshActivity = .idle
@@ -709,6 +721,8 @@ final class SessionBrowserViewModel: ObservableObject {
         do {
             let refreshed = try await operation()
             applySessions(refreshed)
+            lastRefreshDuration = clock.now - refreshStart
+            lastCompletedRefreshActivity = activity
             lastRefreshDate = Date()
             errorMessage = nil
         } catch {
@@ -727,4 +741,43 @@ final class SessionBrowserViewModel: ObservableObject {
         return catalogController
     }
 
+    private static func completionLabel(for activity: RefreshActivity) -> String? {
+        switch activity {
+        case .idle:
+            return nil
+        case .incremental:
+            return "Refreshed"
+        case .rebuild:
+            return "Rebuilt"
+        }
+    }
+
+    private static func formatRefreshDuration(_ duration: Duration) -> String {
+        let seconds = timeInterval(for: duration)
+        if seconds < 1 {
+            return String(format: "%.0fms", seconds * 1_000)
+        }
+        if seconds < 10 {
+            return String(format: "%.1fs", seconds)
+        }
+        if seconds < 60 {
+            return "\(Int(seconds.rounded()))s"
+        }
+
+        let totalSeconds = Int(seconds.rounded())
+        let minutes = totalSeconds / 60
+        let remainingSeconds = totalSeconds % 60
+        if minutes < 60 {
+            return "\(minutes)m \(remainingSeconds)s"
+        }
+
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        return "\(hours)h \(remainingMinutes)m \(remainingSeconds)s"
+    }
+
+    private static func timeInterval(for duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) + (TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000)
+    }
 }
