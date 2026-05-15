@@ -84,18 +84,21 @@ public final class SessionCatalog {
         let indexedSessionIDs = try store.indexedSessionIDs(for: Array(existingByID.keys))
         let stateLoadDuration = clock.now - stateLoadStart
 
-        var candidates: [SessionScanCandidate] = []
-        var adapterScanDuration: Duration = .zero
-        var adapterScanSummaries: [String] = []
-        for adapter in adapters {
+        let scanResults = try parallelMap(adapters) { adapter in
             let scanStart = clock.now
             let scannedCandidates = try adapter.scanCandidates()
-            let scanDuration = clock.now - scanStart
-            adapterScanDuration += scanDuration
-            adapterScanSummaries.append(
-                "\(String(describing: type(of: adapter))): \(scannedCandidates.count) candidates in \(Self.formatDurationForLog(scanDuration))"
+            return TimedScanResult(
+                adapterName: String(describing: type(of: adapter)),
+                candidates: scannedCandidates,
+                duration: clock.now - scanStart
             )
-            candidates.append(contentsOf: scannedCandidates)
+        }
+        let candidates = scanResults.flatMap(\.candidates)
+        let adapterScanDuration = scanResults.reduce(into: Duration.zero) { partialResult, result in
+            partialResult += result.duration
+        }
+        let adapterScanSummaries = scanResults.map {
+            "\($0.adapterName): \($0.candidates.count) candidates in \(Self.formatDurationForLog($0.duration))"
         }
         let matcher = NewtonProjectMatcher(reposRootPath: settingsProvider().newtonReposRootPath)
 
@@ -171,18 +174,21 @@ public final class SessionCatalog {
         let clock = ContinuousClock()
         let rebuildStart = clock.now
 
-        var candidates: [SessionScanCandidate] = []
-        var adapterScanDuration: Duration = .zero
-        var adapterScanSummaries: [String] = []
-        for adapter in adapters {
+        let scanResults = try parallelMap(adapters) { adapter in
             let scanStart = clock.now
             let scannedCandidates = try adapter.scanCandidates()
-            let scanDuration = clock.now - scanStart
-            adapterScanDuration += scanDuration
-            adapterScanSummaries.append(
-                "\(String(describing: type(of: adapter))): \(scannedCandidates.count) candidates in \(Self.formatDurationForLog(scanDuration))"
+            return TimedScanResult(
+                adapterName: String(describing: type(of: adapter)),
+                candidates: scannedCandidates,
+                duration: clock.now - scanStart
             )
-            candidates.append(contentsOf: scannedCandidates)
+        }
+        let candidates = scanResults.flatMap(\.candidates)
+        let adapterScanDuration = scanResults.reduce(into: Duration.zero) { partialResult, result in
+            partialResult += result.duration
+        }
+        let adapterScanSummaries = scanResults.map {
+            "\($0.adapterName): \($0.candidates.count) candidates in \(Self.formatDurationForLog($0.duration))"
         }
 
         var loadedRecords: [SessionRecord] = []
@@ -292,6 +298,58 @@ public final class SessionCatalog {
     private static func timeInterval(for duration: Duration) -> TimeInterval {
         let components = duration.components
         return TimeInterval(components.seconds) + (TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000)
+    }
+
+    private struct TimedScanResult {
+        let adapterName: String
+        let candidates: [SessionScanCandidate]
+        let duration: Duration
+    }
+
+    private func parallelMap<Input, Output>(
+        _ inputs: [Input],
+        transform: @escaping (Input) throws -> Output
+    ) throws -> [Output] {
+        guard !inputs.isEmpty else { return [] }
+
+        let lock = NSLock()
+        var results = Array<Output?>(repeating: nil, count: inputs.count)
+        var firstError: Error?
+
+        DispatchQueue.concurrentPerform(iterations: inputs.count) { index in
+            do {
+                let output = try transform(inputs[index])
+                lock.lock()
+                results[index] = output
+                lock.unlock()
+            } catch {
+                lock.lock()
+                if firstError == nil {
+                    firstError = error
+                }
+                lock.unlock()
+            }
+        }
+
+        if let firstError {
+            throw firstError
+        }
+
+        var unwrappedResults: [Output] = []
+        unwrappedResults.reserveCapacity(inputs.count)
+        for result in results {
+            guard let result else {
+                throw NSError(
+                    domain: "SessionCatalog",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Parallel work completed without producing a result."
+                    ]
+                )
+            }
+            unwrappedResults.append(result)
+        }
+        return unwrappedResults
     }
 
     /// Renames a Copilot CLI session by updating workspace.yaml (name + user_named) and the catalog DB.
