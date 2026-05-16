@@ -51,6 +51,102 @@ final class VSCodeCopilotAdapterTests: XCTestCase {
         )
     }
 
+    func testVSCodeAdapterPrefersJSONSnapshotOverJSONLPatchWhenBothExist() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let workspaceStorageRoot = directory.appendingPathComponent("Code/User/workspaceStorage", isDirectory: true)
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        let chatSessionsDirectory = workspaceDirectory.appendingPathComponent("chatSessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: chatSessionsDirectory, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/repos/newton5"
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sessionID = "f2bb8379-47d1-4ea3-a081-7c4d78a2d53d"
+        let sessionFiles = try createVSCodeChatSessionFiles(
+            in: chatSessionsDirectory,
+            sessionID: sessionID,
+            customTitle: "Prefer snapshot JSON when both chat session files exist",
+            userText: "Review the snapshot precedence.",
+            assistantFragments: ["The ", "**JSON**", " snapshot wins."],
+            modelID: "copilot/gpt-5.4",
+            includeJSONSnapshot: true
+        )
+
+        let records = try VSCodeCopilotAdapter(root: workspaceStorageRoot).discover()
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].sourceSessionId, sessionID)
+        XCTAssertEqual(records[0].title, "Prefer snapshot JSON when both chat session files exist")
+        XCTAssertEqual(records[0].firstUserPreview, "Review the snapshot precedence.")
+        XCTAssertEqual(records[0].firstAssistantPreview, "The JSON snapshot wins.")
+        XCTAssertEqual(
+            records[0].rawTranscriptPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            sessionFiles.jsonURL?.standardizedFileURL.path
+        )
+    }
+
+    func testVSCodeAdapterPrefersChatSessionsOverLegacyTranscriptForSameSession() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let workspaceStorageRoot = directory.appendingPathComponent("Code/User/workspaceStorage", isDirectory: true)
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        let chatSessionsDirectory = workspaceDirectory.appendingPathComponent("chatSessions", isDirectory: true)
+        let legacyTranscriptsDirectory = workspaceDirectory.appendingPathComponent("GitHub.copilot-chat/transcripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: chatSessionsDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: legacyTranscriptsDirectory, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/repos/newton5"
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sessionID = "2e75ec67-4ee3-4334-9623-f6d84bdd4117"
+        try createVSCodeLegacyTranscript(
+            in: legacyTranscriptsDirectory,
+            sessionID: sessionID,
+            userText: "This is the legacy transcript.",
+            assistantText: "Legacy assistant reply."
+        )
+        let sessionFiles = try createVSCodeChatSessionFiles(
+            in: chatSessionsDirectory,
+            sessionID: sessionID,
+            customTitle: "Prefer chat sessions over legacy transcripts",
+            userText: "Use the richer chat session.",
+            assistantFragments: ["Chat ", "**session**", " content wins."],
+            modelID: "copilot/gpt-5.4",
+            includeJSONSnapshot: true
+        )
+
+        let records = try VSCodeCopilotAdapter(root: workspaceStorageRoot).discover()
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].sourceSessionId, sessionID)
+        XCTAssertEqual(records[0].title, "Prefer chat sessions over legacy transcripts")
+        XCTAssertEqual(records[0].firstUserPreview, "Use the richer chat session.")
+        XCTAssertEqual(records[0].firstAssistantPreview, "Chat session content wins.")
+        XCTAssertEqual(
+            records[0].rawTranscriptPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            sessionFiles.jsonURL?.standardizedFileURL.path
+        )
+    }
+
     func testTranscriptLoaderBuildsVSCodeChatSessionTranscript() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -202,4 +298,45 @@ private func createVSCodeChatSessionFiles(
     try jsonlText.write(to: jsonlURL, atomically: true, encoding: .utf8)
 
     return (jsonURL, jsonlURL)
+}
+
+private func createVSCodeLegacyTranscript(
+    in directory: URL,
+    sessionID: String,
+    userText: String,
+    assistantText: String
+) throws {
+    let transcriptURL = directory.appendingPathComponent("\(sessionID).jsonl")
+    let events: [[String: Any]] = [
+        [
+            "id": "session-start",
+            "type": "session.start",
+            "data": [
+                "sessionId": sessionID,
+                "startTime": "2026-05-08T10:00:00Z"
+            ]
+        ],
+        [
+            "id": "user-message",
+            "type": "user.message",
+            "data": [
+                "content": userText
+            ]
+        ],
+        [
+            "id": "assistant-message",
+            "type": "assistant.message",
+            "data": [
+                "content": assistantText
+            ]
+        ]
+    ]
+
+    let transcriptText = try events
+        .map { event in
+            let data = try JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])
+            return String(decoding: data, as: UTF8.self)
+        }
+        .joined(separator: "\n")
+    try transcriptText.write(to: transcriptURL, atomically: true, encoding: .utf8)
 }

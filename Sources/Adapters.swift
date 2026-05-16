@@ -935,13 +935,14 @@ private struct CursorGlassPlanTabProps: Decodable {
     let ownerAgentId: String?
 }
 
-private struct VSCodeSessionReference {
+private struct VSCodeScannedSession {
     let sessionID: String
     let transcriptFile: URL
+    let sessionMetadata: VSCodeSessionMetadata
 }
 
 private struct VSCodeSessionDiscoveryResult {
-    let references: [VSCodeSessionReference]
+    let sessions: [VSCodeScannedSession]
     let legacyTranscriptCount: Int
     let legacyEnumerationDuration: Duration
     let legacyPreviewExtractionDuration: Duration
@@ -973,7 +974,7 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
         var chatSessionEnumerationDuration: Duration = .zero
         var chatMetadataExtractionDuration: Duration = .zero
         var activeSessionLookupDuration: Duration = .zero
-        var candidateMetadataExtractionDuration: Duration = .zero
+        var candidateConstructionDuration: Duration = .zero
 
         let candidates = try workspaceDirectories.flatMap { workspaceDirectory -> [SessionScanCandidate] in
             let workspaceJSONURL = workspaceDirectory.appendingPathComponent("workspace.json")
@@ -997,7 +998,7 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
             chatSessionEnumerationDuration += discoveryResult.chatSessionEnumerationDuration
             chatMetadataExtractionDuration += discoveryResult.chatMetadataExtractionDuration
 
-            guard !discoveryResult.references.isEmpty else {
+            guard !discoveryResult.sessions.isEmpty else {
                 return []
             }
 
@@ -1005,11 +1006,10 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
             let activeSessionIDs = Self.activeSessionIDs(in: workspaceDirectory)
             activeSessionLookupDuration += clock.now - activeSessionLookupStart
 
-            return try discoveryResult.references.map { reference in
-                let candidateMetadataExtractionStart = clock.now
-                let sessionMetadata = try TranscriptPreviewExtractor.extractVSCodeSessionMetadata(from: reference.transcriptFile)
-                candidateMetadataExtractionDuration += clock.now - candidateMetadataExtractionStart
-                let sessionID = sessionMetadata.sessionId ?? reference.sessionID
+            return discoveryResult.sessions.map { session in
+                let candidateConstructionStart = clock.now
+                let sessionID = session.sessionID
+                let sessionMetadata = session.sessionMetadata
                 let title = sessionMetadata.title ?? TextSanitizer.inferTitle(
                     from: sessionMetadata.firstUser,
                     fallback: sessionID
@@ -1018,12 +1018,13 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                 let isActive = activeSessionIDs.contains(sessionID)
                 let fingerprint = combinedFingerprint(
                     paths: [
-                        reference.transcriptFile.path,
+                        session.transcriptFile.path,
                         workspaceJSONURL.path,
                         relatedPlanPath
                     ],
                     values: [isActive ? "active" : "inactive"]
                 )
+                candidateConstructionDuration += clock.now - candidateConstructionStart
 
                 return SessionScanCandidate(
                     id: "\(SessionSource.vscodeCopilot.rawValue)::\(sessionID)",
@@ -1031,7 +1032,7 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                     isInProgress: isActive,
                     loadRecord: {
                         try loadRecord(
-                            transcriptFile: reference.transcriptFile,
+                            transcriptFile: session.transcriptFile,
                             workspaceJSONURL: workspaceJSONURL,
                             workspacePath: workspacePath,
                             projectName: projectName,
@@ -1049,7 +1050,7 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
 
         let totalDuration = clock.now - scanStart
         Self.logger.info(
-            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace enumeration: \(SessionCatalog.formatDurationForLog(workspaceEnumerationDuration), privacy: .public), workspace metadata: \(SessionCatalog.formatDurationForLog(workspaceMetadataLoadDuration), privacy: .public), session discovery: \(SessionCatalog.formatDurationForLog(discoveryDuration), privacy: .public), legacy transcript enumeration: \(SessionCatalog.formatDurationForLog(legacyEnumerationDuration), privacy: .public), legacy preview extraction: \(SessionCatalog.formatDurationForLog(legacyPreviewExtractionDuration), privacy: .public), chat session enumeration: \(SessionCatalog.formatDurationForLog(chatSessionEnumerationDuration), privacy: .public), chat metadata extraction: \(SessionCatalog.formatDurationForLog(chatMetadataExtractionDuration), privacy: .public), active session lookup: \(SessionCatalog.formatDurationForLog(activeSessionLookupDuration), privacy: .public), candidate metadata extraction: \(SessionCatalog.formatDurationForLog(candidateMetadataExtractionDuration), privacy: .public); workspaces: \(workspaceDirectories.count), legacy transcripts: \(legacyTranscriptCount), chat session files: \(chatSessionFileCount), candidates: \(candidates.count)"
+            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace enumeration: \(SessionCatalog.formatDurationForLog(workspaceEnumerationDuration), privacy: .public), workspace metadata: \(SessionCatalog.formatDurationForLog(workspaceMetadataLoadDuration), privacy: .public), session discovery: \(SessionCatalog.formatDurationForLog(discoveryDuration), privacy: .public), legacy transcript enumeration: \(SessionCatalog.formatDurationForLog(legacyEnumerationDuration), privacy: .public), legacy preview extraction: \(SessionCatalog.formatDurationForLog(legacyPreviewExtractionDuration), privacy: .public), chat session enumeration: \(SessionCatalog.formatDurationForLog(chatSessionEnumerationDuration), privacy: .public), chat metadata extraction: \(SessionCatalog.formatDurationForLog(chatMetadataExtractionDuration), privacy: .public), active session lookup: \(SessionCatalog.formatDurationForLog(activeSessionLookupDuration), privacy: .public), candidate construction: \(SessionCatalog.formatDurationForLog(candidateConstructionDuration), privacy: .public); workspaces: \(workspaceDirectories.count), legacy transcripts: \(legacyTranscriptCount), chat session files: \(chatSessionFileCount), candidates: \(candidates.count)"
         )
         return candidates
     }
@@ -1082,7 +1083,7 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
 
     private func discoverSessionReferences(in workspaceDirectory: URL) throws -> VSCodeSessionDiscoveryResult {
         let clock = ContinuousClock()
-        var referencesBySessionID: [String: VSCodeSessionReference] = [:]
+        var sessionsByID: [String: VSCodeScannedSession] = [:]
         var legacyTranscriptCount = 0
         var legacyEnumerationDuration: Duration = .zero
         var legacyPreviewExtractionDuration: Duration = .zero
@@ -1102,9 +1103,18 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                 let preview = try TranscriptPreviewExtractor.extractEventTranscript(from: transcriptFile)
                 legacyPreviewExtractionDuration += clock.now - previewExtractionStart
                 let sessionID = preview.sessionId ?? transcriptFile.deletingPathExtension().lastPathComponent
-                referencesBySessionID[sessionID] = VSCodeSessionReference(
+                sessionsByID[sessionID] = VSCodeScannedSession(
                     sessionID: sessionID,
-                    transcriptFile: transcriptFile
+                    transcriptFile: transcriptFile,
+                    sessionMetadata: VSCodeSessionMetadata(
+                        sessionId: preview.sessionId,
+                        title: nil,
+                        startedAt: preview.startedAt,
+                        updatedAt: nil,
+                        latestModel: preview.latestModel,
+                        firstUser: preview.firstUser,
+                        firstAssistant: preview.firstAssistant
+                    )
                 )
             }
         }
@@ -1137,20 +1147,21 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                 let sessionMetadata = try TranscriptPreviewExtractor.extractVSCodeSessionMetadata(from: chatSessionFile)
                 chatMetadataExtractionDuration += clock.now - metadataExtractionStart
                 let sessionID = sessionMetadata.sessionId ?? chatSessionFile.deletingPathExtension().lastPathComponent
-                if let existing = referencesBySessionID[sessionID],
+                if let existing = sessionsByID[sessionID],
                    existing.transcriptFile.deletingLastPathComponent().lastPathComponent == "chatSessions" {
                     continue
                 }
 
-                referencesBySessionID[sessionID] = VSCodeSessionReference(
+                sessionsByID[sessionID] = VSCodeScannedSession(
                     sessionID: sessionID,
-                    transcriptFile: chatSessionFile
+                    transcriptFile: chatSessionFile,
+                    sessionMetadata: sessionMetadata
                 )
             }
         }
 
         return VSCodeSessionDiscoveryResult(
-            references: referencesBySessionID.values.sorted {
+            sessions: sessionsByID.values.sorted {
                 $0.sessionID.localizedCaseInsensitiveCompare($1.sessionID) == .orderedAscending
             },
             legacyTranscriptCount: legacyTranscriptCount,
