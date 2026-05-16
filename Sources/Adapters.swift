@@ -312,7 +312,7 @@ public final class SessionCatalog {
         "Rebuild completed in \(Self.formatDurationForLog(totalDuration)) - adapter scan: \(Self.formatDurationForLog(adapterScanDuration)), record load: \(Self.formatDurationForLog(recordLoadDuration)), transcript indexing: \(Self.formatDurationForLog(transcriptExtractionDuration)), sqlite replace: \(Self.formatDurationForLog(storeDuration)); candidates: \(candidates), records: \(records)"
     }
 
-    private static func formatDurationForLog(_ duration: Duration) -> String {
+    fileprivate static func formatDurationForLog(_ duration: Duration) -> String {
         let seconds = timeInterval(for: duration)
         if seconds < 1 {
             return String(format: "%.0fms", seconds * 1_000)
@@ -336,7 +336,7 @@ public final class SessionCatalog {
         return "\(hours)h \(remainingMinutes)m \(remainingSeconds)s"
     }
 
-    private static func timeInterval(for duration: Duration) -> TimeInterval {
+    fileprivate static func timeInterval(for duration: Duration) -> TimeInterval {
         let components = duration.components
         return TimeInterval(components.seconds) + (TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000)
     }
@@ -437,20 +437,37 @@ public final class SessionCatalog {
 
 public struct CopilotCLIAdapter: SessionSourceAdapter {
     let root: URL
+    private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "CopilotCLIAdapter")
 
     func scanCandidates() throws -> [SessionScanCandidate] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
 
+        let clock = ContinuousClock()
+        let scanStart = clock.now
+        let sessionEnumerationStart = clock.now
         let sessionDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
             .filter(\.hasDirectoryPath)
+        let sessionEnumerationDuration = clock.now - sessionEnumerationStart
 
-        return sessionDirectories.map { sessionDirectory in
+        var planLookupDuration: Duration = .zero
+        var inProgressCheckDuration: Duration = .zero
+        var fingerprintDuration: Duration = .zero
+
+        let candidates = sessionDirectories.map { sessionDirectory in
             let workspaceURL = sessionDirectory.appendingPathComponent("workspace.yaml")
             let eventLogURL = sessionDirectory.appendingPathComponent("events.jsonl")
             let checkpointIndexURL = sessionDirectory.appendingPathComponent("checkpoints/index.md")
+
+            let planLookupStart = clock.now
             let relatedPlanPath = SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
+            planLookupDuration += clock.now - planLookupStart
             let sessionID = sessionDirectory.lastPathComponent
+
+            let inProgressCheckStart = clock.now
             let inProgressState = Self.checkInProgress(in: sessionDirectory)
+            inProgressCheckDuration += clock.now - inProgressCheckStart
+
+            let fingerprintStart = clock.now
             let fingerprint = combinedFingerprint(
                 paths: [
                     workspaceURL.path,
@@ -459,6 +476,7 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
                 ],
                 values: [inProgressState.fingerprintValue]
             )
+            fingerprintDuration += clock.now - fingerprintStart
 
             return SessionScanCandidate(
                 id: "\(SessionSource.copilotCLI.rawValue)::\(sessionID)",
@@ -477,6 +495,12 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
                 }
             )
         }
+
+        let totalDuration = clock.now - scanStart
+        Self.logger.info(
+            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), session enumeration: \(SessionCatalog.formatDurationForLog(sessionEnumerationDuration), privacy: .public), plan lookup: \(SessionCatalog.formatDurationForLog(planLookupDuration), privacy: .public), in-progress checks: \(SessionCatalog.formatDurationForLog(inProgressCheckDuration), privacy: .public), fingerprinting: \(SessionCatalog.formatDurationForLog(fingerprintDuration), privacy: .public); session directories: \(sessionDirectories.count), candidates: \(candidates.count)"
+        )
+        return candidates
     }
 
     /// Checks whether the session directory has an active `inuse.{PID}.lock` file with a live PID.
@@ -574,18 +598,36 @@ struct CursorAdapter: SessionSourceAdapter {
     let root: URL
     let workspaceStorageRoot: URL
     let globalStorageRoot: URL
+    private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "CursorAdapter")
 
     func scanCandidates() throws -> [SessionScanCandidate] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
 
+        let clock = ContinuousClock()
+        let scanStart = clock.now
         let stateDatabaseURL = globalStorageRoot.appendingPathComponent("state.vscdb")
+
+        let workspaceReferenceLoadStart = clock.now
         let workspaceReferences = try loadWorkspaceReferencesByProjectDirectory()
+        let workspaceReferenceLoadDuration = clock.now - workspaceReferenceLoadStart
+
+        let titleReferenceLoadStart = clock.now
         let titleReferences = try loadTitleReferencesBySessionID(from: stateDatabaseURL)
+        let titleReferenceLoadDuration = clock.now - titleReferenceLoadStart
+
+        let planReferenceLoadStart = clock.now
         let planReferences = try loadPlanReferencesBySessionID(from: stateDatabaseURL)
+        let planReferenceLoadDuration = clock.now - planReferenceLoadStart
+
+        let projectEnumerationStart = clock.now
         let projectDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
             .filter(\.hasDirectoryPath)
+        let projectEnumerationDuration = clock.now - projectEnumerationStart
 
-        return try projectDirectories.flatMap { projectDirectory -> [SessionScanCandidate] in
+        var sessionEnumerationDuration: Duration = .zero
+        var fingerprintDuration: Duration = .zero
+
+        let candidates = try projectDirectories.flatMap { projectDirectory -> [SessionScanCandidate] in
             let transcriptRoot = projectDirectory.appendingPathComponent("agent-transcripts", isDirectory: true)
             guard FileManager.default.fileExists(atPath: transcriptRoot.path) else { return [] }
 
@@ -596,8 +638,10 @@ struct CursorAdapter: SessionSourceAdapter {
                 ?? PathUtilities.cursorFallbackProjectName(from: projectDirectory.lastPathComponent)
             let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName)
 
+            let sessionEnumerationStart = clock.now
             let sessionDirectories = try FileManager.default.contentsOfDirectory(at: transcriptRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
                 .filter(\.hasDirectoryPath)
+            sessionEnumerationDuration += clock.now - sessionEnumerationStart
 
             return sessionDirectories.map { sessionDirectory in
                 let sessionID = sessionDirectory.lastPathComponent
@@ -605,10 +649,13 @@ struct CursorAdapter: SessionSourceAdapter {
                 let relatedPlanPath = planReferences[sessionID]?.path
                     ?? SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
                 let titleReference = titleReferences[sessionID]
+
+                let fingerprintStart = clock.now
                 let fingerprint = combinedFingerprint(
                     paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath],
                     values: [titleReference?.title]
                 )
+                fingerprintDuration += clock.now - fingerprintStart
 
                 return SessionScanCandidate(
                     id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
@@ -628,6 +675,12 @@ struct CursorAdapter: SessionSourceAdapter {
                 )
             }
         }
+
+        let totalDuration = clock.now - scanStart
+        Self.logger.info(
+            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace references: \(SessionCatalog.formatDurationForLog(workspaceReferenceLoadDuration), privacy: .public), title references: \(SessionCatalog.formatDurationForLog(titleReferenceLoadDuration), privacy: .public), plan references: \(SessionCatalog.formatDurationForLog(planReferenceLoadDuration), privacy: .public), project enumeration: \(SessionCatalog.formatDurationForLog(projectEnumerationDuration), privacy: .public), session enumeration: \(SessionCatalog.formatDurationForLog(sessionEnumerationDuration), privacy: .public), fingerprinting: \(SessionCatalog.formatDurationForLog(fingerprintDuration), privacy: .public); project directories: \(projectDirectories.count), candidates: \(candidates.count)"
+        )
+        return candidates
     }
 
     private func loadWorkspaceReferencesByProjectDirectory() throws -> [String: CursorWorkspaceReference] {
@@ -887,33 +940,75 @@ private struct VSCodeSessionReference {
     let transcriptFile: URL
 }
 
+private struct VSCodeSessionDiscoveryResult {
+    let references: [VSCodeSessionReference]
+    let legacyTranscriptCount: Int
+    let legacyEnumerationDuration: Duration
+    let legacyPreviewExtractionDuration: Duration
+    let chatSessionFileCount: Int
+    let chatSessionEnumerationDuration: Duration
+    let chatMetadataExtractionDuration: Duration
+}
+
 public struct VSCodeCopilotAdapter: SessionSourceAdapter {
     let root: URL
+    private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "VSCodeCopilotAdapter")
 
     func scanCandidates() throws -> [SessionScanCandidate] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
 
+        let clock = ContinuousClock()
+        let scanStart = clock.now
+        let workspaceEnumerationStart = clock.now
         let workspaceDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
             .filter(\.hasDirectoryPath)
+        let workspaceEnumerationDuration = clock.now - workspaceEnumerationStart
 
-        return try workspaceDirectories.flatMap { workspaceDirectory -> [SessionScanCandidate] in
+        var workspaceMetadataLoadDuration: Duration = .zero
+        var discoveryDuration: Duration = .zero
+        var legacyTranscriptCount = 0
+        var legacyEnumerationDuration: Duration = .zero
+        var legacyPreviewExtractionDuration: Duration = .zero
+        var chatSessionFileCount = 0
+        var chatSessionEnumerationDuration: Duration = .zero
+        var chatMetadataExtractionDuration: Duration = .zero
+        var activeSessionLookupDuration: Duration = .zero
+        var candidateMetadataExtractionDuration: Duration = .zero
+
+        let candidates = try workspaceDirectories.flatMap { workspaceDirectory -> [SessionScanCandidate] in
             let workspaceJSONURL = workspaceDirectory.appendingPathComponent("workspace.json")
             guard FileManager.default.fileExists(atPath: workspaceJSONURL.path) else {
                 return []
             }
 
+            let workspaceMetadataLoadStart = clock.now
             let metadata = try loadJSONDictionary(from: workspaceJSONURL)
+            workspaceMetadataLoadDuration += clock.now - workspaceMetadataLoadStart
             let workspacePath = PathUtilities.workspacePathFromFileURI((metadata?["folder"] as? String) ?? (metadata?["workspace"] as? String))
             let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: workspaceDirectory.lastPathComponent)
-            let sessionReferences = try discoverSessionReferences(in: workspaceDirectory)
-            guard !sessionReferences.isEmpty else {
+
+            let discoveryStart = clock.now
+            let discoveryResult = try discoverSessionReferences(in: workspaceDirectory)
+            discoveryDuration += clock.now - discoveryStart
+            legacyTranscriptCount += discoveryResult.legacyTranscriptCount
+            legacyEnumerationDuration += discoveryResult.legacyEnumerationDuration
+            legacyPreviewExtractionDuration += discoveryResult.legacyPreviewExtractionDuration
+            chatSessionFileCount += discoveryResult.chatSessionFileCount
+            chatSessionEnumerationDuration += discoveryResult.chatSessionEnumerationDuration
+            chatMetadataExtractionDuration += discoveryResult.chatMetadataExtractionDuration
+
+            guard !discoveryResult.references.isEmpty else {
                 return []
             }
 
+            let activeSessionLookupStart = clock.now
             let activeSessionIDs = Self.activeSessionIDs(in: workspaceDirectory)
+            activeSessionLookupDuration += clock.now - activeSessionLookupStart
 
-            return try sessionReferences.map { reference in
+            return try discoveryResult.references.map { reference in
+                let candidateMetadataExtractionStart = clock.now
                 let sessionMetadata = try TranscriptPreviewExtractor.extractVSCodeSessionMetadata(from: reference.transcriptFile)
+                candidateMetadataExtractionDuration += clock.now - candidateMetadataExtractionStart
                 let sessionID = sessionMetadata.sessionId ?? reference.sessionID
                 let title = sessionMetadata.title ?? TextSanitizer.inferTitle(
                     from: sessionMetadata.firstUser,
@@ -951,6 +1046,12 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                 )
             }
         }
+
+        let totalDuration = clock.now - scanStart
+        Self.logger.info(
+            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace enumeration: \(SessionCatalog.formatDurationForLog(workspaceEnumerationDuration), privacy: .public), workspace metadata: \(SessionCatalog.formatDurationForLog(workspaceMetadataLoadDuration), privacy: .public), session discovery: \(SessionCatalog.formatDurationForLog(discoveryDuration), privacy: .public), legacy transcript enumeration: \(SessionCatalog.formatDurationForLog(legacyEnumerationDuration), privacy: .public), legacy preview extraction: \(SessionCatalog.formatDurationForLog(legacyPreviewExtractionDuration), privacy: .public), chat session enumeration: \(SessionCatalog.formatDurationForLog(chatSessionEnumerationDuration), privacy: .public), chat metadata extraction: \(SessionCatalog.formatDurationForLog(chatMetadataExtractionDuration), privacy: .public), active session lookup: \(SessionCatalog.formatDurationForLog(activeSessionLookupDuration), privacy: .public), candidate metadata extraction: \(SessionCatalog.formatDurationForLog(candidateMetadataExtractionDuration), privacy: .public); workspaces: \(workspaceDirectories.count), legacy transcripts: \(legacyTranscriptCount), chat session files: \(chatSessionFileCount), candidates: \(candidates.count)"
+        )
+        return candidates
     }
 
     /// Reads `chat.terminalSessions` from the workspace's state.vscdb and returns session IDs with at least one live PID.
@@ -979,18 +1080,27 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
         return liveSessionIDs
     }
 
-    private func discoverSessionReferences(in workspaceDirectory: URL) throws -> [VSCodeSessionReference] {
+    private func discoverSessionReferences(in workspaceDirectory: URL) throws -> VSCodeSessionDiscoveryResult {
+        let clock = ContinuousClock()
         var referencesBySessionID: [String: VSCodeSessionReference] = [:]
+        var legacyTranscriptCount = 0
+        var legacyEnumerationDuration: Duration = .zero
+        var legacyPreviewExtractionDuration: Duration = .zero
         let legacyTranscriptDirectory = workspaceDirectory.appendingPathComponent("GitHub.copilot-chat/transcripts", isDirectory: true)
         if FileManager.default.fileExists(atPath: legacyTranscriptDirectory.path) {
+            let legacyEnumerationStart = clock.now
             let transcriptFiles = try FileManager.default.contentsOfDirectory(
                 at: legacyTranscriptDirectory,
                 includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles]
             ).filter { $0.pathExtension.lowercased() == "jsonl" }
+            legacyEnumerationDuration += clock.now - legacyEnumerationStart
+            legacyTranscriptCount = transcriptFiles.count
 
             for transcriptFile in transcriptFiles {
+                let previewExtractionStart = clock.now
                 let preview = try TranscriptPreviewExtractor.extractEventTranscript(from: transcriptFile)
+                legacyPreviewExtractionDuration += clock.now - previewExtractionStart
                 let sessionID = preview.sessionId ?? transcriptFile.deletingPathExtension().lastPathComponent
                 referencesBySessionID[sessionID] = VSCodeSessionReference(
                     sessionID: sessionID,
@@ -999,8 +1109,12 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
             }
         }
 
+        var chatSessionFileCount = 0
+        var chatSessionEnumerationDuration: Duration = .zero
+        var chatMetadataExtractionDuration: Duration = .zero
         let chatSessionsDirectory = workspaceDirectory.appendingPathComponent("chatSessions", isDirectory: true)
         if FileManager.default.fileExists(atPath: chatSessionsDirectory.path) {
+            let chatSessionEnumerationStart = clock.now
             let chatSessionFiles = try FileManager.default.contentsOfDirectory(
                 at: chatSessionsDirectory,
                 includingPropertiesForKeys: nil,
@@ -1015,9 +1129,13 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                 }
                 return lhs.lastPathComponent.localizedCaseInsensitiveCompare(rhs.lastPathComponent) == .orderedAscending
             }
+            chatSessionEnumerationDuration += clock.now - chatSessionEnumerationStart
+            chatSessionFileCount = chatSessionFiles.count
 
             for chatSessionFile in chatSessionFiles {
+                let metadataExtractionStart = clock.now
                 let sessionMetadata = try TranscriptPreviewExtractor.extractVSCodeSessionMetadata(from: chatSessionFile)
+                chatMetadataExtractionDuration += clock.now - metadataExtractionStart
                 let sessionID = sessionMetadata.sessionId ?? chatSessionFile.deletingPathExtension().lastPathComponent
                 if let existing = referencesBySessionID[sessionID],
                    existing.transcriptFile.deletingLastPathComponent().lastPathComponent == "chatSessions" {
@@ -1031,9 +1149,17 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
             }
         }
 
-        return referencesBySessionID.values.sorted {
-            $0.sessionID.localizedCaseInsensitiveCompare($1.sessionID) == .orderedAscending
-        }
+        return VSCodeSessionDiscoveryResult(
+            references: referencesBySessionID.values.sorted {
+                $0.sessionID.localizedCaseInsensitiveCompare($1.sessionID) == .orderedAscending
+            },
+            legacyTranscriptCount: legacyTranscriptCount,
+            legacyEnumerationDuration: legacyEnumerationDuration,
+            legacyPreviewExtractionDuration: legacyPreviewExtractionDuration,
+            chatSessionFileCount: chatSessionFileCount,
+            chatSessionEnumerationDuration: chatSessionEnumerationDuration,
+            chatMetadataExtractionDuration: chatMetadataExtractionDuration
+        )
     }
 
     private func loadRecord(
