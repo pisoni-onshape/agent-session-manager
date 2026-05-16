@@ -238,6 +238,47 @@ final class SessionCatalogRefreshTests: XCTestCase {
         XCTAssertFalse(refreshed.first?.isNewtonProject == true)
     }
 
+    func testIncrementalRefreshRepeatedNoOpDoesNotReparseIndexedSessions() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        var parseCount = 0
+        let record = try makeRecord(
+            sessionID: "repeat-noop",
+            title: "Repeat no-op",
+            fingerprint: "stable",
+            directory: directory,
+            transcriptText: "This session should only parse once."
+        )
+
+        let adapter = FakeSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: record.id,
+                    fingerprint: record.fingerprint,
+                    isInProgress: false,
+                    loadRecord: {
+                        parseCount += 1
+                        return record
+                    }
+                )
+            ]
+        )
+
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        _ = try catalog.refreshSessions()
+        _ = try catalog.refreshSessions()
+
+        XCTAssertEqual(parseCount, 1)
+        XCTAssertEqual(try store.fetchAll().map(\.sourceSessionId), ["repeat-noop"])
+        XCTAssertEqual(
+            try store.searchTranscriptEntries(sessionIDs: [record.id], query: "only parse once").map(\.sessionRecordID),
+            [record.id]
+        )
+    }
+
     func testCursorGlobalPlanLinkIsPersistedAndIndexedDuringRebuildAndRefresh() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -147,6 +147,119 @@ final class VSCodeCopilotAdapterTests: XCTestCase {
         )
     }
 
+    func testVSCodeAdapterRefreshesChangedChatSessionMetadataAcrossRepeatedDiscover() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let workspaceStorageRoot = directory.appendingPathComponent("Code/User/workspaceStorage", isDirectory: true)
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        let chatSessionsDirectory = workspaceDirectory.appendingPathComponent("chatSessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: chatSessionsDirectory, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/repos/newton5"
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sessionID = "cache-refresh-session"
+        _ = try createVSCodeChatSessionFiles(
+            in: chatSessionsDirectory,
+            sessionID: sessionID,
+            customTitle: "Before refresh invalidation",
+            userText: "Original user prompt.",
+            assistantFragments: ["Original ", "**assistant**", " response."],
+            modelID: "copilot/gpt-5.4",
+            includeJSONSnapshot: false
+        )
+
+        let adapter = VSCodeCopilotAdapter(root: workspaceStorageRoot)
+        let firstRecords = try adapter.discover()
+
+        XCTAssertEqual(firstRecords.count, 1)
+        XCTAssertEqual(firstRecords[0].title, "Before refresh invalidation")
+        XCTAssertEqual(firstRecords[0].firstUserPreview, "Original user prompt.")
+        XCTAssertEqual(firstRecords[0].firstAssistantPreview, "Original assistant response.")
+
+        _ = try createVSCodeChatSessionFiles(
+            in: chatSessionsDirectory,
+            sessionID: sessionID,
+            customTitle: "After refresh invalidation with updated title",
+            userText: "Updated user prompt with more text.",
+            assistantFragments: ["Updated ", "**assistant**", " response with more detail."],
+            modelID: "copilot/gpt-5.4",
+            includeJSONSnapshot: false
+        )
+
+        let secondRecords = try adapter.discover()
+
+        XCTAssertEqual(secondRecords.count, 1)
+        XCTAssertEqual(secondRecords[0].title, "After refresh invalidation with updated title")
+        XCTAssertEqual(secondRecords[0].firstUserPreview, "Updated user prompt with more text.")
+        XCTAssertEqual(secondRecords[0].firstAssistantPreview, "Updated assistant response with more detail.")
+    }
+
+    func testVSCodeAdapterDetectsAddedAndDeletedChatSessionsAcrossRepeatedDiscover() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let workspaceStorageRoot = directory.appendingPathComponent("Code/User/workspaceStorage", isDirectory: true)
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        let chatSessionsDirectory = workspaceDirectory.appendingPathComponent("chatSessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: chatSessionsDirectory, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/repos/newton5"
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let adapter = VSCodeCopilotAdapter(root: workspaceStorageRoot)
+        let firstSessionID = "cache-add-delete-1"
+        let secondSessionID = "cache-add-delete-2"
+
+        let firstSessionFiles = try createVSCodeChatSessionFiles(
+            in: chatSessionsDirectory,
+            sessionID: firstSessionID,
+            customTitle: "First session",
+            userText: "First session prompt.",
+            assistantFragments: ["First ", "**assistant**", " reply."],
+            modelID: "copilot/gpt-5.4",
+            includeJSONSnapshot: false
+        )
+
+        XCTAssertEqual(try adapter.discover().map(\.sourceSessionId), [firstSessionID])
+
+        _ = try createVSCodeChatSessionFiles(
+            in: chatSessionsDirectory,
+            sessionID: secondSessionID,
+            customTitle: "Second session",
+            userText: "Second session prompt.",
+            assistantFragments: ["Second ", "**assistant**", " reply."],
+            modelID: "copilot/gpt-5.4",
+            includeJSONSnapshot: false
+        )
+
+        XCTAssertEqual(
+            Set(try adapter.discover().map(\.sourceSessionId)),
+            Set([firstSessionID, secondSessionID])
+        )
+
+        try FileManager.default.removeItem(at: firstSessionFiles.jsonlURL)
+
+        XCTAssertEqual(try adapter.discover().map(\.sourceSessionId), [secondSessionID])
+    }
+
     func testTranscriptLoaderBuildsVSCodeChatSessionTranscript() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
