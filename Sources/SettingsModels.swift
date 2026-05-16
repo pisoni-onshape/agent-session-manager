@@ -132,6 +132,7 @@ public enum AppSettingsPersistence {
     public static let refreshOnFirstLaunchAfterBootKey = "settings.refreshOnFirstLaunchAfterBoot"
     public static let refreshOnSubsequentLaunchesKey = "settings.refreshOnSubsequentLaunches"
     public static let lastSeenBootIdentifierKey = "settings.lastSeenBootIdentifier"
+    public static let lastSuccessfulRefreshDateKey = "settings.lastSuccessfulRefreshDate"
 
     public static func currentBootIdentifier(
         referenceDate: Date = Date(),
@@ -190,5 +191,18 @@ public enum AppSettingsPersistence {
         }
 
         return LaunchRefreshDecision(kind: kind, shouldRefresh: shouldRefresh)
+    }
+
+    public static func loadLastSuccessfulRefreshDate(
+        userDefaults: UserDefaults = .standard
+    ) -> Date? {
+        userDefaults.object(forKey: lastSuccessfulRefreshDateKey) as? Date
+    }
+
+    public static func recordLastSuccessfulRefreshDate(
+        _ date: Date,
+        userDefaults: UserDefaults = .standard
+    ) {
+        userDefaults.set(date, forKey: lastSuccessfulRefreshDateKey)
     }
 }

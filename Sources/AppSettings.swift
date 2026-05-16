@@ -187,4 +187,12 @@ final class AppSettingsStore: ObservableObject {
             systemUptime: systemUptime
         )
     }
+
+    func lastSuccessfulRefreshDate() -> Date? {
+        AppSettingsPersistence.loadLastSuccessfulRefreshDate(userDefaults: userDefaults)
+    }
+
+    func recordLastSuccessfulRefreshDate(_ date: Date) {
+        AppSettingsPersistence.recordLastSuccessfulRefreshDate(date, userDefaults: userDefaults)
+    }
 }

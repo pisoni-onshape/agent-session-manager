@@ -144,7 +144,7 @@ final class SessionBrowserViewModel: ObservableObject {
             let persisted = try await catalogController.loadPersistedSessions()
             applySessions(persisted)
             applyInProgressStateToAll()
-            lastRefreshDate = catalogModifiedDate()
+            lastRefreshDate = settings?.lastSuccessfulRefreshDate() ?? catalogModifiedDate()
             lastRefreshDuration = nil
             lastCompletedRefreshActivity = nil
             if shouldRefreshOnLaunch() {
@@ -723,7 +723,9 @@ final class SessionBrowserViewModel: ObservableObject {
             applySessions(refreshed)
             lastRefreshDuration = clock.now - refreshStart
             lastCompletedRefreshActivity = activity
-            lastRefreshDate = Date()
+            let completedAt = Date()
+            lastRefreshDate = completedAt
+            settings?.recordLastSuccessfulRefreshDate(completedAt)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

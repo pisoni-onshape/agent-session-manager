@@ -185,6 +185,53 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [refreshedRecord.id])
     }
 
+    func testLoadInitialDataUsesPersistedLastSuccessfulRefreshDate() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let record = try makeRecord(
+            sessionID: "persisted-refresh",
+            title: "Persisted Refresh",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Transcript used for persisted refresh display testing."
+        )
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: record.id,
+                    fingerprint: record.fingerprint,
+                    isInProgress: false,
+                    loadRecord: { record }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        _ = try catalog.refreshSessions()
+
+        let settingsSuiteName = "ViewModelRefreshTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: settingsSuiteName)!
+        defaults.removePersistentDomain(forName: settingsSuiteName)
+        let settings = AppSettingsStore(
+            userDefaults: defaults,
+            launchAtLoginController: MockLaunchAtLoginController(status: .notRegistered),
+            homeDirectoryURL: URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        )
+        settings.setRefreshOnFirstLaunchAfterBoot(false)
+        settings.setRefreshOnSubsequentLaunches(false)
+        let persistedRefreshDate = Date(timeIntervalSince1970: 1_715_372_900)
+        settings.recordLastSuccessfulRefreshDate(persistedRefreshDate)
+
+        let viewModel = SessionBrowserViewModel(catalog: catalog, settings: settings)
+
+        await viewModel.loadInitialData()
+
+        XCTAssertEqual(viewModel.lastRefreshDate, persistedRefreshDate)
+        XCTAssertNil(viewModel.lastRefreshDuration)
+        XCTAssertEqual(viewModel.displayedSessions.map(\.id), [record.id])
+    }
+
     func testLoadPresentedPlanReturnsPresentedPlanForInAppViewer() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

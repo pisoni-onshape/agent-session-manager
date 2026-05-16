@@ -127,6 +127,31 @@ final class AppSettingsTests: XCTestCase {
             )
         )
     }
+
+    func testLastSuccessfulRefreshDatePersistsAcrossSettingsStoreReload() {
+        let suiteName = "AppSettingsTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let controller = MockLaunchAtLoginController(status: .notRegistered)
+        let homeDirectory = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        let refreshDate = Date(timeIntervalSince1970: 1_715_370_200)
+
+        let store = AppSettingsStore(
+            userDefaults: defaults,
+            launchAtLoginController: controller,
+            homeDirectoryURL: homeDirectory
+        )
+        store.recordLastSuccessfulRefreshDate(refreshDate)
+
+        let reopenedStore = AppSettingsStore(
+            userDefaults: defaults,
+            launchAtLoginController: controller,
+            homeDirectoryURL: homeDirectory
+        )
+
+        XCTAssertEqual(reopenedStore.lastSuccessfulRefreshDate(), refreshDate)
+    }
 }
 
 private final class MockLaunchAtLoginController: LaunchAtLoginControlling {
