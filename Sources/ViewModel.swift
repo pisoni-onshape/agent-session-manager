@@ -108,7 +108,6 @@ final class SessionBrowserViewModel: ObservableObject {
     private var settingsCancellables: Set<AnyCancellable> = []
     private(set) var hasPendingScheduledRefresh = false
     private var isAppActive = true
-    private var lastCompletedRefreshActivity: RefreshActivity?
 
     init(catalog: SessionCatalog?, settings: AppSettingsStore? = nil) {
         self.catalogController = catalog.map(SessionCatalogController.init)
@@ -146,7 +145,6 @@ final class SessionBrowserViewModel: ObservableObject {
             applyInProgressStateToAll()
             lastRefreshDate = settings?.lastSuccessfulRefreshDate() ?? catalogModifiedDate()
             lastRefreshDuration = nil
-            lastCompletedRefreshActivity = nil
             if shouldRefreshOnLaunch() {
                 await performRefresh(
                     activity: .incremental,
@@ -256,12 +254,10 @@ final class SessionBrowserViewModel: ObservableObject {
     var lastRefreshDisplayText: String? {
         guard let lastRefreshDate else { return nil }
         let timestamp = lastRefreshDate.formatted(date: .abbreviated, time: .shortened)
-        guard let lastRefreshDuration,
-              let lastCompletedRefreshActivity,
-              let completionLabel = Self.completionLabel(for: lastCompletedRefreshActivity) else {
-            return timestamp
+        guard let lastRefreshDuration else {
+            return "Last refreshed at: \(timestamp)"
         }
-        return "\(timestamp) - \(completionLabel) in \(Self.formatRefreshDuration(lastRefreshDuration))"
+        return "Last refreshed at: \(timestamp) in \(Self.formatRefreshDuration(lastRefreshDuration))"
     }
 
     var refreshStatusText: String? {
@@ -722,7 +718,6 @@ final class SessionBrowserViewModel: ObservableObject {
             let refreshed = try await operation()
             applySessions(refreshed)
             lastRefreshDuration = clock.now - refreshStart
-            lastCompletedRefreshActivity = activity
             let completedAt = Date()
             lastRefreshDate = completedAt
             settings?.recordLastSuccessfulRefreshDate(completedAt)
@@ -741,17 +736,6 @@ final class SessionBrowserViewModel: ObservableObject {
             )
         }
         return catalogController
-    }
-
-    private static func completionLabel(for activity: RefreshActivity) -> String? {
-        switch activity {
-        case .idle:
-            return nil
-        case .incremental:
-            return "Refreshed"
-        case .rebuild:
-            return "Rebuilt"
-        }
     }
 
     private static func formatRefreshDuration(_ duration: Duration) -> String {

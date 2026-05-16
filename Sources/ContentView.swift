@@ -105,11 +105,6 @@ struct ContentView: View {
                     RefreshToolbarButtonLabel(isRefreshing: viewModel.isRefreshing)
                 }
                 .disabled(viewModel.isRefreshing)
-
-                if let lastRefreshDisplayText = viewModel.lastRefreshDisplayText {
-                    Text(lastRefreshDisplayText)
-                        .foregroundStyle(.secondary)
-                }
             }
         }
         .safeAreaInset(edge: .bottom) {

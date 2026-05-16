@@ -51,7 +51,8 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertNil(viewModel.refreshStatusText)
         XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [refreshedRecord.id])
         XCTAssertNotNil(viewModel.lastRefreshDuration)
-        XCTAssertTrue(viewModel.lastRefreshDisplayText?.contains("Refreshed in") == true)
+        XCTAssertTrue(viewModel.lastRefreshDisplayText?.hasPrefix("Last refreshed at: ") == true)
+        XCTAssertTrue(viewModel.lastRefreshDisplayText?.contains(" in ") == true)
     }
 
     func testRebuildDisplaysElapsedDuration() async throws {
@@ -83,7 +84,8 @@ final class ViewModelRefreshTests: XCTestCase {
 
         XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [rebuiltRecord.id])
         XCTAssertNotNil(viewModel.lastRefreshDuration)
-        XCTAssertTrue(viewModel.lastRefreshDisplayText?.contains("Rebuilt in") == true)
+        XCTAssertTrue(viewModel.lastRefreshDisplayText?.hasPrefix("Last refreshed at: ") == true)
+        XCTAssertTrue(viewModel.lastRefreshDisplayText?.contains(" in ") == true)
     }
 
     func testScheduledRefreshDefersWhileAppIsActiveUntilAppBecomesInactive() async throws {
@@ -230,6 +232,8 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertEqual(viewModel.lastRefreshDate, persistedRefreshDate)
         XCTAssertNil(viewModel.lastRefreshDuration)
         XCTAssertEqual(viewModel.displayedSessions.map(\.id), [record.id])
+        XCTAssertTrue(viewModel.lastRefreshDisplayText?.hasPrefix("Last refreshed at: ") == true)
+        XCTAssertFalse(viewModel.lastRefreshDisplayText?.contains(" in ") == true)
     }
 
     func testLoadPresentedPlanReturnsPresentedPlanForInAppViewer() async throws {
