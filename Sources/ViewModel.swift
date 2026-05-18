@@ -98,6 +98,7 @@ final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var lastRefreshDate: Date?
     @Published private(set) var lastRefreshDuration: Duration?
     @Published private(set) var loadingTranscriptTitle: String?
+    @Published private(set) var nextScheduledRefreshDate: Date?
 
     private let catalogController: SessionCatalogController?
     private let settings: AppSettingsStore?
@@ -254,10 +255,13 @@ final class SessionBrowserViewModel: ObservableObject {
     var lastRefreshDisplayText: String? {
         guard let lastRefreshDate else { return nil }
         let timestamp = lastRefreshDate.formatted(date: .abbreviated, time: .shortened)
-        guard let lastRefreshDuration else {
-            return "Last refreshed at: \(timestamp)"
+        var text = lastRefreshDuration.map { "Last refreshed at: \(timestamp) in \(Self.formatRefreshDuration($0))" }
+            ?? "Last refreshed at: \(timestamp)"
+        if let next = nextScheduledRefreshDate {
+            let nextTime = next.formatted(date: .omitted, time: .shortened)
+            text += " (next auto-refresh at \(nextTime))"
         }
-        return "Last refreshed at: \(timestamp) in \(Self.formatRefreshDuration(lastRefreshDuration))"
+        return text
     }
 
     var refreshStatusText: String? {
@@ -616,6 +620,7 @@ final class SessionBrowserViewModel: ObservableObject {
 
         guard autoRefreshIntervalNanoseconds != nil else {
             autoRefreshTask = nil
+            nextScheduledRefreshDate = nil
             return
         }
 
@@ -638,6 +643,7 @@ final class SessionBrowserViewModel: ObservableObject {
 
         if shouldDeferScheduledRefreshWhileAppIsActive {
             hasPendingScheduledRefresh = true
+            scheduleNextAutoRefreshTimer()
             return
         }
 
@@ -665,8 +671,12 @@ final class SessionBrowserViewModel: ObservableObject {
 
         guard let intervalNanoseconds = autoRefreshIntervalNanoseconds else {
             autoRefreshTask = nil
+            nextScheduledRefreshDate = nil
             return
         }
+
+        let fireDate = Date(timeIntervalSinceNow: TimeInterval(intervalNanoseconds) / 1_000_000_000)
+        nextScheduledRefreshDate = fireDate
 
         autoRefreshTask = Task { [weak self] in
             do {
@@ -683,6 +693,7 @@ final class SessionBrowserViewModel: ObservableObject {
             }
 
             self.autoRefreshTask = nil
+            self.nextScheduledRefreshDate = nil
             await self.handleScheduledRefreshTrigger()
         }
     }
@@ -700,6 +711,7 @@ final class SessionBrowserViewModel: ObservableObject {
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
         hasPendingScheduledRefresh = false
+        nextScheduledRefreshDate = nil
         refreshActivity = activity
         let clock = ContinuousClock()
         let refreshStart = clock.now
