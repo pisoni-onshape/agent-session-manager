@@ -108,7 +108,7 @@ final class SessionBrowserViewModel: ObservableObject {
     private var autoRefreshIntervalNanoseconds: UInt64?
     private var settingsCancellables: Set<AnyCancellable> = []
     private(set) var hasPendingScheduledRefresh = false
-    private var isAppActive = true
+    private var isWindowFocused = false
 
     init(catalog: SessionCatalog?, settings: AppSettingsStore? = nil) {
         self.catalogController = catalog.map(SessionCatalogController.init)
@@ -236,15 +236,18 @@ final class SessionBrowserViewModel: ObservableObject {
         }
     }
 
-    func setAppIsActive(_ isActive: Bool) {
-        guard isAppActive != isActive else { return }
+    func setWindowIsFocused(_ isFocused: Bool) {
+        guard isWindowFocused != isFocused else { return }
 
-        isAppActive = isActive
-
-        guard !isActive, hasPendingScheduledRefresh else { return }
+        isWindowFocused = isFocused
 
         Task { [weak self] in
-            await self?.runPendingScheduledRefreshIfNeeded()
+            guard let self else { return }
+            if !isFocused, self.hasPendingScheduledRefresh {
+                await self.runPendingScheduledRefreshIfNeeded(ignoreWindowFocus: true)
+            } else {
+                await self.reconcileAutoRefreshSchedule()
+            }
         }
     }
 
@@ -631,7 +634,7 @@ final class SessionBrowserViewModel: ObservableObject {
         guard !isEnabled, hasPendingScheduledRefresh else { return }
 
         Task { [weak self] in
-            await self?.runPendingScheduledRefreshIfNeeded(ignoreAppActivity: true)
+            await self?.runPendingScheduledRefreshIfNeeded(ignoreWindowFocus: true)
         }
     }
 
@@ -641,7 +644,7 @@ final class SessionBrowserViewModel: ObservableObject {
             return
         }
 
-        if shouldDeferScheduledRefreshWhileAppIsActive {
+        if shouldDeferScheduledRefreshWhileWindowIsFocused {
             hasPendingScheduledRefresh = true
             scheduleNextAutoRefreshTimer()
             return
@@ -650,9 +653,26 @@ final class SessionBrowserViewModel: ObservableObject {
         await refreshSessionsIfPossible()
     }
 
-    private func runPendingScheduledRefreshIfNeeded(ignoreAppActivity: Bool = false) async {
+    func reconcileAutoRefreshSchedule(referenceDate: Date = Date()) async {
+        guard autoRefreshIntervalNanoseconds != nil, hasCompletedInitialLoad, !isRefreshing else { return }
+
+        guard let nextScheduledRefreshDate else {
+            scheduleNextAutoRefreshTimer(referenceDate: referenceDate)
+            return
+        }
+
+        guard nextScheduledRefreshDate <= referenceDate else { return }
+
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+        self.nextScheduledRefreshDate = nil
+        await handleScheduledRefreshTrigger()
+    }
+
+    private func runPendingScheduledRefreshIfNeeded(ignoreWindowFocus: Bool = false) async {
         guard hasPendingScheduledRefresh else { return }
-        guard ignoreAppActivity || !isAppActive else { return }
+        guard ignoreWindowFocus || !isWindowFocused else { return }
+        hasPendingScheduledRefresh = false
         await refreshSessionsIfPossible()
     }
 
@@ -661,12 +681,12 @@ final class SessionBrowserViewModel: ObservableObject {
         await refreshSessions()
     }
 
-    private var shouldDeferScheduledRefreshWhileAppIsActive: Bool {
+    private var shouldDeferScheduledRefreshWhileWindowIsFocused: Bool {
         guard let settings else { return false }
-        return settings.autoRefreshCadence != .off && settings.deferRefreshWhileAppIsActive && isAppActive
+        return settings.autoRefreshCadence != .off && settings.deferRefreshWhileAppIsActive && isWindowFocused
     }
 
-    private func scheduleNextAutoRefreshTimer() {
+    private func scheduleNextAutoRefreshTimer(referenceDate: Date = Date()) {
         autoRefreshTask?.cancel()
 
         guard let intervalNanoseconds = autoRefreshIntervalNanoseconds else {
@@ -675,7 +695,7 @@ final class SessionBrowserViewModel: ObservableObject {
             return
         }
 
-        let fireDate = Date(timeIntervalSinceNow: TimeInterval(intervalNanoseconds) / 1_000_000_000)
+        let fireDate = referenceDate.addingTimeInterval(TimeInterval(intervalNanoseconds) / 1_000_000_000)
         nextScheduledRefreshDate = fireDate
 
         autoRefreshTask = Task { [weak self] in

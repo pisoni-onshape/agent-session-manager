@@ -85,7 +85,7 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
 
                 Toggle(
-                    "Defer scheduled refresh while the app is active",
+                    "Defer scheduled refresh while an app window is focused",
                     isOn: Binding(
                         get: { settings.deferRefreshWhileAppIsActive },
                         set: { settings.setDeferRefreshWhileAppIsActive($0) }
@@ -109,7 +109,7 @@ struct SettingsView: View {
                     )
                 )
 
-                Text("These options run the standard Refresh Sessions path while the app is open. Timer intervals restart after the last completed refresh or timer change. If deferral is enabled, a scheduled refresh that becomes due while the app is active is held once and runs after the app next becomes inactive. The first-launch option applies only once per system boot, and subsequent launches are controlled separately.")
+                Text("These options run the standard Refresh Sessions path while the app is open. Timer intervals restart after the last completed refresh or timer change. If deferral is enabled, a scheduled refresh that becomes due while an app window is focused is held once and runs after the app next loses focus. If the Mac sleeps past a scheduled time, the app reconciles the missed refresh after wake. The first-launch option applies only once per system boot, and subsequent launches are controlled separately.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

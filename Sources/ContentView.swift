@@ -6,7 +6,6 @@ struct ContentView: View {
     private let sessionListTopAnchorID = "session-list-top-anchor"
 
     @ObservedObject var viewModel: SessionBrowserViewModel
-    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openWindow) private var openWindow
     @StateObject private var searchFieldController = ToolbarSearchFieldController()
 
@@ -76,10 +75,17 @@ struct ContentView: View {
             }
         }
         .background {
-            SearchShortcutCaptureView {
-                searchFieldController.focus()
+            ZStack {
+                SearchShortcutCaptureView {
+                    searchFieldController.focus()
+                }
+                .frame(width: 0, height: 0)
+
+                WindowFocusObserver { isFocused in
+                    viewModel.setWindowIsFocused(isFocused)
+                }
+                .frame(width: 0, height: 0)
             }
-            .frame(width: 0, height: 0)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -171,15 +177,16 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            viewModel.setAppIsActive(NSApp.isActive)
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            viewModel.setAppIsActive(newPhase == .active)
+            viewModel.setWindowIsFocused(NSApp.isActive && NSApp.keyWindow != nil)
+            Task { await viewModel.reconcileAutoRefreshSchedule() }
         }
         .onChange(of: viewModel.selectedSessionID) { _, newID in
             if let newID {
                 viewModel.checkInProgressState(for: newID)
             }
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
+            Task { await viewModel.reconcileAutoRefreshSchedule() }
         }
     }
 
@@ -533,6 +540,105 @@ private final class SearchShortcutNSView: NSView {
         }
 
         return super.performKeyEquivalent(with: event)
+    }
+}
+
+private struct WindowFocusObserver: NSViewRepresentable {
+    let onFocusChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onFocusChange: onFocusChange)
+    }
+
+    func makeNSView(context: Context) -> WindowFocusTrackingNSView {
+        let view = WindowFocusTrackingNSView()
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowFocusTrackingNSView, context: Context) {
+        context.coordinator.onFocusChange = onFocusChange
+        nsView.coordinator = context.coordinator
+        context.coordinator.observe(window: nsView.window)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var onFocusChange: (Bool) -> Void
+
+        private weak var observedWindow: NSWindow?
+        private var lastFocusState: Bool?
+
+        init(onFocusChange: @escaping (Bool) -> Void) {
+            self.onFocusChange = onFocusChange
+            super.init()
+            let center = NotificationCenter.default
+            center.addObserver(self, selector: #selector(handleStateChange), name: NSApplication.didBecomeActiveNotification, object: nil)
+            center.addObserver(self, selector: #selector(handleStateChange), name: NSApplication.didResignActiveNotification, object: nil)
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        func observe(window: NSWindow?) {
+            guard observedWindow !== window else {
+                publishFocusState()
+                return
+            }
+
+            removeWindowObservers()
+            observedWindow = window
+
+            guard let window else {
+                publishFocusState(window: nil)
+                return
+            }
+
+            let center = NotificationCenter.default
+            center.addObserver(self, selector: #selector(handleStateChange), name: NSWindow.didBecomeKeyNotification, object: window)
+            center.addObserver(self, selector: #selector(handleStateChange), name: NSWindow.didResignKeyNotification, object: window)
+            center.addObserver(self, selector: #selector(handleStateChange), name: NSWindow.didMiniaturizeNotification, object: window)
+            center.addObserver(self, selector: #selector(handleStateChange), name: NSWindow.didDeminiaturizeNotification, object: window)
+
+            publishFocusState()
+        }
+
+        @objc
+        private func handleStateChange(_ notification: Notification) {
+            publishFocusState()
+        }
+
+        private func publishFocusState(window: NSWindow? = nil) {
+            let isFocused = currentFocusState(window: window)
+            guard lastFocusState != isFocused else { return }
+            lastFocusState = isFocused
+            onFocusChange(isFocused)
+        }
+
+        private func currentFocusState(window: NSWindow? = nil) -> Bool {
+            guard let window = window ?? observedWindow else { return false }
+            return NSApp.isActive && window.isVisible && !window.isMiniaturized && window.isKeyWindow
+        }
+
+        private func removeWindowObservers() {
+            let center = NotificationCenter.default
+            if let observedWindow {
+                center.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: observedWindow)
+                center.removeObserver(self, name: NSWindow.didResignKeyNotification, object: observedWindow)
+                center.removeObserver(self, name: NSWindow.didMiniaturizeNotification, object: observedWindow)
+                center.removeObserver(self, name: NSWindow.didDeminiaturizeNotification, object: observedWindow)
+            }
+        }
+    }
+}
+
+private final class WindowFocusTrackingNSView: NSView {
+    weak var coordinator: WindowFocusObserver.Coordinator?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        coordinator?.observe(window: window)
     }
 }
 

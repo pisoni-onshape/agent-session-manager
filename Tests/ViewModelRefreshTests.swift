@@ -88,7 +88,7 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertTrue(viewModel.lastRefreshDisplayText?.contains(" in ") == true)
     }
 
-    func testScheduledRefreshDefersWhileAppIsActiveUntilAppBecomesInactive() async throws {
+    func testScheduledRefreshDefersWhileWindowIsFocusedUntilWindowLosesFocus() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
@@ -121,14 +121,14 @@ final class ViewModelRefreshTests: XCTestCase {
         let viewModel = SessionBrowserViewModel(catalog: catalog, settings: settings)
 
         await viewModel.loadInitialData()
-        viewModel.setAppIsActive(true)
+        viewModel.setWindowIsFocused(true)
 
         await viewModel.handleScheduledRefreshTrigger()
 
         XCTAssertTrue(viewModel.hasPendingScheduledRefresh)
         XCTAssertFalse(viewModel.isRefreshing)
 
-        viewModel.setAppIsActive(false)
+        viewModel.setWindowIsFocused(false)
 
         await fulfillment(of: [refreshExecuted], timeout: 1)
         await waitForCondition { !viewModel.isRefreshing && !viewModel.hasPendingScheduledRefresh }
@@ -137,7 +137,7 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertEqual(viewModel.displayedSessions.map { $0.id }, [refreshedRecord.id])
     }
 
-    func testScheduledRefreshCoalescesMultipleActiveTicksIntoOnePendingRefresh() async throws {
+    func testScheduledRefreshCoalescesMultipleFocusedTicksIntoOnePendingRefresh() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
@@ -170,7 +170,7 @@ final class ViewModelRefreshTests: XCTestCase {
         let viewModel = SessionBrowserViewModel(catalog: catalog, settings: settings)
 
         await viewModel.loadInitialData()
-        viewModel.setAppIsActive(true)
+        viewModel.setWindowIsFocused(true)
 
         await viewModel.handleScheduledRefreshTrigger()
         await viewModel.handleScheduledRefreshTrigger()
@@ -178,7 +178,7 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertTrue(viewModel.hasPendingScheduledRefresh)
         XCTAssertFalse(viewModel.isRefreshing)
 
-        viewModel.setAppIsActive(false)
+        viewModel.setWindowIsFocused(false)
 
         await fulfillment(of: [refreshExecuted], timeout: 1)
         await waitForCondition { !viewModel.isRefreshing && !viewModel.hasPendingScheduledRefresh }
@@ -234,6 +234,100 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertEqual(viewModel.displayedSessions.map(\.id), [record.id])
         XCTAssertTrue(viewModel.lastRefreshDisplayText?.hasPrefix("Last refreshed at: ") == true)
         XCTAssertFalse(viewModel.lastRefreshDisplayText?.contains(" in ") == true)
+    }
+
+    func testScheduledRefreshFlushesAfterWindowLosesFocusEvenIfItRefocusesImmediately() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let refreshedRecord = try makeRecord(
+            sessionID: "focus-race-refresh",
+            title: "Focus Race Refresh",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Transcript used for focus race scheduled refresh testing."
+        )
+        let refreshExecuted = expectation(description: "Pending refresh ran after focus was lost")
+        let loadCallCounter = LoadCallCounter()
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: refreshedRecord.id,
+                    fingerprint: refreshedRecord.fingerprint,
+                    isInProgress: false,
+                    loadRecord: {
+                        loadCallCounter.increment()
+                        refreshExecuted.fulfill()
+                        return refreshedRecord
+                    }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let settings = makeSettingsStore(cadence: .every15Minutes, deferWhileActive: true)
+        let viewModel = SessionBrowserViewModel(catalog: catalog, settings: settings)
+
+        await viewModel.loadInitialData()
+        viewModel.setWindowIsFocused(true)
+
+        await viewModel.handleScheduledRefreshTrigger()
+
+        XCTAssertTrue(viewModel.hasPendingScheduledRefresh)
+
+        viewModel.setWindowIsFocused(false)
+        viewModel.setWindowIsFocused(true)
+
+        await fulfillment(of: [refreshExecuted], timeout: 1)
+        await waitForCondition { !viewModel.isRefreshing && !viewModel.hasPendingScheduledRefresh }
+
+        XCTAssertEqual(loadCallCounter.value, 1)
+    }
+
+    func testReconcileAutoRefreshScheduleRunsMissedRefreshAfterWake() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let refreshedRecord = try makeRecord(
+            sessionID: "wake-refresh",
+            title: "Wake Refresh",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Transcript used for wake reconciliation testing."
+        )
+        let refreshExecuted = expectation(description: "Missed wake refresh ran")
+        let loadCallCounter = LoadCallCounter()
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: refreshedRecord.id,
+                    fingerprint: refreshedRecord.fingerprint,
+                    isInProgress: false,
+                    loadRecord: {
+                        loadCallCounter.increment()
+                        refreshExecuted.fulfill()
+                        return refreshedRecord
+                    }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let settings = makeSettingsStore(cadence: .every15Minutes, deferWhileActive: false)
+        let viewModel = SessionBrowserViewModel(catalog: catalog, settings: settings)
+
+        await viewModel.loadInitialData()
+
+        guard let nextScheduledRefreshDate = viewModel.nextScheduledRefreshDate else {
+            return XCTFail("Expected a scheduled refresh date.")
+        }
+
+        await viewModel.reconcileAutoRefreshSchedule(referenceDate: nextScheduledRefreshDate.addingTimeInterval(1))
+
+        await fulfillment(of: [refreshExecuted], timeout: 1)
+        await waitForCondition { !viewModel.isRefreshing }
+
+        XCTAssertEqual(loadCallCounter.value, 1)
     }
 
     func testLoadPresentedPlanReturnsPresentedPlanForInAppViewer() async throws {
