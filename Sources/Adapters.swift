@@ -626,6 +626,12 @@ struct CursorAdapter: SessionSourceAdapter {
         let composerHeadersBySessionID = try loadComposerHeadersBySessionID(from: stateDatabaseURL)
         let composerHeaderLoadDuration = clock.now - composerHeaderLoadStart
 
+        let workspaceComposerLoadStart = clock.now
+        let workspaceComposerMetadataBySessionID = try loadWorkspaceComposerMetadataBySessionID(
+            workspaceReferences: workspaceReferences
+        )
+        let workspaceComposerLoadDuration = clock.now - workspaceComposerLoadStart
+
         let planReferenceLoadStart = clock.now
         let planReferences = try loadPlanReferencesBySessionID(from: stateDatabaseURL)
         let planReferenceLoadDuration = clock.now - planReferenceLoadStart
@@ -633,6 +639,7 @@ struct CursorAdapter: SessionSourceAdapter {
         let fileBackedCandidates = try loadFileBackedCandidates(
             workspaceReferencesByProjectDirectory: workspaceReferencesByProjectDirectory,
             composerHeadersBySessionID: composerHeadersBySessionID,
+            workspaceComposerMetadataBySessionID: workspaceComposerMetadataBySessionID,
             planReferences: planReferences
         )
         let workspaceChatCandidates = try loadWorkspaceChatCandidates(
@@ -643,6 +650,7 @@ struct CursorAdapter: SessionSourceAdapter {
             stateDatabaseURL: stateDatabaseURL,
             workspaceReferencesByPath: workspaceReferencesByPath,
             composerHeadersBySessionID: composerHeadersBySessionID,
+            workspaceComposerMetadataBySessionID: workspaceComposerMetadataBySessionID,
             planReferences: planReferences
         )
 
@@ -667,7 +675,7 @@ struct CursorAdapter: SessionSourceAdapter {
 
         let totalDuration = clock.now - scanStart
         Self.logger.info(
-            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace references: \(SessionCatalog.formatDurationForLog(workspaceReferenceLoadDuration), privacy: .public), composer headers: \(SessionCatalog.formatDurationForLog(composerHeaderLoadDuration), privacy: .public), plan references: \(SessionCatalog.formatDurationForLog(planReferenceLoadDuration), privacy: .public); workspace references: \(workspaceReferences.count), file candidates: \(fileBackedCandidates.count), workspace chat candidates: \(workspaceChatCandidates.count), global composer candidates: \(globalComposerCandidates.count), deduped candidates: \(candidates.count)"
+            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace references: \(SessionCatalog.formatDurationForLog(workspaceReferenceLoadDuration), privacy: .public), composer headers: \(SessionCatalog.formatDurationForLog(composerHeaderLoadDuration), privacy: .public), workspace composer metadata: \(SessionCatalog.formatDurationForLog(workspaceComposerLoadDuration), privacy: .public), plan references: \(SessionCatalog.formatDurationForLog(planReferenceLoadDuration), privacy: .public); workspace references: \(workspaceReferences.count), workspace composer sessions: \(workspaceComposerMetadataBySessionID.count), file candidates: \(fileBackedCandidates.count), workspace chat candidates: \(workspaceChatCandidates.count), global composer candidates: \(globalComposerCandidates.count), deduped candidates: \(candidates.count)"
         )
         return candidates
     }
@@ -743,9 +751,57 @@ struct CursorAdapter: SessionSourceAdapter {
         return Set(keys.compactMap { parseBubbleSessionID(from: $0) })
     }
 
+    private func loadWorkspaceComposerMetadataBySessionID(
+        workspaceReferences: [CursorWorkspaceReference]
+    ) throws -> [String: CursorWorkspaceComposerMetadata] {
+        var metadataBySessionID: [String: CursorWorkspaceComposerMetadata] = [:]
+
+        for workspaceReference in workspaceReferences {
+            let stateDatabaseURL = workspaceReference.workspaceDirectory.appendingPathComponent("state.vscdb")
+            guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else {
+                continue
+            }
+
+            let rawValue: String?
+            do {
+                rawValue = try loadSQLiteItemValue(from: stateDatabaseURL, key: "composer.composerData")
+            } catch {
+                if isMissingSQLiteTableError(error, table: "ItemTable") {
+                    continue
+                }
+                throw error
+            }
+
+            guard let rawValue,
+                  let data = rawValue.data(using: .utf8),
+                  let payload = try? JSONDecoder().decode(CursorWorkspaceComposerDataPayload.self, from: data) else {
+                continue
+            }
+
+            for composer in payload.allComposers where !composer.composerId.isEmpty {
+                let candidate = CursorWorkspaceComposerMetadata(
+                    workspaceReference: workspaceReference,
+                    title: composer.title,
+                    branch: composer.createdOnBranch?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                    updatedAt: composer.updatedAtDate
+                )
+                if let existing = metadataBySessionID[composer.composerId] {
+                    if candidate.shouldReplace(existing) {
+                        metadataBySessionID[composer.composerId] = candidate
+                    }
+                } else {
+                    metadataBySessionID[composer.composerId] = candidate
+                }
+            }
+        }
+
+        return metadataBySessionID
+    }
+
     private func loadFileBackedCandidates(
         workspaceReferencesByProjectDirectory: [String: CursorWorkspaceReference],
         composerHeadersBySessionID: [String: CursorComposerHeader],
+        workspaceComposerMetadataBySessionID: [String: CursorWorkspaceComposerMetadata],
         planReferences: [String: CursorPlanReference]
     ) throws -> [PrioritizedCursorCandidate] {
         guard FileManager.default.fileExists(atPath: root.path) else { return [] }
@@ -779,10 +835,13 @@ struct CursorAdapter: SessionSourceAdapter {
                 let relatedPlanPath = planReferences[sessionID]?.path
                     ?? SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
                 let composerHeader = composerHeadersBySessionID[sessionID]
+                let workspaceComposerMetadata = workspaceComposerMetadataBySessionID[sessionID]
+                let preferredTitle = composerHeader?.title ?? workspaceComposerMetadata?.title
+                let branch = workspaceComposerMetadata?.branch
 
                 let fingerprint = combinedFingerprint(
                     paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath],
-                    values: [composerHeader?.title, composerHeader?.versionFingerprint]
+                    values: [preferredTitle, composerHeader?.versionFingerprint, branch]
                 )
 
                 return PrioritizedCursorCandidate(
@@ -797,7 +856,8 @@ struct CursorAdapter: SessionSourceAdapter {
                                 transcriptFile: transcriptFile,
                                 workspacePath: workspacePath,
                                 projectName: projectName,
-                                preferredTitle: composerHeader?.title,
+                                branch: branch,
+                                preferredTitle: preferredTitle,
                                 relatedPlanPath: relatedPlanPath,
                                 fingerprint: fingerprint
                             )
@@ -888,6 +948,7 @@ struct CursorAdapter: SessionSourceAdapter {
         stateDatabaseURL: URL,
         workspaceReferencesByPath: [String: CursorWorkspaceReference],
         composerHeadersBySessionID: [String: CursorComposerHeader],
+        workspaceComposerMetadataBySessionID: [String: CursorWorkspaceComposerMetadata],
         planReferences: [String: CursorPlanReference]
     ) throws -> [PrioritizedCursorCandidate] {
         guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else {
@@ -895,20 +956,26 @@ struct CursorAdapter: SessionSourceAdapter {
         }
 
         let bubbleSessionIDs = try loadBubbleSessionIDs(from: stateDatabaseURL)
-        let sessionIDs = Set(composerHeadersBySessionID.keys).union(bubbleSessionIDs)
+        let sessionIDs = Set(composerHeadersBySessionID.keys)
+            .union(bubbleSessionIDs)
+            .union(workspaceComposerMetadataBySessionID.keys)
 
         return sessionIDs.sorted().map { sessionID in
             let composerHeader = composerHeadersBySessionID[sessionID]
-            let workspacePath = composerHeader?.workspacePath
+            let workspaceComposerMetadata = workspaceComposerMetadataBySessionID[sessionID]
+            let workspacePath = composerHeader?.workspacePath ?? workspaceComposerMetadata?.workspaceReference.workspacePath
             let workspaceReference = workspacePath.flatMap { workspaceReferencesByPath[$0] }
+                ?? workspaceComposerMetadata?.workspaceReference
             let projectName = PathUtilities.displayProjectName(
                 workspacePath: workspacePath,
                 fallback: workspaceReference?.projectName ?? sessionID
             )
             let relatedPlanPath = planReferences[sessionID]?.path
+            let preferredTitle = composerHeader?.title ?? workspaceComposerMetadata?.title
+            let branch = workspaceComposerMetadata?.branch
             let fingerprint = combinedFingerprint(
                 paths: [stateDatabaseURL.path, relatedPlanPath, workspaceReference?.metadataPath],
-                values: [composerHeader?.title, composerHeader?.versionFingerprint, workspacePath]
+                values: [preferredTitle, composerHeader?.versionFingerprint, workspacePath, branch]
             )
 
             return PrioritizedCursorCandidate(
@@ -924,9 +991,10 @@ struct CursorAdapter: SessionSourceAdapter {
                             workspaceReference: workspaceReference,
                             fallbackWorkspacePath: workspacePath,
                             fallbackProjectName: projectName,
-                            preferredTitle: composerHeader?.title,
+                            branch: branch,
+                            preferredTitle: preferredTitle,
                             startedAt: composerHeader?.startedAtDate,
-                            updatedAt: composerHeader?.updatedAtDate,
+                            updatedAt: composerHeader?.updatedAtDate ?? workspaceComposerMetadata?.updatedAt,
                             relatedPlanPath: relatedPlanPath,
                             fingerprint: fingerprint
                         )
@@ -997,6 +1065,7 @@ struct CursorAdapter: SessionSourceAdapter {
         transcriptFile: URL,
         workspacePath: String?,
         projectName: String,
+        branch: String?,
         preferredTitle: String?,
         relatedPlanPath: String?,
         fingerprint: String
@@ -1016,7 +1085,7 @@ struct CursorAdapter: SessionSourceAdapter {
             sourceSessionId: sessionID,
             workspacePath: workspacePath,
             projectName: projectName,
-            branch: nil,
+            branch: branch,
             conversationModel: nil,
             startedAt: dates.created,
             updatedAt: dates.modified,
@@ -1082,6 +1151,7 @@ struct CursorAdapter: SessionSourceAdapter {
         workspaceReference: CursorWorkspaceReference?,
         fallbackWorkspacePath: String?,
         fallbackProjectName: String,
+        branch: String?,
         preferredTitle: String?,
         startedAt: Date?,
         updatedAt: Date?,
@@ -1109,7 +1179,7 @@ struct CursorAdapter: SessionSourceAdapter {
             sourceSessionId: sessionID,
             workspacePath: workspacePath,
             projectName: PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName),
-            branch: nil,
+            branch: branch,
             conversationModel: nil,
             startedAt: startedAt ?? preview.startedAt ?? databaseDates.created,
             updatedAt: updatedAt ?? databaseDates.modified,
@@ -1158,6 +1228,31 @@ private struct CursorWorkspaceReference {
     let metadataPath: String
 }
 
+private struct CursorWorkspaceComposerMetadata {
+    let workspaceReference: CursorWorkspaceReference
+    let title: String?
+    let branch: String?
+    let updatedAt: Date?
+
+    func shouldReplace(_ existing: CursorWorkspaceComposerMetadata) -> Bool {
+        switch (updatedAt, existing.updatedAt) {
+        case let (lhs?, rhs?) where lhs != rhs:
+            return lhs > rhs
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            break
+        }
+
+        if let title, let existingTitle = existing.title, title != existingTitle {
+            return title.localizedStandardCompare(existingTitle) == .orderedAscending
+        }
+        return workspaceReference.workspacePath.localizedStandardCompare(existing.workspaceReference.workspacePath) == .orderedAscending
+    }
+}
+
 private struct CursorPlanReference {
     let path: String
     let planID: String
@@ -1176,6 +1271,19 @@ private struct CursorPlanReference {
 
 private struct CursorComposerHeadersPayload: Decodable {
     let allComposers: [CursorComposerHeader]
+}
+
+private struct CursorWorkspaceComposerDataPayload: Decodable {
+    let allComposers: [CursorWorkspaceComposerEntry]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        allComposers = try container.decodeIfPresent([CursorWorkspaceComposerEntry].self, forKey: .allComposers) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case allComposers
+    }
 }
 
 private struct CursorComposerHeader: Decodable {
@@ -1206,6 +1314,21 @@ private struct CursorComposerHeader: Decodable {
             .compactMap { $0.map { String(Int64($0)) } }
             .joined(separator: "|")
             .nilIfEmpty
+    }
+}
+
+private struct CursorWorkspaceComposerEntry: Decodable {
+    let composerId: String
+    let name: String?
+    let createdOnBranch: String?
+    let lastUpdatedAt: Double?
+
+    var title: String? {
+        name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    var updatedAtDate: Date? {
+        lastUpdatedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
     }
 }
 

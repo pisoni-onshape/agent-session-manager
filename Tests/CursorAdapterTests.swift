@@ -535,6 +535,96 @@ final class CursorAdapterTests: XCTestCase {
             sessionDirectory.appendingPathComponent("\(sessionID).jsonl").standardizedFileURL.path
         )
     }
+
+    func testCursorAdapterRecoversWorkspaceAndBranchFromWorkspaceComposerDataWhenGlobalHeaderIsMissing() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let projectsRoot = directory.appendingPathComponent(".cursor/projects", isDirectory: true)
+        let workspaceStorageRoot = directory.appendingPathComponent("Cursor/User/workspaceStorage", isDirectory: true)
+        let globalStorageRoot = directory.appendingPathComponent("Cursor/User/globalStorage", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspaceStorageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: globalStorageRoot, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/Library/CloudStorage/OneDrive-PTC/Projects/newton-env-manager"
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("3303167c120fc2f8eb2bf262a31d5cc4", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sessionID = "6e4fe30f-5ff2-47a6-a721-54ebcac9b467"
+        try createCursorStateDatabase(
+            at: workspaceDirectory.appendingPathComponent("state.vscdb"),
+            items: [
+                "composer.composerData": """
+                {
+                  "allComposers": [
+                    {
+                      "composerId": "\(sessionID)",
+                      "name": "Custom menu separators and tooltips",
+                      "createdOnBranch": "tauri-rust-xterm",
+                      "lastUpdatedAt": 1767890635196
+                    }
+                  ]
+                }
+                """
+            ]
+        )
+        let globalStateURL = globalStorageRoot.appendingPathComponent("state.vscdb")
+        try createCursorStateDatabase(
+            at: globalStateURL,
+            items: [:],
+            cursorDiskKVItems: [
+                "bubbleId:\(sessionID):bubble-1": """
+                {
+                  "bubbleId": "bubble-1",
+                  "type": 1,
+                  "text": "Can you add separators in the application's custom menu items?",
+                  "createdAt": "2026-01-08T16:33:40.886Z"
+                }
+                """,
+                "bubbleId:\(sessionID):bubble-2": """
+                {
+                  "bubbleId": "bubble-2",
+                  "type": 2,
+                  "text": "I'll inspect menu.rs, main.js, and menu-config.json.",
+                  "createdAt": "2026-01-08T16:34:25.713Z"
+                }
+                """
+            ]
+        )
+
+        let records = try CursorAdapter(
+            root: projectsRoot,
+            workspaceStorageRoot: workspaceStorageRoot,
+            globalStorageRoot: globalStorageRoot
+        ).discover()
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].sourceSessionId, sessionID)
+        XCTAssertEqual(records[0].workspacePath, workspacePath)
+        XCTAssertEqual(records[0].projectName, "newton-env-manager")
+        XCTAssertEqual(records[0].branch, "tauri-rust-xterm")
+        XCTAssertEqual(records[0].title, "Custom menu separators and tooltips")
+        XCTAssertEqual(records[0].resumeKind, .openInCursor)
+        XCTAssertEqual(records[0].resumePayload, workspacePath)
+        XCTAssertEqual(
+            records[0].rawTranscriptPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            globalStateURL.standardizedFileURL.path
+        )
+        XCTAssertEqual(
+            records[0].rawMetadataPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            workspaceDirectory.appendingPathComponent("workspace.json").standardizedFileURL.path
+        )
+    }
 }
 
 private func createCursorStateDatabase(
