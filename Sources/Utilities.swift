@@ -4,6 +4,22 @@ import SQLite3
 
 private let SQLITE_TRANSIENT_UTILITIES = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+func isMissingSQLiteTableError(_ error: Error, table: String) -> Bool {
+    guard let sqliteError = error as? SQLiteStoreError else {
+        return false
+    }
+
+    let tableMessage = "no such table: \(table)"
+    switch sqliteError {
+    case .openFailed:
+        return false
+    case .executionFailed(let message),
+         .prepareFailed(let message),
+         .stepFailed(let message):
+        return message.localizedCaseInsensitiveContains(tableMessage)
+    }
+}
+
 public enum AppPaths {
     public static var applicationSupportDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -902,8 +918,8 @@ public enum TranscriptPreviewExtractor {
                 title: record.title
             )
         case .vscodeCopilot:
-            if isVSCodeChatSessionTranscript(url) {
-                return try extractVSCodeChatSessionDocument(
+            if isWorkspaceChatSessionTranscript(url) {
+                return try extractWorkspaceChatSessionDocument(
                     from: url,
                     source: record.source,
                     sessionId: record.sourceSessionId,
@@ -917,6 +933,22 @@ public enum TranscriptPreviewExtractor {
                 title: record.title
             )
         case .cursor:
+            if isWorkspaceChatSessionTranscript(url) {
+                return try extractWorkspaceChatSessionDocument(
+                    from: url,
+                    source: record.source,
+                    sessionId: record.sourceSessionId,
+                    title: record.title
+                )
+            }
+            if isCursorBubbleTranscriptStore(url) {
+                return try extractCursorBubbleTranscriptDocument(
+                    from: url,
+                    source: record.source,
+                    sessionId: record.sourceSessionId,
+                    title: record.title
+                )
+            }
             return try extractCursorTranscriptDocument(
                 from: url,
                 source: record.source,
@@ -1070,8 +1102,8 @@ public enum TranscriptPreviewExtractor {
     }
 
     static func extractVSCodeSessionMetadata(from url: URL) throws -> VSCodeSessionMetadata {
-        if isVSCodeChatSessionTranscript(url) {
-            return try extractVSCodeChatSessionMetadata(from: url)
+        if isWorkspaceChatSessionTranscript(url) {
+            return try extractWorkspaceChatSessionMetadata(from: url)
         }
 
         let preview = try extractEventTranscript(from: url)
@@ -1138,10 +1170,24 @@ public enum TranscriptPreviewExtractor {
     }
 
     static func extractVSCodeChatSessionModel(from url: URL) throws -> String? {
-        try extractVSCodeChatSessionMetadata(from: url).latestModel
+        try extractWorkspaceChatSessionMetadata(from: url).latestModel
     }
 
     static func extractCursorTranscript(from url: URL) throws -> TranscriptPreview {
+        if isWorkspaceChatSessionTranscript(url) {
+            let metadata = try extractWorkspaceChatSessionMetadata(from: url)
+            return TranscriptPreview(
+                sessionId: metadata.sessionId,
+                startedAt: metadata.startedAt,
+                latestModel: metadata.latestModel,
+                firstUser: metadata.firstUser,
+                firstAssistant: metadata.firstAssistant
+            )
+        }
+        if isCursorBubbleTranscriptStore(url) {
+            throw TranscriptLoadingError.transcriptUnreadable(url.path)
+        }
+
         let contents = try String(contentsOf: url, encoding: .utf8)
         var preview = TranscriptPreview()
 
@@ -1168,6 +1214,17 @@ public enum TranscriptPreviewExtractor {
         }
 
         return preview
+    }
+
+    static func extractCursorBubbleTranscript(from databaseURL: URL, sessionId: String) throws -> TranscriptPreview {
+        let entries = try loadCursorBubbleEntries(from: databaseURL, sessionId: sessionId)
+        return TranscriptPreview(
+            sessionId: sessionId,
+            startedAt: entries.compactMap(\.timestamp).min(),
+            latestModel: nil,
+            firstUser: entries.first(where: { $0.role == .user })?.body,
+            firstAssistant: entries.first(where: { $0.role == .assistant })?.body
+        )
     }
 
     private static func extractCursorTranscriptDocument(
@@ -1223,7 +1280,28 @@ public enum TranscriptPreviewExtractor {
         )
     }
 
-    private static func extractVSCodeChatSessionDocument(
+    private static func extractCursorBubbleTranscriptDocument(
+        from databaseURL: URL,
+        source: SessionSource,
+        sessionId: String,
+        title: String
+    ) throws -> TranscriptDocument {
+        let entries = try loadCursorBubbleEntries(from: databaseURL, sessionId: sessionId)
+        let timestampsAreComplete = entries.allSatisfy { $0.timestamp != nil }
+        return TranscriptDocument(
+            sessionID: sessionId,
+            sessionTitle: title,
+            source: source,
+            rawTranscriptPath: databaseURL.path,
+            entries: entries,
+            timestampsAreComplete: timestampsAreComplete,
+            timestampNotice: timestampsAreComplete
+                ? nil
+                : "Cursor composer bubble transcripts preserve message order, but some inspected local rows do not expose a reliable timestamp for every message."
+        )
+    }
+
+    private static func extractWorkspaceChatSessionDocument(
         from url: URL,
         source: SessionSource,
         sessionId: String,
@@ -1269,7 +1347,7 @@ public enum TranscriptPreviewExtractor {
             rawTranscriptPath: url.path,
             entries: entries,
             timestampsAreComplete: false,
-            timestampNotice: "VS Code chatSessions preserve creation and request timestamps, but the inspected local files do not expose a reliable per-response timestamp for every assistant chunk."
+            timestampNotice: "Workspace chatSessions preserve creation and request timestamps, but the inspected local files do not expose a reliable per-response timestamp for every assistant chunk."
         )
     }
 
@@ -1303,11 +1381,15 @@ public enum TranscriptPreviewExtractor {
         return nil
     }
 
-    private static func isVSCodeChatSessionTranscript(_ url: URL) -> Bool {
+    private static func isWorkspaceChatSessionTranscript(_ url: URL) -> Bool {
         url.deletingLastPathComponent().lastPathComponent == "chatSessions"
     }
 
-    private static func extractVSCodeChatSessionMetadata(from url: URL) throws -> VSCodeSessionMetadata {
+    private static func isCursorBubbleTranscriptStore(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "vscdb"
+    }
+
+    static func extractWorkspaceChatSessionMetadata(from url: URL) throws -> VSCodeSessionMetadata {
         let root = try loadVSCodeChatSessionRoot(from: url)
         let requests = root["requests"] as? [[String: Any]] ?? []
         let createdAt = dateFromEpochMilliseconds(root["creationDate"])
@@ -1335,6 +1417,110 @@ public enum TranscriptPreviewExtractor {
             firstUser: firstUser,
             firstAssistant: firstAssistant
         )
+    }
+
+    private static func loadCursorBubbleEntries(from databaseURL: URL, sessionId: String) throws -> [TranscriptEntry] {
+        let rawValues: [String: String]
+        do {
+            rawValues = try loadSQLiteValues(from: databaseURL, table: "cursorDiskKV", keyLike: "bubbleId:\(sessionId):%")
+        } catch {
+            if isMissingSQLiteTableError(error, table: "cursorDiskKV") {
+                return []
+            }
+            throw error
+        }
+        let entries = rawValues.compactMap { key, rawValue -> TranscriptEntry? in
+            guard let data = rawValue.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return nil
+            }
+            return cursorBubbleTranscriptEntry(from: object, sessionId: sessionId, fallbackID: key)
+        }
+        return entries.sorted { lhs, rhs in
+            switch (lhs.timestamp, rhs.timestamp) {
+            case let (left?, right?):
+                if left != right {
+                    return left < right
+                }
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                break
+            }
+            return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+        }
+    }
+
+    private static func cursorBubbleTranscriptEntry(
+        from object: [String: Any],
+        sessionId: String,
+        fallbackID: String
+    ) -> TranscriptEntry? {
+        let role: TranscriptEntryRole
+        let title: String
+        switch (object["type"] as? NSNumber)?.intValue {
+        case 1:
+            role = .user
+            title = "User"
+        case 2:
+            role = .assistant
+            title = "Assistant"
+        default:
+            return nil
+        }
+
+        guard let body = extractCursorBubbleText(from: object) else {
+            return nil
+        }
+
+        let messageID = (object["bubbleId"] as? String).map { "\(sessionId)-\($0)" } ?? fallbackID
+        let timestamp = ISO8601DateCoding.parse(object["createdAt"] as? String)
+            ?? dateFromEpochMilliseconds(object["createdAt"])
+
+        return TranscriptEntry(
+            id: messageID,
+            role: role,
+            title: title,
+            body: body,
+            timestamp: timestamp
+        )
+    }
+
+    private static func extractCursorBubbleText(from object: [String: Any]) -> String? {
+        if let text = TextSanitizer.clean(object["text"] as? String) {
+            return text
+        }
+
+        guard let richText = object["richText"] as? String,
+              let data = richText.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) else {
+            return nil
+        }
+
+        let flattened = flattenCursorRichText(from: root)
+        guard !flattened.isEmpty else {
+            return nil
+        }
+        return TextSanitizer.clean(flattened.joined(separator: "\n\n"))
+    }
+
+    private static func flattenCursorRichText(from value: Any) -> [String] {
+        switch value {
+        case let dictionary as [String: Any]:
+            if let text = dictionary["text"] as? String,
+               let cleaned = TextSanitizer.compact(text) {
+                return [cleaned]
+            }
+            return dictionary.keys.sorted().flatMap { key in
+                flattenCursorRichText(from: dictionary[key] as Any)
+            }
+        case let array as [Any]:
+            return array.flatMap(flattenCursorRichText)
+        default:
+            return []
+        }
     }
 
     private static func loadVSCodeChatSessionRoot(from url: URL) throws -> [String: Any] {
@@ -1869,7 +2055,7 @@ func loadJSONDictionary(from url: URL) throws -> [String: Any]? {
     return try JSONSerialization.jsonObject(with: data) as? [String: Any]
 }
 
-private func withSQLiteItemTableDatabase<T>(
+private func withSQLiteDatabase<T>(
     at databaseURL: URL,
     _ body: (OpaquePointer) throws -> T
 ) throws -> T {
@@ -1891,8 +2077,52 @@ private func withSQLiteItemTableDatabase<T>(
 }
 
 func loadSQLiteItemValue(from databaseURL: URL, key: String) throws -> String? {
-    try withSQLiteItemTableDatabase(at: databaseURL) { database in
-        let sql = "SELECT value FROM ItemTable WHERE key = ? LIMIT 1;"
+    try loadSQLiteValue(from: databaseURL, table: "ItemTable", key: key)
+}
+
+func loadSQLiteItemValues(from databaseURL: URL, keyLike pattern: String) throws -> [String: String] {
+    try loadSQLiteValues(from: databaseURL, table: "ItemTable", keyLike: pattern)
+}
+
+func loadSQLiteKeys(from databaseURL: URL, table: String, keyLike pattern: String) throws -> [String] {
+    try withSQLiteDatabase(at: databaseURL) { database in
+        let sql = """
+        SELECT key
+        FROM \(table)
+        WHERE key LIKE ?
+        ORDER BY key ASC;
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite prepare error"
+            throw SQLiteStoreError.prepareFailed(message)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        sqlite3_bind_text(statement, 1, pattern, -1, SQLITE_TRANSIENT_UTILITIES)
+
+        var keys: [String] = []
+        while true {
+            let stepResult = sqlite3_step(statement)
+            switch stepResult {
+            case SQLITE_ROW:
+                guard let key = sqlite3_column_text(statement, 0).map({ String(cString: $0) }) else {
+                    continue
+                }
+                keys.append(key)
+            case SQLITE_DONE:
+                return keys
+            default:
+                let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite step error"
+                throw SQLiteStoreError.stepFailed(message)
+            }
+        }
+    }
+}
+
+func loadSQLiteValue(from databaseURL: URL, table: String, key: String) throws -> String? {
+    try withSQLiteDatabase(at: databaseURL) { database in
+        let sql = "SELECT value FROM \(table) WHERE key = ? LIMIT 1;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite prepare error"
@@ -1915,11 +2145,11 @@ func loadSQLiteItemValue(from databaseURL: URL, key: String) throws -> String? {
     }
 }
 
-func loadSQLiteItemValues(from databaseURL: URL, keyLike pattern: String) throws -> [String: String] {
-    try withSQLiteItemTableDatabase(at: databaseURL) { database in
+func loadSQLiteValues(from databaseURL: URL, table: String, keyLike pattern: String) throws -> [String: String] {
+    try withSQLiteDatabase(at: databaseURL) { database in
         let sql = """
         SELECT key, value
-        FROM ItemTable
+        FROM \(table)
         WHERE key LIKE ?
         ORDER BY key ASC;
         """

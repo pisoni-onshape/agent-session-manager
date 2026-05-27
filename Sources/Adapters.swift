@@ -601,90 +601,79 @@ struct CursorAdapter: SessionSourceAdapter {
     private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "CursorAdapter")
 
     func scanCandidates() throws -> [SessionScanCandidate] {
-        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
+        let hasProjectsRoot = FileManager.default.fileExists(atPath: root.path)
+        let hasWorkspaceStorage = FileManager.default.fileExists(atPath: workspaceStorageRoot.path)
+        let hasGlobalStorage = FileManager.default.fileExists(atPath: globalStorageRoot.path)
+        guard hasProjectsRoot || hasWorkspaceStorage || hasGlobalStorage else { return [] }
 
         let clock = ContinuousClock()
         let scanStart = clock.now
         let stateDatabaseURL = globalStorageRoot.appendingPathComponent("state.vscdb")
 
         let workspaceReferenceLoadStart = clock.now
-        let workspaceReferences = try loadWorkspaceReferencesByProjectDirectory()
+        let workspaceReferences = try loadWorkspaceReferences()
         let workspaceReferenceLoadDuration = clock.now - workspaceReferenceLoadStart
+        let workspaceReferencesByProjectDirectory = Dictionary(
+            uniqueKeysWithValues: workspaceReferences.compactMap { reference in
+                reference.projectDirectoryName.map { ($0, reference) }
+            }
+        )
+        let workspaceReferencesByPath = Dictionary(
+            uniqueKeysWithValues: workspaceReferences.map { ($0.workspacePath, $0) }
+        )
 
-        let titleReferenceLoadStart = clock.now
-        let titleReferences = try loadTitleReferencesBySessionID(from: stateDatabaseURL)
-        let titleReferenceLoadDuration = clock.now - titleReferenceLoadStart
+        let composerHeaderLoadStart = clock.now
+        let composerHeadersBySessionID = try loadComposerHeadersBySessionID(from: stateDatabaseURL)
+        let composerHeaderLoadDuration = clock.now - composerHeaderLoadStart
 
         let planReferenceLoadStart = clock.now
         let planReferences = try loadPlanReferencesBySessionID(from: stateDatabaseURL)
         let planReferenceLoadDuration = clock.now - planReferenceLoadStart
 
-        let projectEnumerationStart = clock.now
-        let projectDirectories = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-            .filter(\.hasDirectoryPath)
-        let projectEnumerationDuration = clock.now - projectEnumerationStart
+        let fileBackedCandidates = try loadFileBackedCandidates(
+            workspaceReferencesByProjectDirectory: workspaceReferencesByProjectDirectory,
+            composerHeadersBySessionID: composerHeadersBySessionID,
+            planReferences: planReferences
+        )
+        let workspaceChatCandidates = try loadWorkspaceChatCandidates(
+            workspaceReferences: workspaceReferences,
+            planReferences: planReferences
+        )
+        let globalComposerCandidates = try loadGlobalComposerCandidates(
+            stateDatabaseURL: stateDatabaseURL,
+            workspaceReferencesByPath: workspaceReferencesByPath,
+            composerHeadersBySessionID: composerHeadersBySessionID,
+            planReferences: planReferences
+        )
 
-        var sessionEnumerationDuration: Duration = .zero
-        var fingerprintDuration: Duration = .zero
-
-        let candidates = try projectDirectories.flatMap { projectDirectory -> [SessionScanCandidate] in
-            let transcriptRoot = projectDirectory.appendingPathComponent("agent-transcripts", isDirectory: true)
-            guard FileManager.default.fileExists(atPath: transcriptRoot.path) else { return [] }
-
-            let workspaceReference = workspaceReferences[projectDirectory.lastPathComponent]
-            let workspacePath = workspaceReference?.workspacePath
-                ?? PathUtilities.decodeCursorWorkspacePath(from: projectDirectory.lastPathComponent)
-            let fallbackProjectName = workspaceReference?.projectName
-                ?? PathUtilities.cursorFallbackProjectName(from: projectDirectory.lastPathComponent)
-            let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName)
-
-            let sessionEnumerationStart = clock.now
-            let sessionDirectories = try FileManager.default.contentsOfDirectory(at: transcriptRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-                .filter(\.hasDirectoryPath)
-            sessionEnumerationDuration += clock.now - sessionEnumerationStart
-
-            return sessionDirectories.map { sessionDirectory in
-                let sessionID = sessionDirectory.lastPathComponent
-                let transcriptFile = sessionDirectory.appendingPathComponent("\(sessionDirectory.lastPathComponent).jsonl")
-                let relatedPlanPath = planReferences[sessionID]?.path
-                    ?? SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
-                let titleReference = titleReferences[sessionID]
-
-                let fingerprintStart = clock.now
-                let fingerprint = combinedFingerprint(
-                    paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath],
-                    values: [titleReference?.title]
-                )
-                fingerprintDuration += clock.now - fingerprintStart
-
-                return SessionScanCandidate(
-                    id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
-                    fingerprint: fingerprint,
-                    isInProgress: false,
-                    loadRecord: {
-                        try loadRecord(
-                            sessionID: sessionID,
-                            transcriptFile: transcriptFile,
-                            workspacePath: workspacePath,
-                            projectName: projectName,
-                            preferredTitle: titleReference?.title,
-                            relatedPlanPath: relatedPlanPath,
-                            fingerprint: fingerprint
-                        )
-                    }
-                )
+        var candidatesByID: [String: PrioritizedCursorCandidate] = [:]
+        for candidate in fileBackedCandidates + globalComposerCandidates + workspaceChatCandidates {
+            if let existing = candidatesByID[candidate.candidate.id] {
+                if candidate.priority < existing.priority {
+                    candidatesByID[candidate.candidate.id] = candidate
+                }
+            } else {
+                candidatesByID[candidate.candidate.id] = candidate
             }
         }
+        let candidates = candidatesByID.values
+            .sorted { lhs, rhs in
+                if lhs.priority != rhs.priority {
+                    return lhs.priority < rhs.priority
+                }
+                return lhs.candidate.id.localizedStandardCompare(rhs.candidate.id) == .orderedAscending
+            }
+            .map(\.candidate)
 
         let totalDuration = clock.now - scanStart
         Self.logger.info(
-            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace references: \(SessionCatalog.formatDurationForLog(workspaceReferenceLoadDuration), privacy: .public), title references: \(SessionCatalog.formatDurationForLog(titleReferenceLoadDuration), privacy: .public), plan references: \(SessionCatalog.formatDurationForLog(planReferenceLoadDuration), privacy: .public), project enumeration: \(SessionCatalog.formatDurationForLog(projectEnumerationDuration), privacy: .public), session enumeration: \(SessionCatalog.formatDurationForLog(sessionEnumerationDuration), privacy: .public), fingerprinting: \(SessionCatalog.formatDurationForLog(fingerprintDuration), privacy: .public); project directories: \(projectDirectories.count), candidates: \(candidates.count)"
+            "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), workspace references: \(SessionCatalog.formatDurationForLog(workspaceReferenceLoadDuration), privacy: .public), composer headers: \(SessionCatalog.formatDurationForLog(composerHeaderLoadDuration), privacy: .public), plan references: \(SessionCatalog.formatDurationForLog(planReferenceLoadDuration), privacy: .public); workspace references: \(workspaceReferences.count), file candidates: \(fileBackedCandidates.count), workspace chat candidates: \(workspaceChatCandidates.count), global composer candidates: \(globalComposerCandidates.count), deduped candidates: \(candidates.count)"
         )
         return candidates
     }
 
-    private func loadWorkspaceReferencesByProjectDirectory() throws -> [String: CursorWorkspaceReference] {
-        guard FileManager.default.fileExists(atPath: workspaceStorageRoot.path) else { return [:] }
+    private func loadWorkspaceReferences() throws -> [CursorWorkspaceReference] {
+        guard FileManager.default.fileExists(atPath: workspaceStorageRoot.path) else { return [] }
 
         let workspaceDirectories = try FileManager.default.contentsOfDirectory(
             at: workspaceStorageRoot,
@@ -692,7 +681,7 @@ struct CursorAdapter: SessionSourceAdapter {
             options: [.skipsHiddenFiles]
         ).filter(\.hasDirectoryPath)
 
-        var references: [String: CursorWorkspaceReference] = [:]
+        var references: [CursorWorkspaceReference] = []
         for workspaceDirectory in workspaceDirectories {
             let workspaceJSONURL = workspaceDirectory.appendingPathComponent("workspace.json")
             guard FileManager.default.fileExists(atPath: workspaceJSONURL.path),
@@ -703,20 +692,23 @@ struct CursorAdapter: SessionSourceAdapter {
             }
 
             let projectDirectoryName = PathUtilities.cursorProjectDirectoryName(forWorkspacePath: workspacePath)
-            guard !projectDirectoryName.isEmpty else { continue }
-            references[projectDirectoryName] = CursorWorkspaceReference(
-                workspacePath: workspacePath,
-                projectName: PathUtilities.displayProjectName(
+            references.append(
+                CursorWorkspaceReference(
+                    workspaceDirectory: workspaceDirectory,
+                    projectDirectoryName: projectDirectoryName.isEmpty ? nil : projectDirectoryName,
                     workspacePath: workspacePath,
-                    fallback: workspaceDirectory.lastPathComponent
-                ),
-                metadataPath: workspaceJSONURL.path
+                    projectName: PathUtilities.displayProjectName(
+                        workspacePath: workspacePath,
+                        fallback: workspaceDirectory.lastPathComponent
+                    ),
+                    metadataPath: workspaceJSONURL.path
+                )
             )
         }
         return references
     }
 
-    private func loadTitleReferencesBySessionID(from stateDatabaseURL: URL) throws -> [String: CursorTitleReference] {
+    private func loadComposerHeadersBySessionID(from stateDatabaseURL: URL) throws -> [String: CursorComposerHeader] {
         guard FileManager.default.fileExists(atPath: stateDatabaseURL.path),
               let rawValue = try loadSQLiteItemValue(from: stateDatabaseURL, key: "composer.composerHeaders"),
               let data = rawValue.data(using: .utf8) else {
@@ -726,13 +718,222 @@ struct CursorAdapter: SessionSourceAdapter {
         let payload = try JSONDecoder().decode(CursorComposerHeadersPayload.self, from: data)
         return Dictionary(
             uniqueKeysWithValues: payload.allComposers.compactMap { header in
-                guard let title = header.name?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !title.isEmpty else {
+                guard !header.composerId.isEmpty else {
                     return nil
                 }
-                return (header.composerId, CursorTitleReference(title: title))
+                return (header.composerId, header)
             }
         )
+    }
+
+    private func loadBubbleSessionIDs(from stateDatabaseURL: URL) throws -> Set<String> {
+        guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else {
+            return []
+        }
+
+        let keys: [String]
+        do {
+            keys = try loadSQLiteKeys(from: stateDatabaseURL, table: "cursorDiskKV", keyLike: "bubbleId:%:%")
+        } catch {
+            if isMissingSQLiteTableError(error, table: "cursorDiskKV") {
+                return []
+            }
+            throw error
+        }
+        return Set(keys.compactMap { parseBubbleSessionID(from: $0) })
+    }
+
+    private func loadFileBackedCandidates(
+        workspaceReferencesByProjectDirectory: [String: CursorWorkspaceReference],
+        composerHeadersBySessionID: [String: CursorComposerHeader],
+        planReferences: [String: CursorPlanReference]
+    ) throws -> [PrioritizedCursorCandidate] {
+        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
+
+        let projectDirectories = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).filter(\.hasDirectoryPath)
+
+        return try projectDirectories.flatMap { projectDirectory -> [PrioritizedCursorCandidate] in
+            let transcriptRoot = projectDirectory.appendingPathComponent("agent-transcripts", isDirectory: true)
+            guard FileManager.default.fileExists(atPath: transcriptRoot.path) else { return [] }
+
+            let workspaceReference = workspaceReferencesByProjectDirectory[projectDirectory.lastPathComponent]
+            let workspacePath = workspaceReference?.workspacePath
+                ?? PathUtilities.decodeCursorWorkspacePath(from: projectDirectory.lastPathComponent)
+            let fallbackProjectName = workspaceReference?.projectName
+                ?? PathUtilities.cursorFallbackProjectName(from: projectDirectory.lastPathComponent)
+            let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName)
+
+            let sessionDirectories = try FileManager.default.contentsOfDirectory(
+                at: transcriptRoot,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ).filter(\.hasDirectoryPath)
+
+            return sessionDirectories.map { sessionDirectory in
+                let sessionID = sessionDirectory.lastPathComponent
+                let transcriptFile = sessionDirectory.appendingPathComponent("\(sessionDirectory.lastPathComponent).jsonl")
+                let relatedPlanPath = planReferences[sessionID]?.path
+                    ?? SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
+                let composerHeader = composerHeadersBySessionID[sessionID]
+
+                let fingerprint = combinedFingerprint(
+                    paths: [transcriptFile.path, relatedPlanPath, workspaceReference?.metadataPath],
+                    values: [composerHeader?.title, composerHeader?.versionFingerprint]
+                )
+
+                return PrioritizedCursorCandidate(
+                    priority: 0,
+                    candidate: SessionScanCandidate(
+                        id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
+                        fingerprint: fingerprint,
+                        isInProgress: false,
+                        loadRecord: {
+                            try loadFileBackedRecord(
+                                sessionID: sessionID,
+                                transcriptFile: transcriptFile,
+                                workspacePath: workspacePath,
+                                projectName: projectName,
+                                preferredTitle: composerHeader?.title,
+                                relatedPlanPath: relatedPlanPath,
+                                fingerprint: fingerprint
+                            )
+                        }
+                    )
+                )
+            }
+        }
+    }
+
+    private func loadWorkspaceChatCandidates(
+        workspaceReferences: [CursorWorkspaceReference],
+        planReferences: [String: CursorPlanReference]
+    ) throws -> [PrioritizedCursorCandidate] {
+        try workspaceReferences.flatMap { workspaceReference -> [PrioritizedCursorCandidate] in
+            let chatSessionsDirectory = workspaceReference.workspaceDirectory.appendingPathComponent("chatSessions", isDirectory: true)
+            guard FileManager.default.fileExists(atPath: chatSessionsDirectory.path) else {
+                return []
+            }
+
+            let chatSessionFiles = try FileManager.default.contentsOfDirectory(
+                at: chatSessionsDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            .filter { ["json", "jsonl"].contains($0.pathExtension.lowercased()) }
+            .sorted { lhs, rhs in
+                let lhsPriority = lhs.pathExtension.lowercased() == "json" ? 0 : 1
+                let rhsPriority = rhs.pathExtension.lowercased() == "json" ? 0 : 1
+                if lhsPriority != rhsPriority {
+                    return lhsPriority < rhsPriority
+                }
+                return lhs.lastPathComponent.localizedCaseInsensitiveCompare(rhs.lastPathComponent) == .orderedAscending
+            }
+
+            var sessionsByID: [String: CursorWorkspaceChatSession] = [:]
+            for chatSessionFile in chatSessionFiles {
+                let metadata = try TranscriptPreviewExtractor.extractWorkspaceChatSessionMetadata(from: chatSessionFile)
+                let sessionID = metadata.sessionId ?? chatSessionFile.deletingPathExtension().lastPathComponent
+                if sessionsByID[sessionID] != nil {
+                    continue
+                }
+                sessionsByID[sessionID] = CursorWorkspaceChatSession(
+                    transcriptFile: chatSessionFile,
+                    metadata: metadata
+                )
+            }
+
+            return sessionsByID.map { sessionID, session in
+                let title = session.metadata.title ?? TextSanitizer.inferTitle(
+                    from: session.metadata.firstUser,
+                    fallback: sessionID
+                )
+                let relatedPlanPath = planReferences[sessionID]?.path
+                    ?? SessionArtifactLocator.vscodePlanPath(
+                        workspaceDirectory: workspaceReference.workspaceDirectory,
+                        sessionId: sessionID
+                    )
+                let fingerprint = combinedFingerprint(
+                    paths: [session.transcriptFile.path, workspaceReference.metadataPath, relatedPlanPath],
+                    values: [title, session.metadata.latestModel]
+                )
+
+                return PrioritizedCursorCandidate(
+                    priority: 2,
+                    candidate: SessionScanCandidate(
+                        id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
+                        fingerprint: fingerprint,
+                        isInProgress: false,
+                        loadRecord: {
+                            try loadWorkspaceChatRecord(
+                                transcriptFile: session.transcriptFile,
+                                workspaceReference: workspaceReference,
+                                relatedPlanPath: relatedPlanPath,
+                                sessionID: sessionID,
+                                sessionMetadata: session.metadata,
+                                title: title,
+                                fingerprint: fingerprint
+                            )
+                        }
+                    )
+                )
+            }
+        }
+    }
+
+    private func loadGlobalComposerCandidates(
+        stateDatabaseURL: URL,
+        workspaceReferencesByPath: [String: CursorWorkspaceReference],
+        composerHeadersBySessionID: [String: CursorComposerHeader],
+        planReferences: [String: CursorPlanReference]
+    ) throws -> [PrioritizedCursorCandidate] {
+        guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else {
+            return []
+        }
+
+        let bubbleSessionIDs = try loadBubbleSessionIDs(from: stateDatabaseURL)
+        let sessionIDs = Set(composerHeadersBySessionID.keys).union(bubbleSessionIDs)
+
+        return sessionIDs.sorted().map { sessionID in
+            let composerHeader = composerHeadersBySessionID[sessionID]
+            let workspacePath = composerHeader?.workspacePath
+            let workspaceReference = workspacePath.flatMap { workspaceReferencesByPath[$0] }
+            let projectName = PathUtilities.displayProjectName(
+                workspacePath: workspacePath,
+                fallback: workspaceReference?.projectName ?? sessionID
+            )
+            let relatedPlanPath = planReferences[sessionID]?.path
+            let fingerprint = combinedFingerprint(
+                paths: [stateDatabaseURL.path, relatedPlanPath, workspaceReference?.metadataPath],
+                values: [composerHeader?.title, composerHeader?.versionFingerprint, workspacePath]
+            )
+
+            return PrioritizedCursorCandidate(
+                priority: 1,
+                candidate: SessionScanCandidate(
+                    id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
+                    fingerprint: fingerprint,
+                    isInProgress: false,
+                    loadRecord: {
+                        try loadGlobalComposerRecord(
+                            sessionID: sessionID,
+                            stateDatabaseURL: stateDatabaseURL,
+                            workspaceReference: workspaceReference,
+                            fallbackWorkspacePath: workspacePath,
+                            fallbackProjectName: projectName,
+                            preferredTitle: composerHeader?.title,
+                            startedAt: composerHeader?.startedAtDate,
+                            updatedAt: composerHeader?.updatedAtDate,
+                            relatedPlanPath: relatedPlanPath,
+                            fingerprint: fingerprint
+                        )
+                    }
+                )
+            )
+        }
     }
 
     private func loadPlanReferencesBySessionID(from stateDatabaseURL: URL) throws -> [String: CursorPlanReference] {
@@ -791,7 +992,7 @@ struct CursorAdapter: SessionSourceAdapter {
         return referencesBySessionID
     }
 
-    private func loadRecord(
+    private func loadFileBackedRecord(
         sessionID: String,
         transcriptFile: URL,
         workspacePath: String?,
@@ -832,16 +1033,129 @@ struct CursorAdapter: SessionSourceAdapter {
             isNewtonProject: false
         )
     }
+
+    private func loadWorkspaceChatRecord(
+        transcriptFile: URL,
+        workspaceReference: CursorWorkspaceReference,
+        relatedPlanPath: String?,
+        sessionID: String,
+        sessionMetadata: VSCodeSessionMetadata,
+        title: String,
+        fingerprint: String
+    ) throws -> SessionRecord? {
+        guard FileManager.default.fileExists(atPath: transcriptFile.path),
+              FileManager.default.fileExists(atPath: workspaceReference.metadataPath) else {
+            return nil
+        }
+
+        let dates = fileDates(for: transcriptFile)
+        guard sessionMetadata.firstUser != nil || sessionMetadata.firstAssistant != nil else {
+            return nil
+        }
+
+        return SessionRecord(
+            source: .cursor,
+            sourceSessionId: sessionID,
+            workspacePath: workspaceReference.workspacePath,
+            projectName: workspaceReference.projectName,
+            branch: nil,
+            conversationModel: sessionMetadata.latestModel,
+            startedAt: sessionMetadata.startedAt ?? dates.created,
+            updatedAt: sessionMetadata.updatedAt ?? dates.modified,
+            title: title,
+            summary: sessionMetadata.summary,
+            firstUserPreview: sessionMetadata.firstUser,
+            firstAssistantPreview: sessionMetadata.firstAssistant,
+            rawTranscriptPath: transcriptFile.path,
+            rawMetadataPath: workspaceReference.metadataPath,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: .openInCursor,
+            resumePayload: workspaceReference.workspacePath,
+            isNewtonProject: false
+        )
+    }
+
+    private func loadGlobalComposerRecord(
+        sessionID: String,
+        stateDatabaseURL: URL,
+        workspaceReference: CursorWorkspaceReference?,
+        fallbackWorkspacePath: String?,
+        fallbackProjectName: String,
+        preferredTitle: String?,
+        startedAt: Date?,
+        updatedAt: Date?,
+        relatedPlanPath: String?,
+        fingerprint: String
+    ) throws -> SessionRecord? {
+        guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else {
+            return nil
+        }
+
+        let preview = try TranscriptPreviewExtractor.extractCursorBubbleTranscript(
+            from: stateDatabaseURL,
+            sessionId: sessionID
+        )
+        guard preview.firstUser != nil || preview.firstAssistant != nil else {
+            return nil
+        }
+
+        let workspacePath = fallbackWorkspacePath ?? workspaceReference?.workspacePath
+        let title = preferredTitle ?? TextSanitizer.inferTitle(from: preview.firstUser, fallback: sessionID)
+        let databaseDates = fileDates(for: stateDatabaseURL)
+
+        return SessionRecord(
+            source: .cursor,
+            sourceSessionId: sessionID,
+            workspacePath: workspacePath,
+            projectName: PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName),
+            branch: nil,
+            conversationModel: nil,
+            startedAt: startedAt ?? preview.startedAt ?? databaseDates.created,
+            updatedAt: updatedAt ?? databaseDates.modified,
+            title: title,
+            summary: preview.summary,
+            firstUserPreview: preview.firstUser,
+            firstAssistantPreview: preview.firstAssistant,
+            rawTranscriptPath: stateDatabaseURL.path,
+            rawMetadataPath: workspaceReference?.metadataPath,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: workspacePath == nil ? .revealPath : .openInCursor,
+            resumePayload: workspacePath ?? stateDatabaseURL.path,
+            isNewtonProject: false
+        )
+    }
+
+    private func parseBubbleSessionID(from key: String) -> String? {
+        guard key.hasPrefix("bubbleId:") else {
+            return nil
+        }
+        let remainder = key.dropFirst("bubbleId:".count)
+        guard let separator = remainder.firstIndex(of: ":") else {
+            return nil
+        }
+        let sessionID = String(remainder[..<separator])
+        return sessionID.isEmpty ? nil : sessionID
+    }
+}
+
+private struct PrioritizedCursorCandidate {
+    let priority: Int
+    let candidate: SessionScanCandidate
+}
+
+private struct CursorWorkspaceChatSession {
+    let transcriptFile: URL
+    let metadata: VSCodeSessionMetadata
 }
 
 private struct CursorWorkspaceReference {
+    let workspaceDirectory: URL
+    let projectDirectoryName: String?
     let workspacePath: String
     let projectName: String
     let metadataPath: String
-}
-
-private struct CursorTitleReference {
-    let title: String
 }
 
 private struct CursorPlanReference {
@@ -867,6 +1181,37 @@ private struct CursorComposerHeadersPayload: Decodable {
 private struct CursorComposerHeader: Decodable {
     let composerId: String
     let name: String?
+    let createdAt: Double?
+    let lastUpdatedAt: Double?
+    let workspaceIdentifier: CursorWorkspaceIdentifier?
+
+    var title: String? {
+        name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    var workspacePath: String? {
+        workspaceIdentifier?.uri?.resolvedFilePath
+    }
+
+    var startedAtDate: Date? {
+        createdAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+    }
+
+    var updatedAtDate: Date? {
+        lastUpdatedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+    }
+
+    var versionFingerprint: String? {
+        [createdAt, lastUpdatedAt]
+            .compactMap { $0.map { String(Int64($0)) } }
+            .joined(separator: "|")
+            .nilIfEmpty
+    }
+}
+
+private struct CursorWorkspaceIdentifier: Decodable {
+    let id: String?
+    let uri: CursorPlanURI?
 }
 
 private struct CursorPlanRegistryPayload: Decodable {
@@ -933,6 +1278,12 @@ private struct CursorGlassPlanTab: Decodable {
 private struct CursorGlassPlanTabProps: Decodable {
     let planId: String?
     let ownerAgentId: String?
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
 }
 
 private struct VSCodeScannedSession {
