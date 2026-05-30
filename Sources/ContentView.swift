@@ -110,6 +110,8 @@ struct ContentView: View {
                 } label: {
                     RefreshToolbarButtonLabel(isRefreshing: viewModel.isRefreshing)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.accentColor)
                 .disabled(viewModel.isRefreshing)
             }
         }
