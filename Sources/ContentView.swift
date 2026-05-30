@@ -4,6 +4,14 @@ import AgentSessionManagerCore
 
 struct ContentView: View {
     private let sessionListTopAnchorID = "session-list-top-anchor"
+    private let refreshButtonColor = Color(
+        nsColor: NSColor(
+            srgbRed: 0.30,
+            green: 0.56,
+            blue: 0.45,
+            alpha: 1
+        )
+    )
 
     @ObservedObject var viewModel: SessionBrowserViewModel
     @Environment(\.openWindow) private var openWindow
@@ -108,10 +116,13 @@ struct ContentView: View {
                 Button {
                     Task { await viewModel.refreshSessions() }
                 } label: {
-                    RefreshToolbarButtonLabel(isRefreshing: viewModel.isRefreshing)
+                    RefreshToolbarButtonLabel(
+                        isRefreshing: viewModel.isRefreshing,
+                        fillColor: refreshButtonColor
+                    )
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.accentColor)
+                .buttonStyle(.plain)
+                .opacity(viewModel.isRefreshing ? 0.8 : 1)
                 .disabled(viewModel.isRefreshing)
             }
         }
@@ -439,6 +450,7 @@ private struct ToolbarSearchField: NSViewRepresentable {
 
 private struct RefreshToolbarButtonLabel: View {
     let isRefreshing: Bool
+    let fillColor: Color
 
     var body: some View {
         HStack(spacing: 6) {
@@ -449,6 +461,10 @@ private struct RefreshToolbarButtonLabel: View {
                     .controlSize(.small)
             }
         }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(fillColor, in: Capsule())
     }
 }
 
