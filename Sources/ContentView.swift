@@ -449,6 +449,9 @@ private struct ToolbarSearchField: NSViewRepresentable {
 }
 
 private struct RefreshToolbarButtonLabel: View {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovering = false
+
     let isRefreshing: Bool
     let fillColor: Color
 
@@ -464,7 +467,27 @@ private struct RefreshToolbarButtonLabel: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(fillColor, in: Capsule())
+        .background(fillColor.opacity(isEnabled ? 1 : 0.75), in: Capsule())
+        .overlay {
+            Capsule()
+                .fill(.white.opacity(isHovering && isEnabled ? 0.12 : 0))
+        }
+        .overlay {
+            Capsule()
+                .strokeBorder(
+                    .white.opacity(isHovering && isEnabled ? 0.34 : 0.16),
+                    lineWidth: 1
+                )
+        }
+        .shadow(
+            color: .black.opacity(isHovering && isEnabled ? 0.18 : 0.08),
+            radius: isHovering && isEnabled ? 8 : 4,
+            y: isHovering && isEnabled ? 3 : 1
+        )
+        .scaleEffect(isHovering && isEnabled ? 1.01 : 1)
+        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .contentShape(Capsule())
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -930,7 +953,7 @@ private struct SessionDetailView: View {
                             Circle()
                                 .fill(Color.orange)
                                 .frame(width: 8, height: 8)
-                            Text("This session is currently active in another terminal")
+                            Text("This session is currently active in a terminal")
                                 .font(.subheadline)
                                 .foregroundStyle(.orange)
                         }
@@ -1008,7 +1031,7 @@ private struct SessionDetailView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This session is currently in use in another terminal. Resuming it here may cause conflicts with the existing session.")
+                Text("This session is currently in use in a terminal. Resuming it from here may cause conflicts with the existing session.")
             }
 
             if viewModel.canStartNewConversation(for: session) {
