@@ -899,6 +899,8 @@ private enum VSCodeChatSessionPathComponent {
 }
 
 public enum TranscriptPreviewExtractor {
+    private static let slackTranscriptSidecarFilename = "slack-transcript.jsonl"
+
     public static func loadTranscript(for record: SessionRecord) throws -> TranscriptDocument {
         guard let transcriptPath = record.rawTranscriptPath else {
             throw TranscriptLoadingError.transcriptUnavailable
@@ -1158,15 +1160,105 @@ public enum TranscriptPreviewExtractor {
             entries.append(entry)
         }
 
+        let slackEntries = try loadSlackTranscriptSidecarEntries(
+            sessionId: sessionId,
+            alongside: url
+        )
+        let mergedEntries = mergeTranscriptEntries(entries, with: slackEntries)
+
         return TranscriptDocument(
             sessionID: sessionId,
             sessionTitle: title,
             source: source,
             rawTranscriptPath: url.path,
-            entries: entries,
+            entries: mergedEntries,
             timestampsAreComplete: true,
             timestampNotice: nil
         )
+    }
+
+    private static func loadSlackTranscriptSidecarEntries(
+        sessionId: String,
+        alongside transcriptURL: URL
+    ) throws -> [TranscriptEntry] {
+        let sidecarURL = transcriptURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(slackTranscriptSidecarFilename)
+        guard FileManager.default.fileExists(atPath: sidecarURL.path) else {
+            return []
+        }
+
+        let contents = try String(contentsOf: sidecarURL, encoding: .utf8)
+        var entries: [TranscriptEntry] = []
+
+        for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
+            guard let data = line.data(using: .utf8),
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+
+            let sender = (object["sender"] as? String)?.lowercased() ?? "system"
+            let role: TranscriptEntryRole
+            let title: String
+            switch sender {
+            case "user":
+                role = .user
+                title = "Slack User"
+            case "assistant":
+                role = .assistant
+                title = "Slack Assistant"
+            default:
+                role = .system
+                title = "Slack"
+            }
+
+            let body = TextSanitizer.compact(object["text"] as? String)
+            let timestamp = ISO8601DateCoding.parse(object["timestamp"] as? String)
+                ?? ISO8601DateCoding.parse(object["recorded_at"] as? String)
+            let rawMessageID = (object["slack_ts"] as? String)?.replacingOccurrences(of: ".", with: "-")
+                ?? "\(index)"
+
+            entries.append(
+                TranscriptEntry(
+                    id: "\(sessionId)-slack-\(rawMessageID)",
+                    role: role,
+                    title: title,
+                    body: body,
+                    timestamp: timestamp
+                )
+            )
+        }
+
+        return entries
+    }
+
+    private static func mergeTranscriptEntries(
+        _ primary: [TranscriptEntry],
+        with secondary: [TranscriptEntry]
+    ) -> [TranscriptEntry] {
+        let merged = primary.enumerated().map { (group: 0, order: $0.offset, entry: $0.element) }
+            + secondary.enumerated().map { (group: 1, order: $0.offset, entry: $0.element) }
+
+        return merged.sorted { lhs, rhs in
+            switch (lhs.entry.timestamp, rhs.entry.timestamp) {
+            case let (left?, right?) where left != right:
+                return left < right
+            case let (left?, right?) where left == right:
+                break
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            default:
+                break
+            }
+
+            if lhs.group != rhs.group {
+                return lhs.group < rhs.group
+            }
+            return lhs.order < rhs.order
+        }
+        .map(\.entry)
     }
 
     static func extractVSCodeChatSessionModel(from url: URL) throws -> String? {

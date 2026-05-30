@@ -457,6 +457,8 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
             let workspaceURL = sessionDirectory.appendingPathComponent("workspace.yaml")
             let eventLogURL = sessionDirectory.appendingPathComponent("events.jsonl")
             let checkpointIndexURL = sessionDirectory.appendingPathComponent("checkpoints/index.md")
+            let slackTranscriptURL = sessionDirectory.appendingPathComponent("slack-transcript.jsonl")
+            let slackSessionURL = sessionDirectory.appendingPathComponent("slack-session.json")
 
             let planLookupStart = clock.now
             let relatedPlanPath = SessionArtifactLocator.preferredPlanPath(in: sessionDirectory)
@@ -472,7 +474,9 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
                 paths: [
                     workspaceURL.path,
                     FileManager.default.fileExists(atPath: eventLogURL.path) ? eventLogURL.path : checkpointIndexURL.path,
-                    relatedPlanPath
+                    relatedPlanPath,
+                    FileManager.default.fileExists(atPath: slackTranscriptURL.path) ? slackTranscriptURL.path : nil,
+                    FileManager.default.fileExists(atPath: slackSessionURL.path) ? slackSessionURL.path : nil
                 ],
                 values: [inProgressState.fingerprintValue]
             )
