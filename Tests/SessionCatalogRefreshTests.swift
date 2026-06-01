@@ -406,6 +406,111 @@ final class SessionCatalogRefreshTests: XCTestCase {
         )
     }
 
+    func testCatalogRefreshKeepsGlobalCursorSessionStableWhenOnlyStateDatabaseMTimeChanges() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+        let copilotRoot = directory.appendingPathComponent(".copilot", isDirectory: true)
+        let cursorProjectsRoot = directory.appendingPathComponent(".cursor/projects", isDirectory: true)
+        let cursorWorkspaceStorageRoot = directory.appendingPathComponent("Cursor/User/workspaceStorage", isDirectory: true)
+        let cursorGlobalStorageRoot = directory.appendingPathComponent("Cursor/User/globalStorage", isDirectory: true)
+        let vscodeRoot = directory.appendingPathComponent("Code/User/workspaceStorage", isDirectory: true)
+        try FileManager.default.createDirectory(at: copilotRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cursorProjectsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cursorWorkspaceStorageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cursorGlobalStorageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: vscodeRoot, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/repos/newton4"
+        let workspaceDirectory = cursorWorkspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sessionID = "global-composer-refresh-stability"
+        let expectedUpdatedAt = try XCTUnwrap(ISO8601DateCoding.parse("2026-02-10T12:06:45.887Z"))
+        let stateDBURL = cursorGlobalStorageRoot.appendingPathComponent("state.vscdb")
+        try createCursorStateDatabase(
+            at: stateDBURL,
+            items: [
+                "composer.composerHeaders": """
+                {
+                  "allComposers": [
+                    {
+                      "composerId": "\(sessionID)",
+                      "name": "Global composer refresh stability",
+                      "createdAt": 1739189196826,
+                      "workspaceIdentifier": {
+                        "id": "workspace-id",
+                        "uri": {
+                          "fsPath": "\(workspacePath)"
+                        }
+                      }
+                    }
+                  ]
+                }
+                """
+            ],
+            cursorDiskKVItems: [
+                "bubbleId:\(sessionID):bubble-1": """
+                {
+                  "bubbleId": "bubble-1",
+                  "type": 1,
+                  "text": "Why does this stale session look updated?",
+                  "createdAt": "2026-02-10T12:06:36.826Z"
+                }
+                """,
+                "bubbleId:\(sessionID):bubble-2": """
+                {
+                  "bubbleId": "bubble-2",
+                  "type": 2,
+                  "text": "Because the adapter is using shared database mtime.",
+                  "createdAt": "2026-02-10T12:06:45.887Z"
+                }
+                """
+            ]
+        )
+
+        let catalog = try SessionCatalog(
+            storeURL: databaseURL,
+            roots: SourceRoots(
+                copilotCLI: copilotRoot,
+                cursorProjects: cursorProjectsRoot,
+                cursorWorkspaceStorage: cursorWorkspaceStorageRoot,
+                cursorGlobalStorage: cursorGlobalStorageRoot,
+                vscodeWorkspaceStorage: vscodeRoot
+            )
+        )
+
+        let initialSessions = try catalog.refreshSessions()
+        let initialRecord = try XCTUnwrap(initialSessions.first(where: { $0.sourceSessionId == sessionID }))
+        XCTAssertEqual(initialRecord.updatedAt, expectedUpdatedAt)
+
+        try FileManager.default.setAttributes(
+            [.modificationDate: try XCTUnwrap(ISO8601DateCoding.parse("2026-06-01T14:23:00.956Z"))],
+            ofItemAtPath: stateDBURL.path
+        )
+
+        let refreshedSessions = try catalog.refreshSessions()
+        let refreshedRecord = try XCTUnwrap(refreshedSessions.first(where: { $0.sourceSessionId == sessionID }))
+        XCTAssertEqual(refreshedRecord.updatedAt, expectedUpdatedAt)
+        XCTAssertEqual(refreshedRecord.fingerprint, initialRecord.fingerprint)
+
+        let storedRecord = try XCTUnwrap(SQLiteSessionStore(databaseURL: databaseURL).fetchAll().first(where: {
+            $0.source == .cursor && $0.sourceSessionId == sessionID
+        }))
+        XCTAssertEqual(storedRecord.updatedAt, expectedUpdatedAt)
+        XCTAssertEqual(storedRecord.fingerprint, initialRecord.fingerprint)
+    }
+
     private func makeRecord(
         sessionID: String,
         title: String,

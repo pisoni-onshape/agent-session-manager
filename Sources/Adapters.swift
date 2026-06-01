@@ -738,21 +738,30 @@ struct CursorAdapter: SessionSourceAdapter {
         )
     }
 
-    private func loadBubbleSessionIDs(from stateDatabaseURL: URL) throws -> Set<String> {
+    private func loadBubbleEvidenceBySessionID(from stateDatabaseURL: URL) throws -> [String: CursorBubbleSessionEvidence] {
         guard FileManager.default.fileExists(atPath: stateDatabaseURL.path) else {
-            return []
+            return [:]
         }
 
-        let keys: [String]
+        let rawValues: [String: String]
         do {
-            keys = try loadSQLiteKeys(from: stateDatabaseURL, table: "cursorDiskKV", keyLike: "bubbleId:%:%")
+            rawValues = try loadSQLiteValues(from: stateDatabaseURL, table: "cursorDiskKV", keyLike: "bubbleId:%:%")
         } catch {
             if isMissingSQLiteTableError(error, table: "cursorDiskKV") {
-                return []
+                return [:]
             }
             throw error
         }
-        return Set(keys.compactMap { parseBubbleSessionID(from: $0) })
+
+        var rowsBySessionID: [String: [(String, String)]] = [:]
+        for (key, rawValue) in rawValues {
+            guard let sessionID = parseBubbleSessionID(from: key) else {
+                continue
+            }
+            rowsBySessionID[sessionID, default: []].append((key, rawValue))
+        }
+
+        return rowsBySessionID.mapValues(CursorBubbleSessionEvidence.init(rows:))
     }
 
     private func loadWorkspaceComposerMetadataBySessionID(
@@ -959,14 +968,15 @@ struct CursorAdapter: SessionSourceAdapter {
             return []
         }
 
-        let bubbleSessionIDs = try loadBubbleSessionIDs(from: stateDatabaseURL)
+        let bubbleEvidenceBySessionID = try loadBubbleEvidenceBySessionID(from: stateDatabaseURL)
         let sessionIDs = Set(composerHeadersBySessionID.keys)
-            .union(bubbleSessionIDs)
+            .union(bubbleEvidenceBySessionID.keys)
             .union(workspaceComposerMetadataBySessionID.keys)
 
         return sessionIDs.sorted().map { sessionID in
             let composerHeader = composerHeadersBySessionID[sessionID]
             let workspaceComposerMetadata = workspaceComposerMetadataBySessionID[sessionID]
+            let bubbleEvidence = bubbleEvidenceBySessionID[sessionID]
             let workspacePath = composerHeader?.workspacePath ?? workspaceComposerMetadata?.workspaceReference.workspacePath
             let workspaceReference = workspacePath.flatMap { workspaceReferencesByPath[$0] }
                 ?? workspaceComposerMetadata?.workspaceReference
@@ -977,9 +987,22 @@ struct CursorAdapter: SessionSourceAdapter {
             let relatedPlanPath = planReferences[sessionID]?.path
             let preferredTitle = composerHeader?.title ?? workspaceComposerMetadata?.title
             let branch = workspaceComposerMetadata?.branch
+            let startedAt = composerHeader?.startedAtDate ?? bubbleEvidence?.startedAt
+            let updatedAt = composerHeader?.updatedAtDate
+                ?? workspaceComposerMetadata?.updatedAt
+                ?? bubbleEvidence?.updatedAt
+                ?? composerHeader?.startedAtDate
+                ?? bubbleEvidence?.startedAt
             let fingerprint = combinedFingerprint(
-                paths: [stateDatabaseURL.path, relatedPlanPath, workspaceReference?.metadataPath],
-                values: [preferredTitle, composerHeader?.versionFingerprint, workspacePath, branch]
+                paths: [relatedPlanPath, workspaceReference?.metadataPath],
+                values: [
+                    preferredTitle,
+                    composerHeader?.versionFingerprint,
+                    workspaceComposerMetadata?.versionFingerprint,
+                    workspacePath,
+                    branch,
+                    bubbleEvidence?.fingerprint
+                ]
             )
 
             return PrioritizedCursorCandidate(
@@ -997,8 +1020,8 @@ struct CursorAdapter: SessionSourceAdapter {
                             fallbackProjectName: projectName,
                             branch: branch,
                             preferredTitle: preferredTitle,
-                            startedAt: composerHeader?.startedAtDate,
-                            updatedAt: composerHeader?.updatedAtDate ?? workspaceComposerMetadata?.updatedAt,
+                            startedAt: startedAt,
+                            updatedAt: updatedAt,
                             relatedPlanPath: relatedPlanPath,
                             fingerprint: fingerprint
                         )
@@ -1176,7 +1199,6 @@ struct CursorAdapter: SessionSourceAdapter {
 
         let workspacePath = fallbackWorkspacePath ?? workspaceReference?.workspacePath
         let title = preferredTitle ?? TextSanitizer.inferTitle(from: preview.firstUser, fallback: sessionID)
-        let databaseDates = fileDates(for: stateDatabaseURL)
 
         return SessionRecord(
             source: .cursor,
@@ -1185,8 +1207,8 @@ struct CursorAdapter: SessionSourceAdapter {
             projectName: PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName),
             branch: branch,
             conversationModel: nil,
-            startedAt: startedAt ?? preview.startedAt ?? databaseDates.created,
-            updatedAt: updatedAt ?? databaseDates.modified,
+            startedAt: startedAt ?? preview.startedAt,
+            updatedAt: updatedAt ?? preview.startedAt ?? startedAt,
             title: title,
             summary: preview.summary,
             firstUserPreview: preview.firstUser,
@@ -1238,6 +1260,13 @@ private struct CursorWorkspaceComposerMetadata {
     let branch: String?
     let updatedAt: Date?
 
+    var versionFingerprint: String? {
+        [branch, updatedAt.map { String(Int64($0.timeIntervalSince1970 * 1000)) }]
+            .compactMap { $0 }
+            .joined(separator: "|")
+            .nilIfEmpty
+    }
+
     func shouldReplace(_ existing: CursorWorkspaceComposerMetadata) -> Bool {
         switch (updatedAt, existing.updatedAt) {
         case let (lhs?, rhs?) where lhs != rhs:
@@ -1270,6 +1299,40 @@ private struct CursorPlanReference {
             return planID.localizedStandardCompare(existing.planID) == .orderedAscending
         }
         return path.localizedStandardCompare(existing.path) == .orderedAscending
+    }
+}
+
+private struct CursorBubbleSessionEvidence {
+    let startedAt: Date?
+    let updatedAt: Date?
+    let fingerprint: String
+
+    init(rows: [(String, String)]) {
+        let sortedRows = rows.sorted { lhs, rhs in
+            lhs.0.localizedStandardCompare(rhs.0) == .orderedAscending
+        }
+
+        var timestamps: [Date] = []
+        var fingerprintComponents: [String] = []
+        fingerprintComponents.reserveCapacity(sortedRows.count * 2)
+
+        for (key, rawValue) in sortedRows {
+            fingerprintComponents.append(key)
+            fingerprintComponents.append(rawValue)
+
+            guard let data = rawValue.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+
+            if let timestamp = cursorBubbleTimestamp(from: object["createdAt"]) {
+                timestamps.append(timestamp)
+            }
+        }
+
+        startedAt = timestamps.min()
+        updatedAt = timestamps.max()
+        fingerprint = stableCursorSessionFingerprint(for: fingerprintComponents)
     }
 }
 
@@ -1411,6 +1474,51 @@ private extension String {
     var nilIfEmpty: String? {
         isEmpty ? nil : self
     }
+}
+
+private func stableCursorSessionFingerprint(for values: [String]) -> String {
+    var hash: UInt64 = 0xcbf29ce484222325
+    let prime: UInt64 = 0x100000001b3
+
+    for value in values {
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= prime
+        }
+        hash ^= 0xff
+        hash &*= prime
+    }
+
+    return String(format: "cursor-bubbles:%016llx", hash)
+}
+
+private func cursorBubbleTimestamp(from rawValue: Any?) -> Date? {
+    if let string = rawValue as? String {
+        if let parsed = ISO8601DateCoding.parse(string) {
+            return parsed
+        }
+        if let milliseconds = Double(string) {
+            return Date(timeIntervalSince1970: milliseconds / 1000)
+        }
+    }
+
+    if let number = rawValue as? NSNumber {
+        return Date(timeIntervalSince1970: number.doubleValue / 1000)
+    }
+
+    if let milliseconds = rawValue as? Double {
+        return Date(timeIntervalSince1970: milliseconds / 1000)
+    }
+
+    if let milliseconds = rawValue as? Int64 {
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1000)
+    }
+
+    if let milliseconds = rawValue as? Int {
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1000)
+    }
+
+    return nil
 }
 
 private struct VSCodeScannedSession {

@@ -351,6 +351,175 @@ final class CursorAdapterTests: XCTestCase {
         XCTAssertEqual(transcript.entries[1].title, "Assistant")
     }
 
+    func testCursorAdapterUsesBubbleTimestampWhenGlobalComposerHeaderLacksLastUpdatedAt() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let projectsRoot = directory.appendingPathComponent(".cursor/projects", isDirectory: true)
+        let workspaceStorageRoot = directory.appendingPathComponent("Cursor/User/workspaceStorage", isDirectory: true)
+        let globalStorageRoot = directory.appendingPathComponent("Cursor/User/globalStorage", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspaceStorageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: globalStorageRoot, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/repos/newton4"
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sessionID = "global-composer-without-last-updated"
+        let stateDBURL = globalStorageRoot.appendingPathComponent("state.vscdb")
+        let expectedUpdatedAt = try XCTUnwrap(ISO8601DateCoding.parse("2026-02-10T12:06:45.887Z"))
+        try createCursorStateDatabase(
+            at: stateDBURL,
+            items: [
+                "composer.composerHeaders": """
+                {
+                  "allComposers": [
+                    {
+                      "composerId": "\(sessionID)",
+                      "name": "Global composer session without a lastUpdatedAt",
+                      "createdAt": 1739189196826,
+                      "workspaceIdentifier": {
+                        "id": "workspace-id",
+                        "uri": {
+                          "fsPath": "\(workspacePath)"
+                        }
+                      }
+                    }
+                  ]
+                }
+                """
+            ],
+            cursorDiskKVItems: [
+                "bubbleId:\(sessionID):bubble-1": """
+                {
+                  "bubbleId": "bubble-1",
+                  "type": 1,
+                  "text": "Please inspect the Cursor refresh behavior.",
+                  "createdAt": "2026-02-10T12:06:36.826Z"
+                }
+                """,
+                "bubbleId:\(sessionID):bubble-2": """
+                {
+                  "bubbleId": "bubble-2",
+                  "type": 2,
+                  "text": "I'll inspect the refresh fingerprinting path.",
+                  "createdAt": "2026-02-10T12:06:45.887Z"
+                }
+                """
+            ]
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: try XCTUnwrap(ISO8601DateCoding.parse("2026-06-01T14:23:00.956Z"))],
+            ofItemAtPath: stateDBURL.path
+        )
+
+        let records = try CursorAdapter(
+            root: projectsRoot,
+            workspaceStorageRoot: workspaceStorageRoot,
+            globalStorageRoot: globalStorageRoot
+        ).discover()
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].sourceSessionId, sessionID)
+        XCTAssertEqual(records[0].updatedAt, expectedUpdatedAt)
+    }
+
+    func testCursorAdapterIgnoresGlobalStateDatabaseMTimeWhenFingerprintingGlobalComposerSessions() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let projectsRoot = directory.appendingPathComponent(".cursor/projects", isDirectory: true)
+        let workspaceStorageRoot = directory.appendingPathComponent("Cursor/User/workspaceStorage", isDirectory: true)
+        let globalStorageRoot = directory.appendingPathComponent("Cursor/User/globalStorage", isDirectory: true)
+        try FileManager.default.createDirectory(at: projectsRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: workspaceStorageRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: globalStorageRoot, withIntermediateDirectories: true)
+
+        let workspacePath = "/Users/pisoni/repos/newton4"
+        let workspaceDirectory = workspaceStorageRoot.appendingPathComponent("workspace-id", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
+        try """
+        {
+          "folder": "file://\(workspacePath)"
+        }
+        """.write(
+            to: workspaceDirectory.appendingPathComponent("workspace.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sessionID = "global-composer-fingerprint-stability"
+        let stateDBURL = globalStorageRoot.appendingPathComponent("state.vscdb")
+        try createCursorStateDatabase(
+            at: stateDBURL,
+            items: [
+                "composer.composerHeaders": """
+                {
+                  "allComposers": [
+                    {
+                      "composerId": "\(sessionID)",
+                      "name": "Global composer fingerprint stability",
+                      "createdAt": 1739189196826,
+                      "workspaceIdentifier": {
+                        "id": "workspace-id",
+                        "uri": {
+                          "fsPath": "\(workspacePath)"
+                        }
+                      }
+                    }
+                  ]
+                }
+                """
+            ],
+            cursorDiskKVItems: [
+                "bubbleId:\(sessionID):bubble-1": """
+                {
+                  "bubbleId": "bubble-1",
+                  "type": 1,
+                  "text": "Fingerprint should stay stable across unrelated database touches.",
+                  "createdAt": "2026-02-10T12:06:36.826Z"
+                }
+                """,
+                "bubbleId:\(sessionID):bubble-2": """
+                {
+                  "bubbleId": "bubble-2",
+                  "type": 2,
+                  "text": "Only this session's rows should matter.",
+                  "createdAt": "2026-02-10T12:06:45.887Z"
+                }
+                """
+            ]
+        )
+
+        let adapter = CursorAdapter(
+            root: projectsRoot,
+            workspaceStorageRoot: workspaceStorageRoot,
+            globalStorageRoot: globalStorageRoot
+        )
+        let initialRecords = try adapter.discover()
+        XCTAssertEqual(initialRecords.count, 1)
+
+        try FileManager.default.setAttributes(
+            [.modificationDate: try XCTUnwrap(ISO8601DateCoding.parse("2026-06-01T14:23:00.956Z"))],
+            ofItemAtPath: stateDBURL.path
+        )
+
+        let refreshedRecords = try adapter.discover()
+        XCTAssertEqual(refreshedRecords.count, 1)
+        XCTAssertEqual(refreshedRecords[0].fingerprint, initialRecords[0].fingerprint)
+        XCTAssertEqual(refreshedRecords[0].updatedAt, initialRecords[0].updatedAt)
+    }
+
     func testCursorAdapterDiscoversWorkspaceChatSessions() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -627,7 +796,7 @@ final class CursorAdapterTests: XCTestCase {
     }
 }
 
-private func createCursorStateDatabase(
+func createCursorStateDatabase(
     at url: URL,
     items: [String: String],
     cursorDiskKVItems: [String: String] = [:]
