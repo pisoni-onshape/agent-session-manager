@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import AgentSessionManager
 @testable import AgentSessionManagerCore
@@ -357,6 +358,33 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertEqual(presentedPlan?.plan.sessionTitle, "Plan Viewer")
         XCTAssertTrue(presentedPlan?.plan.text.contains("**viewer**") == true)
         XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testRefreshShowsFriendlyMessageForTransientSQLiteLockFailures() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: "locked-session",
+                    fingerprint: "v1",
+                    isInProgress: false,
+                    loadRecord: {
+                        throw SQLiteStoreError.stepFailed(code: SQLITE_BUSY, message: "database is locked")
+                    }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let viewModel = SessionBrowserViewModel(catalog: catalog)
+
+        await viewModel.refreshSessions()
+
+        XCTAssertEqual(viewModel.errorMessage, RefreshFailurePresentation.busyDatabaseMessage)
+        XCTAssertTrue(viewModel.displayedSessions.isEmpty)
+        XCTAssertFalse(viewModel.isRefreshing)
     }
 
     private func makeRecord(

@@ -755,7 +755,7 @@ final class SessionBrowserViewModel: ObservableObject {
             settings?.recordLastSuccessfulRefreshDate(completedAt)
             errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = RefreshFailurePresentation.message(for: error) ?? error.localizedDescription
         }
     }
 

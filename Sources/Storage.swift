@@ -5,19 +5,106 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 private let transcriptIndexSchemaVersion = "chat-only-v1"
 
 enum SQLiteStoreError: LocalizedError {
-    case openFailed(String)
-    case executionFailed(String)
-    case prepareFailed(String)
-    case stepFailed(String)
+    case openFailed(code: Int32, message: String)
+    case executionFailed(code: Int32, message: String)
+    case prepareFailed(code: Int32, message: String)
+    case stepFailed(code: Int32, message: String)
 
     var errorDescription: String? {
         switch self {
-        case .openFailed(let message),
-             .executionFailed(let message),
-             .prepareFailed(let message),
-             .stepFailed(let message):
+        case .openFailed(_, let message),
+             .executionFailed(_, let message),
+             .prepareFailed(_, let message),
+             .stepFailed(_, let message):
             return message
         }
+    }
+
+    var resultCode: Int32 {
+        switch self {
+        case .openFailed(let code, _),
+             .executionFailed(let code, _),
+             .prepareFailed(let code, _),
+             .stepFailed(let code, _):
+            return code
+        }
+    }
+
+    var isTransientLockContention: Bool {
+        SQLiteContentionPolicy.isTransientLock(code: resultCode)
+    }
+}
+
+struct SQLiteErrorDetails {
+    let code: Int32
+    let message: String
+}
+
+enum SQLiteContentionPolicy {
+    static let catalogBusyTimeoutMilliseconds: Int32 = 500
+    static let externalReadBusyTimeoutMilliseconds: Int32 = 75
+    static let externalReadRetryDelayNanoseconds: UInt64 = 50_000_000
+    static let externalReadMaxAttempts = 3
+
+    static func isTransientLock(code: Int32) -> Bool {
+        switch code & 0xFF {
+        case SQLITE_BUSY, SQLITE_LOCKED:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+func sqliteErrorDetails(
+    for database: OpaquePointer?,
+    defaultCode: Int32 = SQLITE_ERROR,
+    fallbackMessage: String
+) -> SQLiteErrorDetails {
+    let code = database.map(sqlite3_extended_errcode) ?? defaultCode
+    let message = database.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? fallbackMessage
+    return SQLiteErrorDetails(code: code, message: message)
+}
+
+func withSQLiteContentionRetry<T>(
+    maxAttempts: Int = SQLiteContentionPolicy.externalReadMaxAttempts,
+    retryDelayNanoseconds: UInt64 = SQLiteContentionPolicy.externalReadRetryDelayNanoseconds,
+    _ operation: () throws -> T
+) throws -> T {
+    precondition(maxAttempts > 0, "maxAttempts must be at least 1")
+
+    var attempt = 0
+    while true {
+        do {
+            return try operation()
+        } catch let error as SQLiteStoreError where error.isTransientLockContention && attempt + 1 < maxAttempts {
+            attempt += 1
+            if retryDelayNanoseconds > 0 {
+                Thread.sleep(forTimeInterval: TimeInterval(retryDelayNanoseconds) / 1_000_000_000)
+            }
+        } catch {
+            throw error
+        }
+    }
+}
+
+public enum RefreshFailurePresentation {
+    public static var busyDatabaseMessage: String {
+        "Refresh skipped because a session database was busy. The catalog is still showing the previous successful snapshot."
+    }
+
+    public static func message(for error: Error) -> String? {
+        if let sqliteError = error as? SQLiteStoreError, sqliteError.isTransientLockContention {
+            return busyDatabaseMessage
+        }
+
+        let normalizedMessage = error.localizedDescription.lowercased()
+        guard normalizedMessage.contains("database is locked")
+            || normalizedMessage.contains("database table is locked")
+            || normalizedMessage.contains("database is busy") else {
+            return nil
+        }
+        return busyDatabaseMessage
     }
 }
 
@@ -40,9 +127,17 @@ final class SQLiteSessionStore {
         self.databaseURL = databaseURL
         try FileManager.default.createDirectory(at: databaseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        if sqlite3_open(databaseURL.path, &database) != SQLITE_OK {
-            throw SQLiteStoreError.openFailed(lastErrorMessage())
+        let openResult = sqlite3_open(databaseURL.path, &database)
+        if openResult != SQLITE_OK {
+            let details = sqliteErrorDetails(
+                for: database,
+                defaultCode: openResult,
+                fallbackMessage: "Unknown SQLite open error for \(databaseURL.lastPathComponent)"
+            )
+            throw SQLiteStoreError.openFailed(code: details.code, message: details.message)
         }
+        sqlite3_extended_result_codes(database, 1)
+        sqlite3_busy_timeout(database, SQLiteContentionPolicy.catalogBusyTimeoutMilliseconds)
 
         try execute("PRAGMA journal_mode = WAL;")
         try migrate()
@@ -83,7 +178,7 @@ final class SQLiteSessionStore {
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -130,7 +225,7 @@ final class SQLiteSessionStore {
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -158,13 +253,13 @@ final class SQLiteSessionStore {
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
         bind(sessionID, to: statement, index: 1)
         guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+            throw stepError()
         }
     }
 
@@ -172,14 +267,14 @@ final class SQLiteSessionStore {
         let sql = "UPDATE sessions SET title = ? WHERE id = ?;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
         bind(newTitle, to: statement, index: 1)
         bind(sessionID, to: statement, index: 2)
         guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+            throw stepError()
         }
     }
 
@@ -283,7 +378,7 @@ final class SQLiteSessionStore {
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -325,7 +420,7 @@ final class SQLiteSessionStore {
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -404,7 +499,7 @@ final class SQLiteSessionStore {
 
     private func execute(_ sql: String) throws {
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.executionFailed(lastErrorMessage())
+            throw executionError()
         }
     }
 
@@ -427,7 +522,8 @@ final class SQLiteSessionStore {
                 try restoreBulkWritePragmas(snapshot)
             } catch {
                 throw SQLiteStoreError.executionFailed(
-                    "Bulk write failed with: \(operationError.localizedDescription). Failed to restore SQLite PRAGMAs: \(error.localizedDescription)"
+                    code: SQLITE_ERROR,
+                    message: "Bulk write failed with: \(operationError.localizedDescription). Failed to restore SQLite PRAGMAs: \(error.localizedDescription)"
                 )
             }
             throw operationError
@@ -443,12 +539,12 @@ final class SQLiteSessionStore {
         let sql = "PRAGMA \(name);"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
         guard sqlite3_step(statement) == SQLITE_ROW else {
-            throw SQLiteStoreError.stepFailed("Failed to query PRAGMA \(name) for \(databaseURL.lastPathComponent)")
+            throw stepError(fallbackMessage: "Failed to query PRAGMA \(name) for \(databaseURL.lastPathComponent)")
         }
         return sqlite3_column_int(statement, 0)
     }
@@ -495,7 +591,7 @@ final class SQLiteSessionStore {
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, insertSQL, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -525,7 +621,7 @@ final class SQLiteSessionStore {
             sqlite3_bind_int(statement, 20, record.isNewtonProject ? 1 : 0)
 
             guard sqlite3_step(statement) == SQLITE_DONE else {
-                throw SQLiteStoreError.stepFailed(lastErrorMessage())
+                throw stepError()
             }
         }
     }
@@ -543,7 +639,7 @@ final class SQLiteSessionStore {
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, insertSQL, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -557,7 +653,7 @@ final class SQLiteSessionStore {
                 bind(entry.text, to: statement, index: 3)
 
                 guard sqlite3_step(statement) == SQLITE_DONE else {
-                    throw SQLiteStoreError.stepFailed(lastErrorMessage())
+                    throw stepError()
                 }
             }
         }
@@ -572,7 +668,7 @@ final class SQLiteSessionStore {
         let sql = "PRAGMA table_info(\(table));"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -589,7 +685,7 @@ final class SQLiteSessionStore {
         let sql = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -604,7 +700,7 @@ final class SQLiteSessionStore {
         let sql = "SELECT value FROM catalog_metadata WHERE key = ? LIMIT 1;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -623,14 +719,14 @@ final class SQLiteSessionStore {
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
         bind(key, to: statement, index: 1)
         bind(value, to: statement, index: 2)
         guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+            throw stepError()
         }
     }
 
@@ -685,7 +781,7 @@ final class SQLiteSessionStore {
         let deleteSQL = "DELETE FROM \(table) WHERE \(idColumn) IN (\(placeholders));"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, deleteSQL, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteStoreError.prepareFailed(lastErrorMessage())
+            throw prepareError()
         }
         defer { sqlite3_finalize(statement) }
 
@@ -694,7 +790,7 @@ final class SQLiteSessionStore {
         }
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SQLiteStoreError.stepFailed(lastErrorMessage())
+            throw stepError()
         }
     }
 
@@ -716,10 +812,26 @@ final class SQLiteSessionStore {
             .replacingOccurrences(of: "_", with: "\\_")
     }
 
-    private func lastErrorMessage() -> String {
-        if let error = sqlite3_errmsg(database) {
-            return String(cString: error)
-        }
-        return "Unknown SQLite error for \(databaseURL.lastPathComponent)"
+    private func executionError(defaultCode: Int32 = SQLITE_ERROR, fallbackMessage: String? = nil) -> SQLiteStoreError {
+        let details = lastErrorDetails(defaultCode: defaultCode, fallbackMessage: fallbackMessage)
+        return SQLiteStoreError.executionFailed(code: details.code, message: details.message)
+    }
+
+    private func prepareError(defaultCode: Int32 = SQLITE_ERROR, fallbackMessage: String? = nil) -> SQLiteStoreError {
+        let details = lastErrorDetails(defaultCode: defaultCode, fallbackMessage: fallbackMessage)
+        return SQLiteStoreError.prepareFailed(code: details.code, message: details.message)
+    }
+
+    private func stepError(defaultCode: Int32 = SQLITE_ERROR, fallbackMessage: String? = nil) -> SQLiteStoreError {
+        let details = lastErrorDetails(defaultCode: defaultCode, fallbackMessage: fallbackMessage)
+        return SQLiteStoreError.stepFailed(code: details.code, message: details.message)
+    }
+
+    private func lastErrorDetails(defaultCode: Int32 = SQLITE_ERROR, fallbackMessage: String? = nil) -> SQLiteErrorDetails {
+        sqliteErrorDetails(
+            for: database,
+            defaultCode: defaultCode,
+            fallbackMessage: fallbackMessage ?? "Unknown SQLite error for \(databaseURL.lastPathComponent)"
+        )
     }
 }

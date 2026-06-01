@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import AgentSessionManagerCore
 
@@ -144,6 +145,46 @@ final class SQLiteStoreTests: XCTestCase {
             try reopenedStore.setSessionStarred(false, for: record.id)
             XCTAssertTrue(try reopenedStore.fetchStarredSessionIDs().isEmpty)
         }
+    }
+
+    func testSQLiteContentionPolicyClassifiesBusyAndLockedCodesAsTransient() {
+        let extendedBusyCode = SQLITE_BUSY | Int32(1 << 8)
+
+        XCTAssertTrue(SQLiteContentionPolicy.isTransientLock(code: SQLITE_BUSY))
+        XCTAssertTrue(SQLiteContentionPolicy.isTransientLock(code: extendedBusyCode))
+        XCTAssertTrue(SQLiteContentionPolicy.isTransientLock(code: SQLITE_LOCKED))
+        XCTAssertFalse(SQLiteContentionPolicy.isTransientLock(code: SQLITE_CONSTRAINT))
+    }
+
+    func testSQLiteContentionRetryRetriesTransientBusyFailures() throws {
+        var attempts = 0
+
+        let result = try withSQLiteContentionRetry(maxAttempts: 3, retryDelayNanoseconds: 0) {
+            attempts += 1
+            if attempts < 3 {
+                throw SQLiteStoreError.stepFailed(code: SQLITE_BUSY, message: "database is locked")
+            }
+            return "ok"
+        }
+
+        XCTAssertEqual(result, "ok")
+        XCTAssertEqual(attempts, 3)
+    }
+
+    func testSQLiteContentionRetryStopsAfterRetryBudgetIsExhausted() {
+        var attempts = 0
+
+        XCTAssertThrowsError(
+            try withSQLiteContentionRetry(maxAttempts: 2, retryDelayNanoseconds: 0) {
+                attempts += 1
+                throw SQLiteStoreError.stepFailed(code: SQLITE_LOCKED, message: "database is locked")
+            }
+        ) { error in
+            let sqliteError = error as? SQLiteStoreError
+            XCTAssertTrue(sqliteError?.isTransientLockContention == true)
+        }
+
+        XCTAssertEqual(attempts, 2)
     }
 
     private func makeRecord(sessionID: String, title: String, fingerprint: String) -> SessionRecord {

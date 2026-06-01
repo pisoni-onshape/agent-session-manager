@@ -13,9 +13,9 @@ func isMissingSQLiteTableError(_ error: Error, table: String) -> Bool {
     switch sqliteError {
     case .openFailed:
         return false
-    case .executionFailed(let message),
-         .prepareFailed(let message),
-         .stepFailed(let message):
+    case .executionFailed(_, let message),
+         .prepareFailed(_, let message),
+         .stepFailed(_, let message):
         return message.localizedCaseInsensitiveContains(tableMessage)
     }
 }
@@ -2151,21 +2151,36 @@ private func withSQLiteDatabase<T>(
     at databaseURL: URL,
     _ body: (OpaquePointer) throws -> T
 ) throws -> T {
-    var database: OpaquePointer?
-    // Use READWRITE so SQLite can create the SHM file required by WAL-mode databases.
-    // READONLY fails when WAL/SHM files are absent (e.g. Cursor's state.vscdb after clean exit).
-    guard sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
-        let message = database.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "Unknown SQLite open error"
-        sqlite3_close(database)
-        throw SQLiteStoreError.openFailed(message)
-    }
-    defer { sqlite3_close(database) }
+    try withSQLiteContentionRetry {
+        var database: OpaquePointer?
+        // Use READWRITE so SQLite can create the SHM file required by WAL-mode databases.
+        // READONLY fails when WAL/SHM files are absent (e.g. Cursor's state.vscdb after clean exit).
+        let openResult = sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READWRITE, nil)
+        guard openResult == SQLITE_OK else {
+            let details = sqliteErrorDetails(
+                for: database,
+                defaultCode: openResult,
+                fallbackMessage: "Unknown SQLite open error for \(databaseURL.lastPathComponent)"
+            )
+            if let database {
+                sqlite3_close(database)
+            }
+            throw SQLiteStoreError.openFailed(code: details.code, message: details.message)
+        }
+        defer { sqlite3_close(database) }
 
-    guard let database else {
-        throw SQLiteStoreError.openFailed("Unknown SQLite open error")
-    }
+        guard let database else {
+            throw SQLiteStoreError.openFailed(
+                code: SQLITE_CANTOPEN,
+                message: "Unknown SQLite open error for \(databaseURL.lastPathComponent)"
+            )
+        }
 
-    return try body(database)
+        sqlite3_extended_result_codes(database, 1)
+        sqlite3_busy_timeout(database, SQLiteContentionPolicy.externalReadBusyTimeoutMilliseconds)
+
+        return try body(database)
+    }
 }
 
 func loadSQLiteItemValue(from databaseURL: URL, key: String) throws -> String? {
@@ -2186,8 +2201,8 @@ func loadSQLiteKeys(from databaseURL: URL, table: String, keyLike pattern: Strin
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite prepare error"
-            throw SQLiteStoreError.prepareFailed(message)
+            let details = sqliteErrorDetails(for: database, fallbackMessage: "Unknown SQLite prepare error")
+            throw SQLiteStoreError.prepareFailed(code: details.code, message: details.message)
         }
         defer { sqlite3_finalize(statement) }
 
@@ -2205,8 +2220,8 @@ func loadSQLiteKeys(from databaseURL: URL, table: String, keyLike pattern: Strin
             case SQLITE_DONE:
                 return keys
             default:
-                let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite step error"
-                throw SQLiteStoreError.stepFailed(message)
+                let details = sqliteErrorDetails(for: database, fallbackMessage: "Unknown SQLite step error")
+                throw SQLiteStoreError.stepFailed(code: details.code, message: details.message)
             }
         }
     }
@@ -2217,8 +2232,8 @@ func loadSQLiteValue(from databaseURL: URL, table: String, key: String) throws -
         let sql = "SELECT value FROM \(table) WHERE key = ? LIMIT 1;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite prepare error"
-            throw SQLiteStoreError.prepareFailed(message)
+            let details = sqliteErrorDetails(for: database, fallbackMessage: "Unknown SQLite prepare error")
+            throw SQLiteStoreError.prepareFailed(code: details.code, message: details.message)
         }
         defer { sqlite3_finalize(statement) }
 
@@ -2231,8 +2246,8 @@ func loadSQLiteValue(from databaseURL: URL, table: String, key: String) throws -
         case SQLITE_DONE:
             return nil
         default:
-            let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite step error"
-            throw SQLiteStoreError.stepFailed(message)
+            let details = sqliteErrorDetails(for: database, fallbackMessage: "Unknown SQLite step error")
+            throw SQLiteStoreError.stepFailed(code: details.code, message: details.message)
         }
     }
 }
@@ -2247,8 +2262,8 @@ func loadSQLiteValues(from databaseURL: URL, table: String, keyLike pattern: Str
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite prepare error"
-            throw SQLiteStoreError.prepareFailed(message)
+            let details = sqliteErrorDetails(for: database, fallbackMessage: "Unknown SQLite prepare error")
+            throw SQLiteStoreError.prepareFailed(code: details.code, message: details.message)
         }
         defer { sqlite3_finalize(statement) }
 
@@ -2267,8 +2282,8 @@ func loadSQLiteValues(from databaseURL: URL, table: String, keyLike pattern: Str
             case SQLITE_DONE:
                 return values
             default:
-                let message = sqlite3_errmsg(database).map { String(cString: $0) } ?? "Unknown SQLite step error"
-                throw SQLiteStoreError.stepFailed(message)
+                let details = sqliteErrorDetails(for: database, fallbackMessage: "Unknown SQLite step error")
+                throw SQLiteStoreError.stepFailed(code: details.code, message: details.message)
             }
         }
     }
