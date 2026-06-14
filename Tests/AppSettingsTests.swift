@@ -120,12 +120,40 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(
             AutoSessionRefreshSettings.standard,
             AutoSessionRefreshSettings(
-                cadence: .everyDay,
-                deferWhileAppIsActive: false,
+                cadence: .every15Minutes,
+                deferWhileAppIsActive: true,
                 refreshOnFirstLaunchAfterBoot: true,
                 refreshOnSubsequentLaunches: false
             )
         )
+    }
+
+    func testLoadSnapshotUsesStandardAutoSessionRefreshSettingsWhenUnset() {
+        let suiteName = "AppSettingsTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let homeDirectory = URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        let snapshot = AppSettingsPersistence.loadSnapshot(
+            userDefaults: defaults,
+            homeDirectoryURL: homeDirectory
+        )
+
+        XCTAssertEqual(snapshot.autoSessionRefresh, .standard)
+    }
+
+    func testFreshSettingsStoreUsesStandardAutoSessionRefreshSettings() {
+        let suiteName = "AppSettingsTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let store = AppSettingsStore(
+            userDefaults: defaults,
+            launchAtLoginController: MockLaunchAtLoginController(status: .notRegistered),
+            homeDirectoryURL: URL(fileURLWithPath: "/Users/tester", isDirectory: true)
+        )
+
+        XCTAssertEqual(store.autoSessionRefreshSettings, .standard)
     }
 
     func testLastSuccessfulRefreshDatePersistsAcrossSettingsStoreReload() {

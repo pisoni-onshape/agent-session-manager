@@ -74,8 +74,8 @@ public struct AutoSessionRefreshSettings: Equatable, Sendable {
     }
 
     public static let standard = AutoSessionRefreshSettings(
-        cadence: .everyDay,
-        deferWhileAppIsActive: false,
+        cadence: .every15Minutes,
+        deferWhileAppIsActive: true,
         refreshOnFirstLaunchAfterBoot: true,
         refreshOnSubsequentLaunches: false
     )
@@ -162,7 +162,8 @@ public enum AppSettingsPersistence {
                 homeDirectoryPath: homeDirectoryPath
             ),
             autoSessionRefresh: AutoSessionRefreshSettings(
-                cadence: AutoRefreshCadence(rawValue: storedAutoRefreshCadence ?? "") ?? .off,
+                cadence: storedAutoRefreshCadence.flatMap(AutoRefreshCadence.init(rawValue:))
+                    ?? AutoSessionRefreshSettings.standard.cadence,
                 deferWhileAppIsActive: deferWhileAppIsActive,
                 refreshOnFirstLaunchAfterBoot: refreshOnFirstLaunchAfterBoot,
                 refreshOnSubsequentLaunches: refreshOnSubsequentLaunches
