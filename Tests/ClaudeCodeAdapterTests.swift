@@ -280,4 +280,30 @@ final class ClaudeCodeAdapterTests: XCTestCase {
         let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root).discover().first)
         XCTAssertNil(record.relatedPlanPath)
     }
+
+    func testPlanPathPrefersMostRecentExistingReferenceOverLaterMissingOne() throws {
+        let root = try makeRoot()
+        let plansDir = root.deletingLastPathComponent().appendingPathComponent(".claude/plans", isDirectory: true)
+        try FileManager.default.createDirectory(at: plansDir, withIntermediateDirectories: true)
+        let realPlan = plansDir.appendingPathComponent("real-plan.md")
+        try "# Plan".write(to: realPlan, atomically: true, encoding: .utf8)
+        let missingPlan = plansDir.appendingPathComponent("example-only.md")
+
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            records: [
+                userRecord(entrypoint: "cli", text: "Create your plan at \(realPlan.path)"),
+                // A later record mentions an example path that was never written.
+                assistantRecord(content: [["type": "text", "text": "For example a plan could live at \(missingPlan.path)"]])
+            ]
+        )
+
+        let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root).discover().first)
+        XCTAssertEqual(
+            record.relatedPlanPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            realPlan.standardizedFileURL.path
+        )
+    }
 }

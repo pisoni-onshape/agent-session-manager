@@ -753,11 +753,13 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
         let dates = fileDates(for: sessionFile)
         let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: sessionId)
 
-        let relatedPlanPath: String? = {
-            guard let raw = preview.planPath else { return nil }
-            let expanded = (raw as NSString).expandingTildeInPath
-            return FileManager.default.fileExists(atPath: expanded) ? expanded : nil
-        }()
+        // Prefer the most recently referenced plan file that actually exists — the transcript may
+        // also mention example or superseded plan paths that were never written.
+        let relatedPlanPath: String? = preview.planPaths
+            .reversed()
+            .lazy
+            .map { ($0 as NSString).expandingTildeInPath }
+            .first(where: { FileManager.default.fileExists(atPath: $0) })
 
         let resumeKind: ResumeActionKind
         let resumePayload: String

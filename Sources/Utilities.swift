@@ -940,7 +940,9 @@ struct ClaudeCodePreview {
     var cwd: String?
     var gitBranch: String?
     var entrypoint: String?
-    var planPath: String?
+    /// Every `~/.claude/plans/*.md` path referenced in the transcript, in encounter order.
+    /// The adapter picks the most recent one that actually exists on disk.
+    var planPaths: [String] = []
 
     var summary: String? {
         TextSanitizer.summarize(firstAssistant ?? firstUser)
@@ -1646,10 +1648,10 @@ public enum TranscriptPreviewExtractor {
         for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
             let rawLine = String(line)
 
-            // Plan-file linkage: the plan path appears in record text; keep the latest match.
-            if rawLine.contains(".claude/plans/"),
-               let planPath = lastMatch(of: claudePlanPathRegex, in: rawLine) {
-                preview.planPath = planPath
+            // Plan-file linkage: plan paths appear in record text (harness messages, prose).
+            // Collect every candidate; the adapter resolves the most recent existing one.
+            if rawLine.contains(".claude/plans/") {
+                preview.planPaths.append(contentsOf: allMatches(of: claudePlanPathRegex, in: rawLine))
             }
 
             guard let data = rawLine.data(using: .utf8),
@@ -1711,11 +1713,11 @@ public enum TranscriptPreviewExtractor {
         return claudeMetaPromptPrefixes.contains { trimmed.hasPrefix($0) }
     }
 
-    private static func lastMatch(of regex: NSRegularExpression, in text: String) -> String? {
+    private static func allMatches(of regex: NSRegularExpression, in text: String) -> [String] {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, range: range)
-        guard let last = matches.last, let matchRange = Range(last.range, in: text) else { return nil }
-        return String(text[matchRange])
+        return regex.matches(in: text, range: range).compactMap { result in
+            Range(result.range, in: text).map { String(text[$0]) }
+        }
     }
 
     private static func isWorkspaceChatSessionTranscript(_ url: URL) -> Bool {
