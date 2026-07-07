@@ -749,7 +749,11 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
         guard preview.firstUser != nil || preview.firstAssistant != nil else { return nil }
 
         let workspacePath = preview.cwd
-        let title = TextSanitizer.inferTitle(from: preview.firstUser ?? preview.firstAssistant, fallback: sessionId)
+        // Prefer Claude's own session titles (user-set, then AI-generated); fall back to inferring
+        // one from the first real prompt.
+        let title = TextSanitizer.compact(preview.customTitle)
+            ?? TextSanitizer.compact(preview.aiTitle)
+            ?? TextSanitizer.inferTitle(from: preview.firstUser ?? preview.firstAssistant, fallback: sessionId)
         let dates = fileDates(for: sessionFile)
         let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: sessionId)
 

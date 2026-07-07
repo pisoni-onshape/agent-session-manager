@@ -237,6 +237,40 @@ final class ClaudeCodeAdapterTests: XCTestCase {
         XCTAssertEqual(record.firstUserPreview, "Refactor the transcript parser, please.")
     }
 
+    func testPrefersStoredSessionTitlesOverFirstPrompt() throws {
+        let root = try makeRoot()
+
+        // ai-title present, no custom-title -> uses the AI title.
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            records: [
+                userRecord(entrypoint: "cli", text: "Please add a force-move for incomplete Excel tasks."),
+                assistantRecord(content: [["type": "text", "text": "Sure."]]),
+                ["type": "ai-title", "aiTitle": "Add force move for incomplete Excel tasks", "sessionId": "cccccccc-cccc-cccc-cccc-cccccccccccc"]
+            ]
+        )
+
+        // custom-title outranks ai-title.
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            records: [
+                userRecord(entrypoint: "cli", text: "How do I find out which skills are loaded?"),
+                assistantRecord(content: [["type": "text", "text": "Run /status."]]),
+                ["type": "ai-title", "aiTitle": "Listing loaded skills", "sessionId": "dddddddd-dddd-dddd-dddd-dddddddddddd"],
+                ["type": "custom-title", "customTitle": "Loaded Skills test", "sessionId": "dddddddd-dddd-dddd-dddd-dddddddddddd"]
+            ]
+        )
+
+        let records = try ClaudeCodeAdapter(root: root).discover()
+        let byId = Dictionary(uniqueKeysWithValues: records.map { ($0.sourceSessionId, $0) })
+        XCTAssertEqual(byId["cccccccc-cccc-cccc-cccc-cccccccccccc"]?.title, "Add force move for incomplete Excel tasks")
+        XCTAssertEqual(byId["dddddddd-dddd-dddd-dddd-dddddddddddd"]?.title, "Loaded Skills test")
+    }
+
     // MARK: - Plan derivation
 
     func testDerivesPlanPathFromTranscriptWhenFileExists() throws {

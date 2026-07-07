@@ -940,6 +940,10 @@ struct ClaudeCodePreview {
     var cwd: String?
     var gitBranch: String?
     var entrypoint: String?
+    /// User-set session title (`custom-title` record) — highest priority.
+    var customTitle: String?
+    /// Auto-generated session title (`ai-title` record).
+    var aiTitle: String?
     /// Every `~/.claude/plans/*.md` path referenced in the transcript, in encounter order.
     /// The adapter picks the most recent one that actually exists on disk.
     var planPaths: [String] = []
@@ -1667,6 +1671,11 @@ public enum TranscriptPreviewExtractor {
                 if preview.startedAt == nil { preview.startedAt = timestamp }
                 preview.updatedAt = timestamp
             }
+
+            // Claude records its own session titles in dedicated records; keep the latest of each.
+            // A user-set `custom-title` outranks the auto-generated `ai-title`.
+            if let customTitle = object["customTitle"] as? String { preview.customTitle = customTitle }
+            if let aiTitle = object["aiTitle"] as? String { preview.aiTitle = aiTitle }
 
             guard let type = object["type"] as? String,
                   type == "user" || type == "assistant" else {
