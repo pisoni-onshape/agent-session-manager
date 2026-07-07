@@ -58,6 +58,18 @@ public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable
             return nil
         }
     }
+
+    /// Whether the app can write a renamed title back to this source's on-disk store.
+    /// Copilot CLI persists to `workspace.yaml`; Claude sources append a `custom-title`
+    /// record to the session JSONL. Cursor and VS Code Copilot have no supported write path.
+    public var supportsRename: Bool {
+        switch self {
+        case .copilotCLI, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            return true
+        case .cursor, .vscodeCopilot:
+            return false
+        }
+    }
 }
 
 public enum ResumeActionKind: String, Codable, Sendable {

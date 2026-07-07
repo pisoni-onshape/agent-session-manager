@@ -271,6 +271,39 @@ final class ClaudeCodeAdapterTests: XCTestCase {
         XCTAssertEqual(byId["dddddddd-dddd-dddd-dddd-dddddddddddd"]?.title, "Loaded Skills test")
     }
 
+    func testRenameAppendsCustomTitleAndIsPickedUp() throws {
+        let root = try makeRoot()
+        let sessionId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        let fileURL = try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: sessionId,
+            records: [
+                userRecord(entrypoint: "cli", text: "Original prompt."),
+                assistantRecord(content: [["type": "text", "text": "ok"]]),
+                ["type": "ai-title", "aiTitle": "Original AI title", "sessionId": sessionId]
+            ]
+        )
+
+        let before = try XCTUnwrap(try ClaudeCodeAdapter(root: root).discover().first)
+        XCTAssertEqual(before.title, "Original AI title")
+
+        XCTAssertTrue(ClaudeCodeAdapter.appendClaudeCustomTitle(at: fileURL.path, sessionId: sessionId, title: "My renamed session"))
+
+        let after = try XCTUnwrap(try ClaudeCodeAdapter(root: root).discover().first)
+        XCTAssertEqual(after.title, "My renamed session")
+        XCTAssertEqual(after.sourceSessionId, sessionId)
+    }
+
+    func testRenameSupportedForClaudeAndCopilotOnly() {
+        XCTAssertTrue(SessionSource.claudeCodeCLI.supportsRename)
+        XCTAssertTrue(SessionSource.claudeCodeVSCode.supportsRename)
+        XCTAssertTrue(SessionSource.claudeDesktop.supportsRename)
+        XCTAssertTrue(SessionSource.copilotCLI.supportsRename)
+        XCTAssertFalse(SessionSource.cursor.supportsRename)
+        XCTAssertFalse(SessionSource.vscodeCopilot.supportsRename)
+    }
+
     // MARK: - Plan derivation
 
     func testDerivesPlanPathFromTranscriptWhenFileExists() throws {

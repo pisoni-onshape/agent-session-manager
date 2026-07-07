@@ -417,19 +417,32 @@ public final class SessionCatalog {
     /// Renames a Copilot CLI session by updating workspace.yaml (name + user_named) and the catalog DB.
     /// Returns the updated SessionRecord on success, nil if the session can't be renamed.
     public func renameSession(_ session: SessionRecord, to newTitle: String) throws -> SessionRecord? {
-        guard session.source == .copilotCLI,
-              let metadataPath = session.rawMetadataPath else { return nil }
-
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        // Write name and user_named to workspace.yaml
-        guard FlatYAMLWriter.updateValues(at: metadataPath, updates: [
-            "name": trimmed,
-            "user_named": "true"
-        ]) else { return nil }
+        switch session.source {
+        case .copilotCLI:
+            // Copilot persists the title as `name` in workspace.yaml.
+            guard let metadataPath = session.rawMetadataPath,
+                  FlatYAMLWriter.updateValues(at: metadataPath, updates: [
+                    "name": trimmed,
+                    "user_named": "true"
+                  ]) else { return nil }
 
-        // Update the in-memory record
+        case .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            // Claude titles a session by appending a `custom-title` record to its JSONL; both
+            // this app and Claude Code itself use the latest such record as the title.
+            guard let jsonlPath = session.rawTranscriptPath ?? session.rawMetadataPath,
+                  ClaudeCodeAdapter.appendClaudeCustomTitle(at: jsonlPath, sessionId: session.sourceSessionId, title: trimmed) else {
+                return nil
+            }
+
+        case .cursor, .vscodeCopilot:
+            return nil
+        }
+
+        // Update the in-memory record + catalog; the next refresh re-reads the source and
+        // recomputes the fingerprint (the store changed), keeping everything consistent.
         let updated = session.with(title: trimmed)
         try store.updateTitle(for: session.id, newTitle: trimmed)
         return updated
@@ -723,6 +736,37 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
             return entrypoint
         }
         return nil
+    }
+
+    /// Appends a `{"type":"custom-title", ...}` record to a Claude session JSONL, ensuring it
+    /// starts on its own line. Both this app and Claude Code treat the latest such record as the
+    /// session title. Returns false if the file cannot be written.
+    static func appendClaudeCustomTitle(at path: String, sessionId: String, title: String) -> Bool {
+        let record: [String: Any] = ["type": "custom-title", "customTitle": title, "sessionId": sessionId]
+        // `forUpdatingAtPath` (read+write) is required: we read the last byte to decide whether a
+        // separating newline is needed. A write-only handle would fail that read with EBADF.
+        guard let recordData = try? JSONSerialization.data(withJSONObject: record),
+              let handle = FileHandle(forUpdatingAtPath: path) else {
+            return false
+        }
+        defer { try? handle.close() }
+
+        do {
+            let end = try handle.seekToEnd()
+            var payload = Data()
+            if end > 0 {
+                try handle.seek(toOffset: end - 1)
+                let lastByte = try handle.read(upToCount: 1)
+                if lastByte != Data([0x0A]) { payload.append(0x0A) }
+                try handle.seekToEnd()
+            }
+            payload.append(recordData)
+            payload.append(0x0A)
+            try handle.write(contentsOf: payload)
+            return true
+        } catch {
+            return false
+        }
     }
 
     static func source(forEntrypoint entrypoint: String?) -> SessionSource? {

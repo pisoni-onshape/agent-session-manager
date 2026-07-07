@@ -933,7 +933,7 @@ private struct SessionDetailView: View {
                                 .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
                                 .textSelection(.enabled)
                         }
-                        if session.source == .copilotCLI && !isEditingTitle {
+                        if session.source.supportsRename && !isEditingTitle {
                             Button {
                                 editedTitle = session.title
                                 isEditingTitle = true
