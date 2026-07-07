@@ -1104,6 +1104,8 @@ private struct SessionDetailView: View {
             return "chevron.left.forwardslash.chevron.right"
         case .revealPath:
             return "folder"
+        case .claudeResume:
+            return "play.circle"
         }
     }
 
@@ -1113,7 +1115,7 @@ private struct SessionDetailView: View {
             return "CursorIcon"
         case .openInVSCode:
             return "VSCodeIcon"
-        case .copilotConnect, .revealPath:
+        case .copilotConnect, .revealPath, .claudeResume:
             return nil
         }
     }
@@ -1144,6 +1146,8 @@ private struct SessionDetailView: View {
             return "Open this workspace in VS Code."
         case .revealPath:
             return "Reveal the stored session files in Finder."
+        case .claudeResume:
+            return "Resume this Claude Code conversation in Terminal."
         }
     }
 

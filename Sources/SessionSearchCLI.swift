@@ -378,6 +378,12 @@ public enum SessionSearchCLI {
             return .copilotCLI
         case "vscode", "code":
             return .vscodeCopilot
+        case "claude", "claude-cli", "claude-code":
+            return .claudeCodeCLI
+        case "claude-vscode", "claude-code-vscode":
+            return .claudeCodeVSCode
+        case "claude-desktop":
+            return .claudeDesktop
         default:
             return nil
         }

@@ -197,7 +197,7 @@ final class SessionBrowserViewModel: ObservableObject {
                     vscodeCaches[cacheKey] = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDir)
                 }
                 isActive = vscodeCaches[cacheKey]!.contains(session.sourceSessionId)
-            case .cursor:
+            case .cursor, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
                 continue
             }
             if isActive != session.isInProgress {
@@ -231,7 +231,7 @@ final class SessionBrowserViewModel: ObservableObject {
             let workspaceDirectory = URL(fileURLWithPath: metadataPath).deletingLastPathComponent()
             let activeIDs = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDirectory)
             return activeIDs.contains(session.sourceSessionId)
-        case .cursor:
+        case .cursor, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
             return false
         }
     }
@@ -392,6 +392,8 @@ final class SessionBrowserViewModel: ObservableObject {
             return "Open in VS Code"
         case .revealPath:
             return "Reveal Transcript"
+        case .claudeResume:
+            return "Resume in Claude"
         }
     }
 
@@ -410,7 +412,7 @@ final class SessionBrowserViewModel: ObservableObject {
 
     func startNewConversation(for record: SessionRecord) {
         do {
-            try WorkspaceLauncher.startNewConversation(in: record.workspacePath)
+            try WorkspaceLauncher.startNewConversation(for: record)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

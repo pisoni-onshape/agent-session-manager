@@ -650,13 +650,15 @@ struct SourceRoots {
     let cursorWorkspaceStorage: URL
     let cursorGlobalStorage: URL
     let vscodeWorkspaceStorage: URL
+    let claudeProjects: URL
 
     static let live = SourceRoots(
         copilotCLI: AppPaths.homeDirectory.appendingPathComponent(".copilot/session-state", isDirectory: true),
         cursorProjects: AppPaths.homeDirectory.appendingPathComponent(".cursor/projects", isDirectory: true),
         cursorWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/workspaceStorage", isDirectory: true),
         cursorGlobalStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage", isDirectory: true),
-        vscodeWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Code/User/workspaceStorage", isDirectory: true)
+        vscodeWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Code/User/workspaceStorage", isDirectory: true),
+        claudeProjects: AppPaths.homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true)
     )
 }
 
@@ -671,20 +673,30 @@ public enum WorkspaceLauncher {
             open(path: record.resumePayload, withApplication: "Visual Studio Code")
         case .revealPath:
             reveal(path: record.resumePayload)
+        case .claudeResume:
+            try resumeClaudeCLI(sessionId: record.resumePayload, workingDirectory: record.workspacePath)
         }
     }
 
-    public static func startNewConversation(in workingDirectory: String?) throws {
-        guard let workingDirectory else {
+    public static func startNewConversation(for record: SessionRecord) throws {
+        guard let workingDirectory = record.workspacePath else {
             throw NSError(domain: "WorkspaceLauncher", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "This session does not include a project workspace path."
             ])
         }
 
-        try runTerminalCommand(
-            copilotNewConversationCommand(workingDirectory: workingDirectory),
-            failureDescription: "Terminal failed to launch a new Copilot conversation."
-        )
+        switch record.source {
+        case .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            try runTerminalCommand(
+                claudeNewConversationCommand(workingDirectory: workingDirectory),
+                failureDescription: "Terminal failed to launch a new Claude Code conversation."
+            )
+        case .copilotCLI, .cursor, .vscodeCopilot:
+            try runTerminalCommand(
+                copilotNewConversationCommand(workingDirectory: workingDirectory),
+                failureDescription: "Terminal failed to launch a new Copilot conversation."
+            )
+        }
     }
 
     public static func reveal(path: String?) {
@@ -714,6 +726,31 @@ public enum WorkspaceLauncher {
 
     public static func copilotNewConversationCommand(workingDirectory: String) -> String {
         "cd \(shellQuote(workingDirectory)) && copilot"
+    }
+
+    public static func claudeNewConversationCommand(workingDirectory: String) -> String {
+        "cd \(shellQuote(workingDirectory)) && claude"
+    }
+
+    /// Shell command that resumes a Claude Code session in its workspace directory.
+    public static func claudeResumeCommand(for record: SessionRecord) -> String {
+        claudeResumeShellCommand(sessionId: record.sourceSessionId, workingDirectory: record.workspacePath)
+    }
+
+    private static func resumeClaudeCLI(sessionId: String, workingDirectory: String?) throws {
+        try runTerminalCommand(
+            claudeResumeShellCommand(sessionId: sessionId, workingDirectory: workingDirectory),
+            failureDescription: "Terminal failed to launch the Claude Code resume command."
+        )
+    }
+
+    private static func claudeResumeShellCommand(sessionId: String, workingDirectory: String?) -> String {
+        var commandComponents: [String] = []
+        if let workingDirectory {
+            commandComponents.append("cd \(shellQuote(workingDirectory))")
+        }
+        commandComponents.append("claude --resume \(shellQuote(sessionId))")
+        return commandComponents.joined(separator: " && ")
     }
 
     private static func resumeCopilotCLI(sessionId: String, workingDirectory: String?) throws {
@@ -893,6 +930,23 @@ struct VSCodeSessionMetadata {
     }
 }
 
+/// Preview + metadata gathered in a single pass over a Claude Code session JSONL.
+struct ClaudeCodePreview {
+    var firstUser: String?
+    var firstAssistant: String?
+    var startedAt: Date?
+    var updatedAt: Date?
+    var latestModel: String?
+    var cwd: String?
+    var gitBranch: String?
+    var entrypoint: String?
+    var planPath: String?
+
+    var summary: String? {
+        TextSanitizer.summarize(firstAssistant ?? firstUser)
+    }
+}
+
 private enum VSCodeChatSessionPathComponent {
     case key(String)
     case index(Int)
@@ -952,6 +1006,13 @@ public enum TranscriptPreviewExtractor {
                 )
             }
             return try extractCursorTranscriptDocument(
+                from: url,
+                source: record.source,
+                sessionId: record.sourceSessionId,
+                title: record.title
+            )
+        case .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            return try extractClaudeCodeTranscriptDocument(
                 from: url,
                 source: record.source,
                 sessionId: record.sourceSessionId,
@@ -1471,6 +1532,190 @@ public enum TranscriptPreviewExtractor {
         }
 
         return nil
+    }
+
+    // MARK: - Claude Code (~/.claude/projects/**/*.jsonl)
+
+    private struct ClaudeContentBlock {
+        let role: TranscriptEntryRole
+        let title: String
+        let body: String?
+    }
+
+    private static let claudePlanPathRegex = try! NSRegularExpression(
+        pattern: "(~|/)[^\\s\"',]*\\.claude/plans/[^\\s\"',]+\\.md"
+    )
+
+    private static func extractClaudeCodeTranscriptDocument(
+        from url: URL,
+        source: SessionSource,
+        sessionId: String,
+        title: String
+    ) throws -> TranscriptDocument {
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        var entries: [TranscriptEntry] = []
+
+        for (index, line) in contents.split(separator: "\n", omittingEmptySubsequences: true).enumerated() {
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = object["type"] as? String,
+                  type == "user" || type == "assistant" else {
+                continue
+            }
+
+            let timestamp = ISO8601DateCoding.parse(object["timestamp"] as? String)
+            let baseId = (object["uuid"] as? String) ?? "\(sessionId)-\(index)"
+            let content = (object["message"] as? [String: Any])?["content"]
+            let defaultRole: TranscriptEntryRole = type == "user" ? .user : .assistant
+            let blocks = claudeContentBlocks(content, defaultRole: defaultRole)
+
+            for (subIndex, block) in blocks.enumerated() {
+                entries.append(
+                    TranscriptEntry(
+                        id: blocks.count > 1 ? "\(baseId)-\(subIndex)" : baseId,
+                        role: block.role,
+                        title: block.title,
+                        body: block.body,
+                        timestamp: timestamp
+                    )
+                )
+            }
+        }
+
+        let timestampsAreComplete = !entries.isEmpty && entries.allSatisfy { $0.timestamp != nil }
+        return TranscriptDocument(
+            sessionID: sessionId,
+            sessionTitle: title,
+            source: source,
+            rawTranscriptPath: url.path,
+            entries: entries,
+            timestampsAreComplete: timestampsAreComplete,
+            timestampNotice: timestampsAreComplete
+                ? nil
+                : "Claude Code transcripts preserve message order, but some inspected records did not include a per-message timestamp."
+        )
+    }
+
+    /// Normalizes a Claude `message.content` value (either a plain string or an array of
+    /// `text`/`tool_use`/`tool_result` blocks) into ordered transcript blocks.
+    private static func claudeContentBlocks(_ content: Any?, defaultRole: TranscriptEntryRole) -> [ClaudeContentBlock] {
+        let chatTitle = defaultRole == .user ? "User" : "Assistant"
+
+        if let text = content as? String {
+            guard let cleaned = TextSanitizer.clean(text) else { return [] }
+            return [ClaudeContentBlock(role: defaultRole, title: chatTitle, body: cleaned)]
+        }
+
+        guard let array = content as? [[String: Any]] else { return [] }
+
+        var blocks: [ClaudeContentBlock] = []
+        for item in array {
+            switch item["type"] as? String {
+            case "text":
+                if let cleaned = TextSanitizer.clean(item["text"] as? String) {
+                    blocks.append(ClaudeContentBlock(role: defaultRole, title: chatTitle, body: cleaned))
+                }
+            case "tool_use":
+                let name = item["name"] as? String ?? "tool"
+                blocks.append(ClaudeContentBlock(role: .tool, title: "Tool: \(name)", body: toolArgumentsSummary(item["input"])))
+            case "tool_result":
+                blocks.append(ClaudeContentBlock(role: .tool, title: "Tool Result", body: claudeToolResultText(item["content"])))
+            default:
+                continue
+            }
+        }
+        return blocks
+    }
+
+    private static func claudeToolResultText(_ content: Any?) -> String? {
+        if let text = content as? String {
+            return TextSanitizer.summarize(text, limit: 400)
+        }
+        if let array = content as? [[String: Any]] {
+            let joined = array.compactMap { $0["text"] as? String }.joined(separator: "\n")
+            return TextSanitizer.summarize(joined, limit: 400)
+        }
+        return nil
+    }
+
+    /// Single-pass preview + metadata scan used by `ClaudeCodeAdapter.loadRecord`.
+    static func extractClaudeCodePreview(from url: URL) throws -> ClaudeCodePreview {
+        let contents = try String(contentsOf: url, encoding: .utf8)
+        var preview = ClaudeCodePreview()
+
+        for line in contents.split(separator: "\n", omittingEmptySubsequences: true) {
+            let rawLine = String(line)
+
+            // Plan-file linkage: the plan path appears in record text; keep the latest match.
+            if rawLine.contains(".claude/plans/"),
+               let planPath = lastMatch(of: claudePlanPathRegex, in: rawLine) {
+                preview.planPath = planPath
+            }
+
+            guard let data = rawLine.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+
+            if preview.cwd == nil { preview.cwd = object["cwd"] as? String }
+            if preview.gitBranch == nil { preview.gitBranch = object["gitBranch"] as? String }
+            if preview.entrypoint == nil { preview.entrypoint = object["entrypoint"] as? String }
+
+            if let timestamp = ISO8601DateCoding.parse(object["timestamp"] as? String) {
+                if preview.startedAt == nil { preview.startedAt = timestamp }
+                preview.updatedAt = timestamp
+            }
+
+            guard let type = object["type"] as? String,
+                  type == "user" || type == "assistant" else {
+                continue
+            }
+
+            let message = object["message"] as? [String: Any]
+            if type == "assistant", let model = normalizeModelIdentifier(message?["model"] as? String) {
+                preview.latestModel = model
+            }
+
+            let role: TranscriptEntryRole = type == "user" ? .user : .assistant
+            let text = claudeContentBlocks(message?["content"], defaultRole: role)
+                .first(where: { $0.role == role })?
+                .body
+
+            if type == "user", preview.firstUser == nil {
+                // Skip tool-injected / slash-command / IDE wrapper turns so the title and preview
+                // reflect the first real user prompt.
+                let isMeta = object["isMeta"] as? Bool ?? false
+                if !isMeta, let text, !claudeIsMetaPrompt(text) {
+                    preview.firstUser = text
+                }
+            }
+            if type == "assistant", preview.firstAssistant == nil { preview.firstAssistant = text }
+        }
+
+        return preview
+    }
+
+    /// Wrapper prefixes Claude Code injects into a user turn (slash-command scaffolding, IDE
+    /// context, hooks) that should not be treated as the human's prompt for titling/preview.
+    private static let claudeMetaPromptPrefixes = [
+        "<local-command-caveat", "<command-name", "<command-message", "<command-args",
+        "<command-contents", "<local-command-stdout", "<local-command-stderr",
+        "<bash-input", "<bash-stdout", "<bash-stderr",
+        "<ide_opened_file", "<ide_selection", "<ide_diagnostics",
+        "<ide_recently_modified_files", "<user-prompt-submit-hook", "<session-start-hook",
+        "<user-memory-input", "Caveat:"
+    ]
+
+    private static func claudeIsMetaPrompt(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return claudeMetaPromptPrefixes.contains { trimmed.hasPrefix($0) }
+    }
+
+    private static func lastMatch(of regex: NSRegularExpression, in text: String) -> String? {
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let matches = regex.matches(in: text, range: range)
+        guard let last = matches.last, let matchRange = Range(last.range, in: text) else { return nil }
+        return String(text[matchRange])
     }
 
     private static func isWorkspaceChatSessionTranscript(_ url: URL) -> Bool {

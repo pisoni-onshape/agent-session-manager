@@ -39,7 +39,8 @@ public final class SessionCatalog {
                 workspaceStorageRoot: roots.cursorWorkspaceStorage,
                 globalStorageRoot: roots.cursorGlobalStorage
             ),
-            VSCodeCopilotAdapter(root: roots.vscodeWorkspaceStorage)
+            VSCodeCopilotAdapter(root: roots.vscodeWorkspaceStorage),
+            ClaudeCodeAdapter(root: roots.claudeProjects)
         ]
     }
 
@@ -594,6 +595,205 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
             resumePayload: metadata["id"] ?? sessionDirectory.lastPathComponent,
             isNewtonProject: false,
             isInProgress: isInProgress
+        )
+    }
+}
+
+/// Caches the (immutable) first-record `entrypoint` classification for each session file,
+/// keyed by the file's fingerprint so a changed file is re-read.
+private final class ClaudeEntrypointCache {
+    private struct Entry {
+        let fingerprint: String
+        let entrypoint: String?
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    /// Returns `.some(entrypoint)` on a fingerprint-matched cache hit (where `entrypoint`
+    /// may itself be nil), or `nil` on a miss.
+    func entrypoint(for path: String, fingerprint: String) -> String?? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[path], entry.fingerprint == fingerprint else { return nil }
+        return .some(entry.entrypoint)
+    }
+
+    func store(entrypoint: String?, for path: String, fingerprint: String) {
+        lock.lock()
+        entries[path] = Entry(fingerprint: fingerprint, entrypoint: entrypoint)
+        lock.unlock()
+    }
+
+    func prune(keepingPaths: Set<String>) {
+        lock.lock()
+        entries = entries.filter { keepingPaths.contains($0.key) }
+        lock.unlock()
+    }
+}
+
+/// Indexes Claude Code sessions from the shared `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`
+/// store, splitting them into three sources by each session's first-record `entrypoint`:
+/// `cli` → Claude Code CLI, `claude-vscode` → VS Code, `claude-desktop` → Desktop. Sessions with
+/// any other entrypoint (e.g. `sdk-ts` background agents) are skipped.
+public struct ClaudeCodeAdapter: SessionSourceAdapter {
+    let root: URL
+    private let cache = ClaudeEntrypointCache()
+    private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "ClaudeCodeAdapter")
+
+    init(root: URL) {
+        self.root = root
+    }
+
+    func scanCandidates() throws -> [SessionScanCandidate] {
+        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
+
+        let projectDirectories = (try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ))?.filter(\.hasDirectoryPath) ?? []
+
+        var candidates: [SessionScanCandidate] = []
+        var seenPaths: Set<String> = []
+
+        for projectDirectory in projectDirectories {
+            // Only top-level `.jsonl` files are sessions; the `<uuid>/` subdirectories hold
+            // subagent + tool-result sidecars and must never be treated as sessions.
+            let sessionFiles = (try? FileManager.default.contentsOfDirectory(
+                at: projectDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ))?.filter { !$0.hasDirectoryPath && $0.pathExtension.lowercased() == "jsonl" } ?? []
+
+            for sessionFile in sessionFiles {
+                seenPaths.insert(sessionFile.path)
+                let classificationFingerprint = fileFingerprint(for: sessionFile.path)
+                let entrypoint: String? = cache.entrypoint(for: sessionFile.path, fingerprint: classificationFingerprint)
+                    ?? {
+                        let resolved = Self.classifyEntrypoint(of: sessionFile)
+                        cache.store(entrypoint: resolved, for: sessionFile.path, fingerprint: classificationFingerprint)
+                        return resolved
+                    }()
+
+                guard let source = Self.source(forEntrypoint: entrypoint) else { continue }
+
+                let sessionID = sessionFile.deletingPathExtension().lastPathComponent
+                let fingerprint = combinedFingerprint(paths: [sessionFile.path], values: [source.rawValue])
+
+                candidates.append(
+                    SessionScanCandidate(
+                        id: "\(source.rawValue)::\(sessionID)",
+                        fingerprint: fingerprint,
+                        isInProgress: false,
+                        loadRecord: {
+                            try Self.loadRecord(
+                                sessionFile: sessionFile,
+                                source: source,
+                                sessionId: sessionID,
+                                fingerprint: fingerprint
+                            )
+                        }
+                    )
+                )
+            }
+        }
+
+        cache.prune(keepingPaths: seenPaths)
+        Self.logger.info("Scanned \(projectDirectories.count) Claude project directories, \(candidates.count) candidates")
+        return candidates
+    }
+
+    /// Reads a bounded prefix of the file and returns the first record's `entrypoint`. The very
+    /// first line is often a metadata record (`mode`/`summary`) without an entrypoint, so we scan
+    /// forward to the first record that carries one.
+    static func classifyEntrypoint(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 262_144) else { return nil }
+
+        let text = String(decoding: data, as: UTF8.self)
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard line.contains("\"entrypoint\"") else { continue }
+            guard let lineData = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  let entrypoint = object["entrypoint"] as? String else {
+                continue
+            }
+            return entrypoint
+        }
+        return nil
+    }
+
+    static func source(forEntrypoint entrypoint: String?) -> SessionSource? {
+        switch entrypoint {
+        case "cli":
+            return .claudeCodeCLI
+        case "claude-vscode":
+            return .claudeCodeVSCode
+        case "claude-desktop":
+            return .claudeDesktop
+        default:
+            // `sdk-ts`, unknown, or missing → not a user-facing Claude Code session.
+            return nil
+        }
+    }
+
+    private static func loadRecord(
+        sessionFile: URL,
+        source: SessionSource,
+        sessionId: String,
+        fingerprint: String
+    ) throws -> SessionRecord? {
+        let preview = try TranscriptPreviewExtractor.extractClaudeCodePreview(from: sessionFile)
+        guard preview.firstUser != nil || preview.firstAssistant != nil else { return nil }
+
+        let workspacePath = preview.cwd
+        let title = TextSanitizer.inferTitle(from: preview.firstUser ?? preview.firstAssistant, fallback: sessionId)
+        let dates = fileDates(for: sessionFile)
+        let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: sessionId)
+
+        let relatedPlanPath: String? = {
+            guard let raw = preview.planPath else { return nil }
+            let expanded = (raw as NSString).expandingTildeInPath
+            return FileManager.default.fileExists(atPath: expanded) ? expanded : nil
+        }()
+
+        let resumeKind: ResumeActionKind
+        let resumePayload: String
+        switch source {
+        case .claudeCodeCLI:
+            resumeKind = .claudeResume
+            resumePayload = sessionId
+        case .claudeCodeVSCode:
+            resumeKind = .openInVSCode
+            resumePayload = workspacePath ?? sessionFile.path
+        default: // .claudeDesktop (and any future Claude source)
+            resumeKind = .revealPath
+            resumePayload = sessionFile.path
+        }
+
+        return SessionRecord(
+            source: source,
+            sourceSessionId: sessionId,
+            workspacePath: workspacePath,
+            projectName: projectName,
+            branch: preview.gitBranch,
+            conversationModel: preview.latestModel,
+            startedAt: preview.startedAt ?? dates.created,
+            updatedAt: preview.updatedAt ?? dates.modified,
+            title: title,
+            summary: preview.summary,
+            firstUserPreview: preview.firstUser,
+            firstAssistantPreview: preview.firstAssistant,
+            rawTranscriptPath: sessionFile.path,
+            rawMetadataPath: sessionFile.path,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: resumeKind,
+            resumePayload: resumePayload,
+            isNewtonProject: false,
+            isInProgress: false
         )
     }
 }
