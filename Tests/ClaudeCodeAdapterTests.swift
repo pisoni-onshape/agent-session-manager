@@ -179,6 +179,10 @@ final class ClaudeCodeAdapterTests: XCTestCase {
             record.rawMetadataPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
             metaURL.standardizedFileURL.path
         )
+        // Resume uses Desktop's own session id (sessionId minus `local_`), not the cli id — that is
+        // what reopens the session in Desktop without spawning a duplicate wrapper.
+        XCTAssertEqual(record.resumeKind, .resumeInClaudeDesktop)
+        XCTAssertEqual(record.resumePayload, "abc")
 
         // Rename writes back to the Desktop metadata JSON (title + titleSource=user) and is re-read.
         XCTAssertTrue(ClaudeCodeAdapter.updateDesktopTitle(atMetadataPath: metaURL.path, title: "My Desktop rename"))

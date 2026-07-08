@@ -674,6 +674,14 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
         let title: String?
         let titleSource: String?
         let metadataPath: String
+        /// Desktop's own session id (e.g. `local_d0a855e7…`). Stripped of `local_`, this is the
+        /// value `claude://resume?session=` needs to reopen the exact session without a duplicate.
+        let sessionId: String?
+
+        var desktopResumeId: String? {
+            guard let sessionId else { return nil }
+            return sessionId.hasPrefix("local_") ? String(sessionId.dropFirst("local_".count)) : sessionId
+        }
     }
 
     /// Builds a `cliSessionId → DesktopSessionMeta` map from the Desktop metadata store. This is
@@ -715,7 +723,12 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
             let rank = hasTitle ? (titleSource == "user" ? 2 : 1) : 0
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
             let candidate = Candidate(
-                meta: DesktopSessionMeta(title: title, titleSource: titleSource, metadataPath: url.path),
+                meta: DesktopSessionMeta(
+                    title: title,
+                    titleSource: titleSource,
+                    metadataPath: url.path,
+                    sessionId: object["sessionId"] as? String
+                ),
                 rank: rank,
                 modified: modified
             )
@@ -927,9 +940,12 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
             resumeKind = .openInVSCode
             resumePayload = workspacePath ?? sessionFile.path
         case .claudeDesktop:
-            // Resume the exact conversation back inside the Desktop app it came from.
+            // Resume the exact conversation back inside the Desktop app it came from. The deep link
+            // needs Desktop's OWN session id (metadata sessionId minus the `local_` prefix); passing
+            // the cli id instead makes Desktop spawn a duplicate wrapper session. Fall back to the
+            // cli id when there's no Desktop metadata (rare — a duplicate wrapper is then expected).
             resumeKind = .resumeInClaudeDesktop
-            resumePayload = sessionId
+            resumePayload = desktopMeta?.desktopResumeId ?? sessionId
         default: // .claudeCodeCLI resumes in Terminal.
             resumeKind = .claudeResume
             resumePayload = sessionId
