@@ -127,10 +127,10 @@ final class ClaudeCodeAdapterTests: XCTestCase {
         XCTAssertEqual(record.resumePayload, "/Users/pisoni/repos/newton2")
     }
 
-    func testClassifiesDesktopSessionRevealsTranscript() throws {
+    func testClassifiesDesktopSessionResumesInClaude() throws {
         let root = try makeRoot()
         let sessionId = "33333333-3333-3333-3333-333333333333"
-        let fileURL = try writeSession(
+        try writeSession(
             root: root,
             projectFolder: "-Users-pisoni-repos-newton3",
             sessionId: sessionId,
@@ -142,11 +142,53 @@ final class ClaudeCodeAdapterTests: XCTestCase {
 
         let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root).discover().first)
         XCTAssertEqual(record.source, .claudeDesktop)
-        XCTAssertEqual(record.resumeKind, .revealPath)
-        XCTAssertEqual(
-            URL(fileURLWithPath: record.resumePayload).standardizedFileURL.path,
-            fileURL.standardizedFileURL.path
+        XCTAssertEqual(record.resumeKind, .claudeResume)
+        XCTAssertEqual(record.resumePayload, sessionId)
+    }
+
+    func testDesktopSessionPrefersDesktopMetadataTitleAndRenameRoundTrips() throws {
+        let root = try makeRoot()
+        let sessionId = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: sessionId,
+            records: [
+                userRecord(entrypoint: "claude-desktop", text: "Pre-allow safe tools."),
+                assistantRecord(content: [["type": "text", "text": "Here is a list."]]),
+                ["type": "ai-title", "aiTitle": "Configure safe tools and terminal commands", "sessionId": sessionId]
+            ]
         )
+
+        // Desktop metadata store: title differs from the JSONL ai-title (as the real app behaves).
+        let desktopRoot = root.deletingLastPathComponent().appendingPathComponent("claude-code-sessions", isDirectory: true)
+        let metaDir = desktopRoot.appendingPathComponent("acct/workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: metaDir, withIntermediateDirectories: true)
+        let metaURL = metaDir.appendingPathComponent("local_abc.json")
+        try jsonLine([
+            "sessionId": "local_abc",
+            "cliSessionId": sessionId,
+            "title": "Safe tools and commands allowlist",
+            "titleSource": "auto"
+        ]).write(to: metaURL, atomically: true, encoding: .utf8)
+
+        let adapter = ClaudeCodeAdapter(root: root, desktopSessionsRoot: desktopRoot)
+        let record = try XCTUnwrap(try adapter.discover().first)
+        XCTAssertEqual(record.title, "Safe tools and commands allowlist")
+        XCTAssertEqual(
+            record.rawMetadataPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+            metaURL.standardizedFileURL.path
+        )
+
+        // Rename writes back to the Desktop metadata JSON (title + titleSource=user) and is re-read.
+        XCTAssertTrue(ClaudeCodeAdapter.updateDesktopTitle(atMetadataPath: metaURL.path, title: "My Desktop rename"))
+        let renamed = try XCTUnwrap(try adapter.discover().first)
+        XCTAssertEqual(renamed.title, "My Desktop rename")
+
+        let reloaded = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: metaURL)) as? [String: Any])
+        XCTAssertEqual(reloaded["title"] as? String, "My Desktop rename")
+        XCTAssertEqual(reloaded["titleSource"] as? String, "user")
+        XCTAssertEqual(reloaded["cliSessionId"] as? String, sessionId, "other fields preserved")
     }
 
     func testSkipsSDKAndUnknownEntrypoints() throws {

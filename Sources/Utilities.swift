@@ -651,6 +651,8 @@ struct SourceRoots {
     let cursorGlobalStorage: URL
     let vscodeWorkspaceStorage: URL
     let claudeProjects: URL
+    /// Claude Desktop's per-session metadata store (its "Code" tab), joined to transcripts by `cliSessionId`.
+    let claudeCodeSessions: URL
 
     static let live = SourceRoots(
         copilotCLI: AppPaths.homeDirectory.appendingPathComponent(".copilot/session-state", isDirectory: true),
@@ -658,7 +660,8 @@ struct SourceRoots {
         cursorWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/workspaceStorage", isDirectory: true),
         cursorGlobalStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage", isDirectory: true),
         vscodeWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Code/User/workspaceStorage", isDirectory: true),
-        claudeProjects: AppPaths.homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true)
+        claudeProjects: AppPaths.homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true),
+        claudeCodeSessions: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Claude/claude-code-sessions", isDirectory: true)
     )
 }
 
@@ -730,6 +733,25 @@ public enum WorkspaceLauncher {
 
     public static func claudeNewConversationCommand(workingDirectory: String) -> String {
         "cd \(shellQuote(workingDirectory)) && claude"
+    }
+
+    /// Builds the `claude://code/new` deep link that opens Claude Desktop's Code section, optionally
+    /// scoped to a workspace folder. Claude Desktop cannot deep-link to an existing session by id,
+    /// so this opens a new Code session in the given folder.
+    public static func claudeDesktopCodeURL(folder: String?) -> URL? {
+        var components = URLComponents()
+        components.scheme = "claude"
+        components.host = "code"
+        components.path = "/new"
+        if let folder, !folder.isEmpty {
+            components.queryItems = [URLQueryItem(name: "folder", value: folder)]
+        }
+        return components.url
+    }
+
+    public static func openInClaudeDesktop(folder: String?) {
+        guard let url = claudeDesktopCodeURL(folder: folder) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Shell command that resumes a Claude Code session in its workspace directory.

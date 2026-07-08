@@ -407,7 +407,9 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func canStartNewConversation(for record: SessionRecord) -> Bool {
-        record.workspacePath != nil
+        // Desktop sessions use the dedicated "Open in Claude Desktop" action instead of a
+        // Terminal-launched new conversation.
+        record.workspacePath != nil && record.source != .claudeDesktop
     }
 
     func startNewConversation(for record: SessionRecord) {
@@ -417,6 +419,14 @@ final class SessionBrowserViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func canOpenInClaudeDesktop(for record: SessionRecord) -> Bool {
+        record.source == .claudeDesktop
+    }
+
+    func openInClaudeDesktop(for record: SessionRecord) {
+        WorkspaceLauncher.openInClaudeDesktop(folder: record.workspacePath)
     }
 
     func copyToClipboard(_ value: String) {

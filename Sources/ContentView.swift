@@ -1041,7 +1041,17 @@ private struct SessionDetailView: View {
                     Label("New Chat", systemImage: "plus.bubble")
                 }
                 .buttonStyle(.bordered)
-                .help("Start a fresh Copilot CLI conversation in this project's workspace.")
+                .help("Start a fresh conversation in this project's workspace.")
+            }
+
+            if viewModel.canOpenInClaudeDesktop(for: session) {
+                Button {
+                    viewModel.openInClaudeDesktop(for: session)
+                } label: {
+                    Label("Open in Claude Desktop", systemImage: "macwindow")
+                }
+                .buttonStyle(.bordered)
+                .help("Open Claude Desktop's Code section in this project (starts a new session — Desktop can't reopen an existing one).")
             }
 
             Button {

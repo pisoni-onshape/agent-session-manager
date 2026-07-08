@@ -125,8 +125,8 @@ Click the star icon on any session card to pin it. Starred sessions are grouped 
 Each session card shows a primary action button:
 - **Copilot CLI** → "Resume in Copilot" — reconnects to the exact session via `copilot --resume`
 - **Claude Code CLI** → "Resume in Claude" — reconnects to the exact session via `claude --resume`
+- **Claude Desktop** → "Resume in Claude" (via `claude --resume`) plus "Open in Claude Desktop" — a `claude://code/new?folder=…` deep link that opens Desktop's Code section in the workspace (Desktop can't reopen an existing session by id, so this starts a new one)
 - **Cursor** / **VS Code Copilot** / **Claude Code VS Code** → "Open in Cursor" / "Open in VS Code" — opens the workspace in the editor
-- **Claude Desktop** → "Reveal Transcript" — opens Finder to the raw session file
 - If the workspace path can't be resolved → "Reveal Transcript" — opens Finder to the raw file
 
 ### Viewing Transcripts
@@ -152,6 +152,7 @@ Open **Settings** (⌘,) to configure:
 | Cursor sessions (source) | `~/.cursor/projects/` and `~/.cursor/User/workspaceStorage/` |
 | VS Code Copilot sessions (source) | `~/Library/Application Support/Code/User/workspaceStorage/` |
 | Claude Code sessions — CLI, VS Code & Desktop (sources) | `~/.claude/projects/` (split by each session's `entrypoint`) |
+| Claude Desktop session titles | `~/Library/Application Support/Claude/claude-code-sessions/` (joined by `cliSessionId`; renames write back here) |
 
 The app is **read-only** — it indexes the source directories but never writes to them.
 

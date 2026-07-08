@@ -73,4 +73,18 @@ final class WorkspaceLauncherTests: XCTestCase {
             "cd '/tmp/My Project' && claude"
         )
     }
+
+    func testClaudeDesktopCodeURLEncodesFolder() {
+        XCTAssertEqual(
+            WorkspaceLauncher.claudeDesktopCodeURL(folder: "/Users/me/My Repo")?.absoluteString,
+            "claude://code/new?folder=/Users/me/My%20Repo"
+        )
+    }
+
+    func testClaudeDesktopCodeURLWithoutFolder() {
+        XCTAssertEqual(
+            WorkspaceLauncher.claudeDesktopCodeURL(folder: nil)?.absoluteString,
+            "claude://code/new"
+        )
+    }
 }
