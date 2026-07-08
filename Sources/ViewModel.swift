@@ -423,15 +423,20 @@ final class SessionBrowserViewModel: ObservableObject {
         }
     }
 
-    /// Secondary "Resume in Claude Desktop" action for Claude sources that resume elsewhere by
-    /// default (CLI → Terminal, VS Code → editor). Desktop sessions already resume in Desktop as
-    /// their primary action, so they don't need the duplicate secondary button.
-    func canResumeInClaudeDesktop(for record: SessionRecord) -> Bool {
-        record.source.isClaudeSource && record.resumeKind != .resumeInClaudeDesktop
+    /// Desktop sessions resume in the Desktop app as their primary action; offer resuming the same
+    /// conversation in a terminal (`claude --resume`) as a secondary. Other sources already expose
+    /// their own resume as the primary, so they don't get this.
+    func canResumeInTerminal(for record: SessionRecord) -> Bool {
+        record.source == .claudeDesktop
     }
 
-    func resumeInClaudeDesktop(for record: SessionRecord) {
-        WorkspaceLauncher.resumeInClaudeDesktop(sessionId: record.sourceSessionId)
+    func resumeInTerminal(for record: SessionRecord) {
+        do {
+            try WorkspaceLauncher.resumeClaudeInTerminal(sessionId: record.sourceSessionId, workingDirectory: record.workspacePath)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     /// Desktop sessions carry Claude Desktop's own session id in `resumePayload`, so we can offer a

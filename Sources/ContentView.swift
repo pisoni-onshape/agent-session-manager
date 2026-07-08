@@ -1044,14 +1044,14 @@ private struct SessionDetailView: View {
                 .help("Start a fresh conversation in this project's workspace.")
             }
 
-            if viewModel.canResumeInClaudeDesktop(for: session) {
+            if viewModel.canResumeInTerminal(for: session) {
                 Button {
-                    viewModel.resumeInClaudeDesktop(for: session)
+                    viewModel.resumeInTerminal(for: session)
                 } label: {
-                    Label("Resume in Claude Desktop", systemImage: "macwindow")
+                    Label("Resume in Terminal", systemImage: "terminal")
                 }
                 .buttonStyle(.bordered)
-                .help("Resume this conversation inside the Claude Desktop app.")
+                .help("Resume this conversation in a terminal via `claude --resume`.")
             }
 
             Button {

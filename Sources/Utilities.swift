@@ -758,6 +758,13 @@ public enum WorkspaceLauncher {
         claudeResumeShellCommand(sessionId: record.sourceSessionId, workingDirectory: record.workspacePath)
     }
 
+    /// Resumes a Claude Code session in a terminal via `claude --resume <cliSessionId>`. Desktop
+    /// sessions use this for their secondary action, passing the cli session id (not the Desktop
+    /// native id used by the `claude://resume` deep link).
+    public static func resumeClaudeInTerminal(sessionId: String, workingDirectory: String?) throws {
+        try resumeClaudeCLI(sessionId: sessionId, workingDirectory: workingDirectory)
+    }
+
     private static func resumeClaudeCLI(sessionId: String, workingDirectory: String?) throws {
         try runTerminalCommand(
             claudeResumeShellCommand(sessionId: sessionId, workingDirectory: workingDirectory),
