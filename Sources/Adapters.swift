@@ -661,6 +661,10 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
     let root: URL
     /// Claude Desktop's per-session metadata store; `nil` disables Desktop title enrichment.
     let desktopSessionsRoot: URL?
+    /// Bump when the derived `SessionRecord` shape changes in a way not captured by file mtimes
+    /// (e.g. resume-payload semantics), so a normal incremental refresh re-parses instead of
+    /// reusing stale cached records. Avoids forcing users to delete/rebuild the catalog.
+    private static let recordSchemaVersion = "2"
     private let cache = ClaudeEntrypointCache()
     private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "ClaudeCodeAdapter")
 
@@ -808,7 +812,7 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
                 let desktopMeta = source == .claudeDesktop ? desktopMetadata[sessionID] : nil
                 let fingerprint = combinedFingerprint(
                     paths: [sessionFile.path, desktopMeta?.metadataPath],
-                    values: [source.rawValue]
+                    values: [source.rawValue, Self.recordSchemaVersion]
                 )
 
                 candidates.append(

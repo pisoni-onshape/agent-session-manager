@@ -434,6 +434,17 @@ final class SessionBrowserViewModel: ObservableObject {
         WorkspaceLauncher.resumeInClaudeDesktop(sessionId: record.sourceSessionId)
     }
 
+    /// Desktop sessions carry Claude Desktop's own session id in `resumePayload`, so we can offer a
+    /// copyable `claude://resume?session=…` link that reopens the session in Desktop with no duplicate.
+    func canCopyClaudeDesktopLink(for record: SessionRecord) -> Bool {
+        record.source == .claudeDesktop && WorkspaceLauncher.claudeDesktopResumeURL(sessionId: record.resumePayload) != nil
+    }
+
+    func copyClaudeDesktopLink(for record: SessionRecord) {
+        guard let url = WorkspaceLauncher.claudeDesktopResumeURL(sessionId: record.resumePayload) else { return }
+        WorkspaceLauncher.copyToPasteboard(url.absoluteString)
+    }
+
     func copyToClipboard(_ value: String) {
         WorkspaceLauncher.copyToPasteboard(value)
     }

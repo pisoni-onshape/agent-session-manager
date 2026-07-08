@@ -1090,6 +1090,16 @@ private struct SessionDetailView: View {
                     .help("Copy the Copilot CLI resume command for this session.")
                 }
 
+                if viewModel.canCopyClaudeDesktopLink(for: session) {
+                    Button {
+                        viewModel.copyClaudeDesktopLink(for: session)
+                    } label: {
+                        Label("Copy Claude Desktop Link", systemImage: "link")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Copy a claude://resume link that reopens this session in the Claude Desktop app.")
+                }
+
                 if canRevealRawFile {
                     Button {
                         viewModel.revealTranscript(for: session)
