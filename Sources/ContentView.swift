@@ -1044,14 +1044,14 @@ private struct SessionDetailView: View {
                 .help("Start a fresh conversation in this project's workspace.")
             }
 
-            if viewModel.canOpenInClaudeDesktop(for: session) {
+            if viewModel.canResumeInClaudeDesktop(for: session) {
                 Button {
-                    viewModel.openInClaudeDesktop(for: session)
+                    viewModel.resumeInClaudeDesktop(for: session)
                 } label: {
-                    Label("Open in Claude Desktop", systemImage: "macwindow")
+                    Label("Resume in Claude Desktop", systemImage: "macwindow")
                 }
                 .buttonStyle(.bordered)
-                .help("Open Claude Desktop's Code section in this project (starts a new session — Desktop can't reopen an existing one).")
+                .help("Resume this conversation inside the Claude Desktop app.")
             }
 
             Button {
@@ -1116,6 +1116,8 @@ private struct SessionDetailView: View {
             return "folder"
         case .claudeResume:
             return "play.circle"
+        case .resumeInClaudeDesktop:
+            return "macwindow"
         }
     }
 
@@ -1125,7 +1127,7 @@ private struct SessionDetailView: View {
             return "CursorIcon"
         case .openInVSCode:
             return "VSCodeIcon"
-        case .copilotConnect, .revealPath, .claudeResume:
+        case .copilotConnect, .revealPath, .claudeResume, .resumeInClaudeDesktop:
             return nil
         }
     }
@@ -1158,6 +1160,8 @@ private struct SessionDetailView: View {
             return "Reveal the stored session files in Finder."
         case .claudeResume:
             return "Resume this Claude Code conversation in Terminal."
+        case .resumeInClaudeDesktop:
+            return "Resume this conversation inside the Claude Desktop app."
         }
     }
 

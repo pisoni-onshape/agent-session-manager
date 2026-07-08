@@ -127,7 +127,7 @@ final class ClaudeCodeAdapterTests: XCTestCase {
         XCTAssertEqual(record.resumePayload, "/Users/pisoni/repos/newton2")
     }
 
-    func testClassifiesDesktopSessionResumesInClaude() throws {
+    func testClassifiesDesktopSessionResumesInClaudeDesktop() throws {
         let root = try makeRoot()
         let sessionId = "33333333-3333-3333-3333-333333333333"
         try writeSession(
@@ -142,7 +142,7 @@ final class ClaudeCodeAdapterTests: XCTestCase {
 
         let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root).discover().first)
         XCTAssertEqual(record.source, .claudeDesktop)
-        XCTAssertEqual(record.resumeKind, .claudeResume)
+        XCTAssertEqual(record.resumeKind, .resumeInClaudeDesktop)
         XCTAssertEqual(record.resumePayload, sessionId)
     }
 

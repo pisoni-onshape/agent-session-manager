@@ -678,6 +678,8 @@ public enum WorkspaceLauncher {
             reveal(path: record.resumePayload)
         case .claudeResume:
             try resumeClaudeCLI(sessionId: record.resumePayload, workingDirectory: record.workspacePath)
+        case .resumeInClaudeDesktop:
+            resumeInClaudeDesktop(sessionId: record.resumePayload)
         }
     }
 
@@ -735,22 +737,19 @@ public enum WorkspaceLauncher {
         "cd \(shellQuote(workingDirectory)) && claude"
     }
 
-    /// Builds the `claude://code/new` deep link that opens Claude Desktop's Code section, optionally
-    /// scoped to a workspace folder. Claude Desktop cannot deep-link to an existing session by id,
-    /// so this opens a new Code session in the given folder.
-    public static func claudeDesktopCodeURL(folder: String?) -> URL? {
+    /// Builds the `claude://resume?session=<id>` deep link that resumes an existing conversation
+    /// inside the Claude Desktop app. This route is undocumented (discovered in the app bundle,
+    /// tracked in anthropics/claude-code#69894) but resumes the exact session by its Claude Code id.
+    public static func claudeDesktopResumeURL(sessionId: String) -> URL? {
         var components = URLComponents()
         components.scheme = "claude"
-        components.host = "code"
-        components.path = "/new"
-        if let folder, !folder.isEmpty {
-            components.queryItems = [URLQueryItem(name: "folder", value: folder)]
-        }
+        components.host = "resume"
+        components.queryItems = [URLQueryItem(name: "session", value: sessionId)]
         return components.url
     }
 
-    public static func openInClaudeDesktop(folder: String?) {
-        guard let url = claudeDesktopCodeURL(folder: folder) else { return }
+    public static func resumeInClaudeDesktop(sessionId: String) {
+        guard let url = claudeDesktopResumeURL(sessionId: sessionId) else { return }
         NSWorkspace.shared.open(url)
     }
 

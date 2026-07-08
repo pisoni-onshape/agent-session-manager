@@ -896,7 +896,11 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
         case .claudeCodeVSCode:
             resumeKind = .openInVSCode
             resumePayload = workspacePath ?? sessionFile.path
-        default: // .claudeCodeCLI and .claudeDesktop resume the exact conversation in Terminal.
+        case .claudeDesktop:
+            // Resume the exact conversation back inside the Desktop app it came from.
+            resumeKind = .resumeInClaudeDesktop
+            resumePayload = sessionId
+        default: // .claudeCodeCLI resumes in Terminal.
             resumeKind = .claudeResume
             resumePayload = sessionId
         }

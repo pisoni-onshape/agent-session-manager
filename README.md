@@ -125,7 +125,7 @@ Click the star icon on any session card to pin it. Starred sessions are grouped 
 Each session card shows a primary action button:
 - **Copilot CLI** → "Resume in Copilot" — reconnects to the exact session via `copilot --resume`
 - **Claude Code CLI** → "Resume in Claude" — reconnects to the exact session via `claude --resume`
-- **Claude Desktop** → "Resume in Claude" (via `claude --resume`) plus "Open in Claude Desktop" — a `claude://code/new?folder=…` deep link that opens Desktop's Code section in the workspace (Desktop can't reopen an existing session by id, so this starts a new one)
+- **Claude Desktop** → "Resume in Claude Desktop" — resumes the exact conversation inside the Claude Desktop app via its `claude://resume?session=<id>` deep link (Claude Code CLI and VS Code sessions also offer this as a secondary action)
 - **Cursor** / **VS Code Copilot** / **Claude Code VS Code** → "Open in Cursor" / "Open in VS Code" — opens the workspace in the editor
 - If the workspace path can't be resolved → "Reveal Transcript" — opens Finder to the raw file
 

@@ -74,17 +74,10 @@ final class WorkspaceLauncherTests: XCTestCase {
         )
     }
 
-    func testClaudeDesktopCodeURLEncodesFolder() {
+    func testClaudeDesktopResumeURLCarriesSessionId() {
         XCTAssertEqual(
-            WorkspaceLauncher.claudeDesktopCodeURL(folder: "/Users/me/My Repo")?.absoluteString,
-            "claude://code/new?folder=/Users/me/My%20Repo"
-        )
-    }
-
-    func testClaudeDesktopCodeURLWithoutFolder() {
-        XCTAssertEqual(
-            WorkspaceLauncher.claudeDesktopCodeURL(folder: nil)?.absoluteString,
-            "claude://code/new"
+            WorkspaceLauncher.claudeDesktopResumeURL(sessionId: "5df03e94-4ca5-4596-b04d-51c126da38f5")?.absoluteString,
+            "claude://resume?session=5df03e94-4ca5-4596-b04d-51c126da38f5"
         )
     }
 }

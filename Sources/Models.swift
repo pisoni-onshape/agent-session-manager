@@ -70,6 +70,16 @@ public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable
             return false
         }
     }
+
+    /// A Claude Code session (CLI, VS Code, or Desktop) — all share the `~/.claude/projects` store.
+    public var isClaudeSource: Bool {
+        switch self {
+        case .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            return true
+        case .copilotCLI, .cursor, .vscodeCopilot:
+            return false
+        }
+    }
 }
 
 public enum ResumeActionKind: String, Codable, Sendable {
@@ -78,6 +88,8 @@ public enum ResumeActionKind: String, Codable, Sendable {
     case openInVSCode
     case revealPath
     case claudeResume
+    /// Resume the exact conversation inside the Claude Desktop app via its `claude://resume` deep link.
+    case resumeInClaudeDesktop
 }
 
 public enum SessionSortMode: String, CaseIterable, Identifiable, Sendable {
