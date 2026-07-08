@@ -933,7 +933,7 @@ private struct SessionDetailView: View {
                                 .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
                                 .textSelection(.enabled)
                         }
-                        if session.source == .copilotCLI && !isEditingTitle {
+                        if session.source.supportsRename && !isEditingTitle {
                             Button {
                                 editedTitle = session.title
                                 isEditingTitle = true
@@ -1041,7 +1041,17 @@ private struct SessionDetailView: View {
                     Label("New Chat", systemImage: "plus.bubble")
                 }
                 .buttonStyle(.bordered)
-                .help("Start a fresh Copilot CLI conversation in this project's workspace.")
+                .help("Start a fresh conversation in this project's workspace.")
+            }
+
+            if viewModel.canResumeInTerminal(for: session) {
+                Button {
+                    viewModel.resumeInTerminal(for: session)
+                } label: {
+                    Label("Resume in Terminal", systemImage: "terminal")
+                }
+                .buttonStyle(.bordered)
+                .help("Resume this conversation in a terminal via `claude --resume`.")
             }
 
             Button {
@@ -1080,6 +1090,16 @@ private struct SessionDetailView: View {
                     .help("Copy the Copilot CLI resume command for this session.")
                 }
 
+                if viewModel.canCopyClaudeDesktopLink(for: session) {
+                    Button {
+                        viewModel.copyClaudeDesktopLink(for: session)
+                    } label: {
+                        Label("Copy Claude Desktop Link", systemImage: "link")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Copy a claude://resume link that reopens this session in the Claude Desktop app.")
+                }
+
                 if canRevealRawFile {
                     Button {
                         viewModel.revealTranscript(for: session)
@@ -1104,6 +1124,10 @@ private struct SessionDetailView: View {
             return "chevron.left.forwardslash.chevron.right"
         case .revealPath:
             return "folder"
+        case .claudeResume:
+            return "play.circle"
+        case .resumeInClaudeDesktop:
+            return "macwindow"
         }
     }
 
@@ -1113,7 +1137,7 @@ private struct SessionDetailView: View {
             return "CursorIcon"
         case .openInVSCode:
             return "VSCodeIcon"
-        case .copilotConnect, .revealPath:
+        case .copilotConnect, .revealPath, .claudeResume, .resumeInClaudeDesktop:
             return nil
         }
     }
@@ -1144,6 +1168,10 @@ private struct SessionDetailView: View {
             return "Open this workspace in VS Code."
         case .revealPath:
             return "Reveal the stored session files in Finder."
+        case .claudeResume:
+            return "Resume this Claude Code conversation in Terminal."
+        case .resumeInClaudeDesktop:
+            return "Resume this conversation inside the Claude Desktop app."
         }
     }
 

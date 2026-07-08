@@ -37,4 +37,47 @@ final class WorkspaceLauncherTests: XCTestCase {
             "cd '/tmp/My Project' && copilot --resume 'session-123'"
         )
     }
+
+    func testClaudeResumeCommandIncludesWorkspaceDirectory() {
+        let record = SessionRecord(
+            source: .claudeCodeCLI,
+            sourceSessionId: "session-abc",
+            workspacePath: "/tmp/My Project",
+            projectName: "My Project",
+            branch: "main",
+            conversationModel: "claude-opus-4-8",
+            startedAt: nil,
+            updatedAt: nil,
+            title: "Resume command",
+            summary: nil,
+            firstUserPreview: nil,
+            firstAssistantPreview: nil,
+            rawTranscriptPath: nil,
+            rawMetadataPath: nil,
+            relatedPlanPath: nil,
+            fingerprint: "fingerprint",
+            resumeKind: .claudeResume,
+            resumePayload: "session-abc",
+            isNewtonProject: false
+        )
+
+        XCTAssertEqual(
+            WorkspaceLauncher.claudeResumeCommand(for: record),
+            "cd '/tmp/My Project' && claude --resume 'session-abc'"
+        )
+    }
+
+    func testClaudeNewConversationCommandUsesWorkspaceDirectory() {
+        XCTAssertEqual(
+            WorkspaceLauncher.claudeNewConversationCommand(workingDirectory: "/tmp/My Project"),
+            "cd '/tmp/My Project' && claude"
+        )
+    }
+
+    func testClaudeDesktopResumeURLCarriesSessionId() {
+        XCTAssertEqual(
+            WorkspaceLauncher.claudeDesktopResumeURL(sessionId: "5df03e94-4ca5-4596-b04d-51c126da38f5")?.absoluteString,
+            "claude://resume?session=5df03e94-4ca5-4596-b04d-51c126da38f5"
+        )
+    }
 }

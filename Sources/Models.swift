@@ -4,6 +4,9 @@ public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable
     case copilotCLI = "copilot-cli"
     case cursor
     case vscodeCopilot = "vscode-copilot"
+    case claudeCodeCLI = "claude-code-cli"
+    case claudeCodeVSCode = "claude-code-vscode"
+    case claudeDesktop = "claude-desktop"
 
     public var id: String { rawValue }
 
@@ -15,6 +18,12 @@ public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable
             return "Cursor"
         case .vscodeCopilot:
             return "VS Code Copilot"
+        case .claudeCodeCLI:
+            return "Claude Code CLI"
+        case .claudeCodeVSCode:
+            return "Claude Code VS Code"
+        case .claudeDesktop:
+            return "Claude Desktop"
         }
     }
 
@@ -26,6 +35,12 @@ public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable
             return "cursorarrow.rays"
         case .vscodeCopilot:
             return "chevron.left.forwardslash.chevron.right"
+        case .claudeCodeCLI:
+            return "terminal"
+        case .claudeCodeVSCode:
+            return "chevron.left.forwardslash.chevron.right"
+        case .claudeDesktop:
+            return "desktopcomputer"
         }
     }
 
@@ -39,6 +54,20 @@ public enum SessionSource: String, CaseIterable, Codable, Hashable, Identifiable
             return "CursorIcon"
         case .vscodeCopilot:
             return "VSCodeIcon"
+        case .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            return nil
+        }
+    }
+
+    /// Whether the app can write a renamed title back to this source's on-disk store.
+    /// Copilot CLI persists to `workspace.yaml`; Claude sources append a `custom-title`
+    /// record to the session JSONL. Cursor and VS Code Copilot have no supported write path.
+    public var supportsRename: Bool {
+        switch self {
+        case .copilotCLI, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            return true
+        case .cursor, .vscodeCopilot:
+            return false
         }
     }
 }
@@ -48,6 +77,9 @@ public enum ResumeActionKind: String, Codable, Sendable {
     case openInCursor
     case openInVSCode
     case revealPath
+    case claudeResume
+    /// Resume the exact conversation inside the Claude Desktop app via its `claude://resume` deep link.
+    case resumeInClaudeDesktop
 }
 
 public enum SessionSortMode: String, CaseIterable, Identifiable, Sendable {

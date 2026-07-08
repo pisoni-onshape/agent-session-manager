@@ -39,7 +39,8 @@ public final class SessionCatalog {
                 workspaceStorageRoot: roots.cursorWorkspaceStorage,
                 globalStorageRoot: roots.cursorGlobalStorage
             ),
-            VSCodeCopilotAdapter(root: roots.vscodeWorkspaceStorage)
+            VSCodeCopilotAdapter(root: roots.vscodeWorkspaceStorage),
+            ClaudeCodeAdapter(root: roots.claudeProjects, desktopSessionsRoot: roots.claudeCodeSessions)
         ]
     }
 
@@ -416,19 +417,40 @@ public final class SessionCatalog {
     /// Renames a Copilot CLI session by updating workspace.yaml (name + user_named) and the catalog DB.
     /// Returns the updated SessionRecord on success, nil if the session can't be renamed.
     public func renameSession(_ session: SessionRecord, to newTitle: String) throws -> SessionRecord? {
-        guard session.source == .copilotCLI,
-              let metadataPath = session.rawMetadataPath else { return nil }
-
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        // Write name and user_named to workspace.yaml
-        guard FlatYAMLWriter.updateValues(at: metadataPath, updates: [
-            "name": trimmed,
-            "user_named": "true"
-        ]) else { return nil }
+        switch session.source {
+        case .copilotCLI:
+            // Copilot persists the title as `name` in workspace.yaml.
+            guard let metadataPath = session.rawMetadataPath,
+                  FlatYAMLWriter.updateValues(at: metadataPath, updates: [
+                    "name": trimmed,
+                    "user_named": "true"
+                  ]) else { return nil }
 
-        // Update the in-memory record
+        case .claudeDesktop where session.rawMetadataPath?.hasSuffix(".json") == true:
+            // Desktop titles live in the metadata JSON; writing there round-trips with the app.
+            guard let metadataPath = session.rawMetadataPath,
+                  ClaudeCodeAdapter.updateDesktopTitle(atMetadataPath: metadataPath, title: trimmed) else {
+                return nil
+            }
+
+        case .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            // Claude titles a session by appending a `custom-title` record to its JSONL; both
+            // this app and Claude Code itself use the latest such record as the title. (Also the
+            // fallback for a Desktop session that has no metadata file yet.)
+            guard let jsonlPath = session.rawTranscriptPath ?? session.rawMetadataPath,
+                  ClaudeCodeAdapter.appendClaudeCustomTitle(at: jsonlPath, sessionId: session.sourceSessionId, title: trimmed) else {
+                return nil
+            }
+
+        case .cursor, .vscodeCopilot:
+            return nil
+        }
+
+        // Update the in-memory record + catalog; the next refresh re-reads the source and
+        // recomputes the fingerprint (the store changed), keeping everything consistent.
         let updated = session.with(title: trimmed)
         try store.updateTitle(for: session.id, newTitle: trimmed)
         return updated
@@ -594,6 +616,366 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
             resumePayload: metadata["id"] ?? sessionDirectory.lastPathComponent,
             isNewtonProject: false,
             isInProgress: isInProgress
+        )
+    }
+}
+
+/// Caches the (immutable) first-record `entrypoint` classification for each session file,
+/// keyed by the file's fingerprint so a changed file is re-read.
+private final class ClaudeEntrypointCache {
+    private struct Entry {
+        let fingerprint: String
+        let entrypoint: String?
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    /// Returns `.some(entrypoint)` on a fingerprint-matched cache hit (where `entrypoint`
+    /// may itself be nil), or `nil` on a miss.
+    func entrypoint(for path: String, fingerprint: String) -> String?? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[path], entry.fingerprint == fingerprint else { return nil }
+        return .some(entry.entrypoint)
+    }
+
+    func store(entrypoint: String?, for path: String, fingerprint: String) {
+        lock.lock()
+        entries[path] = Entry(fingerprint: fingerprint, entrypoint: entrypoint)
+        lock.unlock()
+    }
+
+    func prune(keepingPaths: Set<String>) {
+        lock.lock()
+        entries = entries.filter { keepingPaths.contains($0.key) }
+        lock.unlock()
+    }
+}
+
+/// Indexes Claude Code sessions from the shared `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`
+/// store, splitting them into three sources by each session's first-record `entrypoint`:
+/// `cli` → Claude Code CLI, `claude-vscode` → VS Code, `claude-desktop` → Desktop. Sessions with
+/// any other entrypoint (e.g. `sdk-ts` background agents) are skipped.
+public struct ClaudeCodeAdapter: SessionSourceAdapter {
+    let root: URL
+    /// Claude Desktop's per-session metadata store; `nil` disables Desktop title enrichment.
+    let desktopSessionsRoot: URL?
+    /// Bump when the derived `SessionRecord` shape changes in a way not captured by file mtimes
+    /// (e.g. resume-payload semantics), so a normal incremental refresh re-parses instead of
+    /// reusing stale cached records. Avoids forcing users to delete/rebuild the catalog.
+    private static let recordSchemaVersion = "2"
+    private let cache = ClaudeEntrypointCache()
+    private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "ClaudeCodeAdapter")
+
+    init(root: URL, desktopSessionsRoot: URL? = nil) {
+        self.root = root
+        self.desktopSessionsRoot = desktopSessionsRoot
+    }
+
+    /// Title metadata Claude Desktop keeps for its "Code" tab sessions, keyed by `cliSessionId`.
+    struct DesktopSessionMeta {
+        let title: String?
+        let titleSource: String?
+        let metadataPath: String
+        /// Desktop's own session id (e.g. `local_d0a855e7…`). Stripped of `local_`, this is the
+        /// value `claude://resume?session=` needs to reopen the exact session without a duplicate.
+        let sessionId: String?
+
+        var desktopResumeId: String? {
+            guard let sessionId else { return nil }
+            return sessionId.hasPrefix("local_") ? String(sessionId.dropFirst("local_".count)) : sessionId
+        }
+    }
+
+    /// Builds a `cliSessionId → DesktopSessionMeta` map from the Desktop metadata store. This is
+    /// what Claude Desktop displays as the session title, so Desktop sessions prefer it.
+    ///
+    /// A `cliSessionId` can have MORE THAN ONE metadata file: resuming a session via the
+    /// `claude://resume` deep link makes Desktop write a second, title-less `local_<cliSessionId>`
+    /// file (shown in Desktop as "General coding session"). We must not let that null-title
+    /// duplicate clobber the real title, so per session we keep the best entry: a usable title
+    /// beats none, a user-set title beats an auto one, and newer breaks ties.
+    private func loadDesktopMetadata() -> [String: DesktopSessionMeta] {
+        guard let desktopSessionsRoot,
+              FileManager.default.fileExists(atPath: desktopSessionsRoot.path),
+              let enumerator = FileManager.default.enumerator(
+                at: desktopSessionsRoot,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+              ) else {
+            return [:]
+        }
+
+        struct Candidate {
+            let meta: DesktopSessionMeta
+            let rank: Int
+            let modified: Date
+        }
+
+        var best: [String: Candidate] = [:]
+        for case let url as URL in enumerator
+        where url.lastPathComponent.hasPrefix("local_") && url.pathExtension.lowercased() == "json" {
+            guard let data = try? Data(contentsOf: url),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let cliSessionId = object["cliSessionId"] as? String else {
+                continue
+            }
+
+            let title = object["title"] as? String
+            let titleSource = object["titleSource"] as? String
+            let hasTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let rank = hasTitle ? (titleSource == "user" ? 2 : 1) : 0
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            let candidate = Candidate(
+                meta: DesktopSessionMeta(
+                    title: title,
+                    titleSource: titleSource,
+                    metadataPath: url.path,
+                    sessionId: object["sessionId"] as? String
+                ),
+                rank: rank,
+                modified: modified
+            )
+
+            if let existing = best[cliSessionId] {
+                if rank > existing.rank || (rank == existing.rank && modified > existing.modified) {
+                    best[cliSessionId] = candidate
+                }
+            } else {
+                best[cliSessionId] = candidate
+            }
+        }
+
+        return best.mapValues(\.meta)
+    }
+
+    /// Rewrites the `title`/`titleSource` fields of a Desktop metadata JSON file (preserving the
+    /// rest), so a rename here round-trips with the Claude Desktop app. Returns false if the file
+    /// is not a Desktop metadata file or cannot be written.
+    static func updateDesktopTitle(atMetadataPath path: String, title: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        guard let data = try? Data(contentsOf: url),
+              var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              object["cliSessionId"] != nil else {
+            return false
+        }
+        object["title"] = title
+        object["titleSource"] = "user"
+        guard let output = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]) else {
+            return false
+        }
+        do {
+            try output.write(to: url)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func scanCandidates() throws -> [SessionScanCandidate] {
+        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
+
+        let projectDirectories = (try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ))?.filter(\.hasDirectoryPath) ?? []
+
+        let desktopMetadata = loadDesktopMetadata()
+        var candidates: [SessionScanCandidate] = []
+        var seenPaths: Set<String> = []
+
+        for projectDirectory in projectDirectories {
+            // Only top-level `.jsonl` files are sessions; the `<uuid>/` subdirectories hold
+            // subagent + tool-result sidecars and must never be treated as sessions.
+            let sessionFiles = (try? FileManager.default.contentsOfDirectory(
+                at: projectDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ))?.filter { !$0.hasDirectoryPath && $0.pathExtension.lowercased() == "jsonl" } ?? []
+
+            for sessionFile in sessionFiles {
+                seenPaths.insert(sessionFile.path)
+                let classificationFingerprint = fileFingerprint(for: sessionFile.path)
+                let entrypoint: String? = cache.entrypoint(for: sessionFile.path, fingerprint: classificationFingerprint)
+                    ?? {
+                        let resolved = Self.classifyEntrypoint(of: sessionFile)
+                        cache.store(entrypoint: resolved, for: sessionFile.path, fingerprint: classificationFingerprint)
+                        return resolved
+                    }()
+
+                guard let source = Self.source(forEntrypoint: entrypoint) else { continue }
+
+                let sessionID = sessionFile.deletingPathExtension().lastPathComponent
+                // Desktop sessions carry their authoritative title in the Desktop metadata store;
+                // fold its path into the fingerprint so title changes there trigger a re-index.
+                let desktopMeta = source == .claudeDesktop ? desktopMetadata[sessionID] : nil
+                let fingerprint = combinedFingerprint(
+                    paths: [sessionFile.path, desktopMeta?.metadataPath],
+                    values: [source.rawValue, Self.recordSchemaVersion]
+                )
+
+                candidates.append(
+                    SessionScanCandidate(
+                        id: "\(source.rawValue)::\(sessionID)",
+                        fingerprint: fingerprint,
+                        isInProgress: false,
+                        loadRecord: {
+                            try Self.loadRecord(
+                                sessionFile: sessionFile,
+                                source: source,
+                                sessionId: sessionID,
+                                fingerprint: fingerprint,
+                                desktopMeta: desktopMeta
+                            )
+                        }
+                    )
+                )
+            }
+        }
+
+        cache.prune(keepingPaths: seenPaths)
+        Self.logger.info("Scanned \(projectDirectories.count) Claude project directories, \(candidates.count) candidates")
+        return candidates
+    }
+
+    /// Reads a bounded prefix of the file and returns the first record's `entrypoint`. The very
+    /// first line is often a metadata record (`mode`/`summary`) without an entrypoint, so we scan
+    /// forward to the first record that carries one.
+    static func classifyEntrypoint(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 262_144) else { return nil }
+
+        let text = String(decoding: data, as: UTF8.self)
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard line.contains("\"entrypoint\"") else { continue }
+            guard let lineData = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  let entrypoint = object["entrypoint"] as? String else {
+                continue
+            }
+            return entrypoint
+        }
+        return nil
+    }
+
+    /// Appends a `{"type":"custom-title", ...}` record to a Claude session JSONL, ensuring it
+    /// starts on its own line. Both this app and Claude Code treat the latest such record as the
+    /// session title. Returns false if the file cannot be written.
+    static func appendClaudeCustomTitle(at path: String, sessionId: String, title: String) -> Bool {
+        let record: [String: Any] = ["type": "custom-title", "customTitle": title, "sessionId": sessionId]
+        // `forUpdatingAtPath` (read+write) is required: we read the last byte to decide whether a
+        // separating newline is needed. A write-only handle would fail that read with EBADF.
+        guard let recordData = try? JSONSerialization.data(withJSONObject: record),
+              let handle = FileHandle(forUpdatingAtPath: path) else {
+            return false
+        }
+        defer { try? handle.close() }
+
+        do {
+            let end = try handle.seekToEnd()
+            var payload = Data()
+            if end > 0 {
+                try handle.seek(toOffset: end - 1)
+                let lastByte = try handle.read(upToCount: 1)
+                if lastByte != Data([0x0A]) { payload.append(0x0A) }
+                try handle.seekToEnd()
+            }
+            payload.append(recordData)
+            payload.append(0x0A)
+            try handle.write(contentsOf: payload)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    static func source(forEntrypoint entrypoint: String?) -> SessionSource? {
+        switch entrypoint {
+        case "cli":
+            return .claudeCodeCLI
+        case "claude-vscode":
+            return .claudeCodeVSCode
+        case "claude-desktop":
+            return .claudeDesktop
+        default:
+            // `sdk-ts`, unknown, or missing → not a user-facing Claude Code session.
+            return nil
+        }
+    }
+
+    private static func loadRecord(
+        sessionFile: URL,
+        source: SessionSource,
+        sessionId: String,
+        fingerprint: String,
+        desktopMeta: DesktopSessionMeta?
+    ) throws -> SessionRecord? {
+        let preview = try TranscriptPreviewExtractor.extractClaudeCodePreview(from: sessionFile)
+        guard preview.firstUser != nil || preview.firstAssistant != nil else { return nil }
+
+        let workspacePath = preview.cwd
+        // Desktop sessions prefer the title the Claude Desktop app shows (its metadata store);
+        // otherwise use Claude's own JSONL titles (user-set, then AI-generated), then infer one.
+        let title = TextSanitizer.compact(desktopMeta?.title)
+            ?? TextSanitizer.compact(preview.customTitle)
+            ?? TextSanitizer.compact(preview.aiTitle)
+            ?? TextSanitizer.inferTitle(from: preview.firstUser ?? preview.firstAssistant, fallback: sessionId)
+        let dates = fileDates(for: sessionFile)
+        let projectName = PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: sessionId)
+
+        // Prefer the most recently referenced plan file that actually exists — the transcript may
+        // also mention example or superseded plan paths that were never written.
+        let relatedPlanPath: String? = preview.planPaths
+            .reversed()
+            .lazy
+            .map { ($0 as NSString).expandingTildeInPath }
+            .first(where: { FileManager.default.fileExists(atPath: $0) })
+
+        // Rename target: Desktop sessions write back to their metadata JSON (round-trips with the
+        // Desktop app); CLI/VS Code sessions append a custom-title record to the JSONL itself.
+        let metadataPath = desktopMeta?.metadataPath ?? sessionFile.path
+
+        let resumeKind: ResumeActionKind
+        let resumePayload: String
+        switch source {
+        case .claudeCodeVSCode:
+            resumeKind = .openInVSCode
+            resumePayload = workspacePath ?? sessionFile.path
+        case .claudeDesktop:
+            // Resume the exact conversation back inside the Desktop app it came from. The deep link
+            // needs Desktop's OWN session id (metadata sessionId minus the `local_` prefix); passing
+            // the cli id instead makes Desktop spawn a duplicate wrapper session. Fall back to the
+            // cli id when there's no Desktop metadata (rare — a duplicate wrapper is then expected).
+            resumeKind = .resumeInClaudeDesktop
+            resumePayload = desktopMeta?.desktopResumeId ?? sessionId
+        default: // .claudeCodeCLI resumes in Terminal.
+            resumeKind = .claudeResume
+            resumePayload = sessionId
+        }
+
+        return SessionRecord(
+            source: source,
+            sourceSessionId: sessionId,
+            workspacePath: workspacePath,
+            projectName: projectName,
+            branch: preview.gitBranch,
+            conversationModel: preview.latestModel,
+            startedAt: preview.startedAt ?? dates.created,
+            updatedAt: preview.updatedAt ?? dates.modified,
+            title: title,
+            summary: preview.summary,
+            firstUserPreview: preview.firstUser,
+            firstAssistantPreview: preview.firstAssistant,
+            rawTranscriptPath: sessionFile.path,
+            rawMetadataPath: metadataPath,
+            relatedPlanPath: relatedPlanPath,
+            fingerprint: fingerprint,
+            resumeKind: resumeKind,
+            resumePayload: resumePayload,
+            isNewtonProject: false,
+            isInProgress: false
         )
     }
 }

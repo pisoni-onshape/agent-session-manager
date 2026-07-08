@@ -271,6 +271,54 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertEqual(toolEvents.count, 2)
     }
 
+    func testClaudeTranscriptParsesStringAndBlockContent() throws {
+        let url = try temporaryFile(
+            named: "claude-code.jsonl",
+            contents: """
+            {"type":"mode","mode":"normal","sessionId":"cc-1"}
+            {"type":"user","message":{"role":"user","content":"Fix the failing test."},"entrypoint":"cli","timestamp":"2026-07-01T10:00:00.000Z","uuid":"u1"}
+            {"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-8","content":[{"type":"text","text":"Looking now."},{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]},"timestamp":"2026-07-01T10:00:05.000Z","uuid":"a1"}
+            {"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"file.txt"}]},"timestamp":"2026-07-01T10:00:06.000Z","uuid":"u2"}
+            """
+        )
+
+        let record = SessionRecord(
+            source: .claudeCodeCLI,
+            sourceSessionId: "cc-1",
+            workspacePath: "/Users/pisoni/repos/newton3",
+            projectName: "newton3",
+            branch: "main",
+            conversationModel: "claude-opus-4-8",
+            startedAt: nil,
+            updatedAt: nil,
+            title: "Fix the failing test.",
+            summary: nil,
+            firstUserPreview: nil,
+            firstAssistantPreview: nil,
+            rawTranscriptPath: url.path,
+            rawMetadataPath: nil,
+            relatedPlanPath: nil,
+            fingerprint: "fingerprint-claude",
+            resumeKind: .claudeResume,
+            resumePayload: "cc-1",
+            isNewtonProject: false
+        )
+
+        let transcript = try TranscriptPreviewExtractor.loadTranscript(for: record)
+
+        XCTAssertEqual(transcript.entries.count, 4)
+        XCTAssertEqual(transcript.entries[0].role, .user)
+        XCTAssertEqual(transcript.entries[0].body, "Fix the failing test.")
+        XCTAssertEqual(transcript.entries[1].role, .assistant)
+        XCTAssertEqual(transcript.entries[1].body, "Looking now.")
+        XCTAssertEqual(transcript.entries[2].role, .tool)
+        XCTAssertEqual(transcript.entries[2].title, "Tool: Bash")
+        XCTAssertEqual(transcript.entries[2].body, "ls -la")
+        XCTAssertEqual(transcript.entries[3].role, .tool)
+        XCTAssertEqual(transcript.entries[3].title, "Tool Result")
+        XCTAssertTrue(transcript.timestampsAreComplete)
+    }
+
     func testTranscriptLoaderPreservesBasicMessageFormatting() throws {
         let url = try temporaryFile(
             named: "event-multiline.jsonl",

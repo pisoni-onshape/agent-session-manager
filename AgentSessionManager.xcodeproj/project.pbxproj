@@ -38,6 +38,7 @@
 		B8B334283D193C15934B224F /* AgentSessionManagerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC01673AC71F156041BD76F /* AgentSessionManagerApp.swift */; };
 		BA86010AE13818760DEE75B3 /* ViewModelRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 932F2CF1C39B4D8BC8440324 /* ViewModelRefreshTests.swift */; };
 		CDFEE81802EC2892E50ECC79 /* NewtonProjectMatchingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF76D7F25639A165DE9268AC /* NewtonProjectMatchingTests.swift */; };
+		CF98333A131516A108107A59 /* ClaudeCodeAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E14A754D9D523CF7A852B484 /* ClaudeCodeAdapterTests.swift */; };
 		D15892D1CCA981D256988BB4 /* TranscriptParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 618F620A1984E0955FBD39D1 /* TranscriptParsingTests.swift */; };
 		E774F69D3758785DBE51D11F /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = C97FCAED51CA4098728CBB78 /* libsqlite3.tbd */; };
 		EF62B612F3B1BAE949F0B4E9 /* libAgentSessionManagerCore.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0CFE037DB680ED154043689B /* libAgentSessionManagerCore.a */; };
@@ -118,6 +119,7 @@
 		CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorAdapterTests.swift; sourceTree = "<group>"; };
 		CF76D7F25639A165DE9268AC /* NewtonProjectMatchingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewtonProjectMatchingTests.swift; sourceTree = "<group>"; };
 		D2C27AD6AF2454C65F2D1A90 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		E14A754D9D523CF7A852B484 /* ClaudeCodeAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeCodeAdapterTests.swift; sourceTree = "<group>"; };
 		E94A3ED57E602E84C177D3A1 /* WorkspaceLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceLauncherTests.swift; sourceTree = "<group>"; };
 		F332DCBE5F4757650F3B5073 /* SessionSearchCLITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchCLITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -188,6 +190,7 @@
 			isa = PBXGroup;
 			children = (
 				B95E238E77BEC6ED1E572B3D /* AppSettingsTests.swift */,
+				E14A754D9D523CF7A852B484 /* ClaudeCodeAdapterTests.swift */,
 				A33E5C350DBDB7D5076DF018 /* CLIPathInstallerTests.swift */,
 				CF0F5030AAF2DA044E3ED18E /* CursorAdapterTests.swift */,
 				CF76D7F25639A165DE9268AC /* NewtonProjectMatchingTests.swift */,
@@ -452,6 +455,7 @@
 			files = (
 				68EF8294256C5743AB0D7BCB /* AppSettingsTests.swift in Sources */,
 				2586C63EFA49B9E6D984D3D6 /* CLIPathInstallerTests.swift in Sources */,
+				CF98333A131516A108107A59 /* ClaudeCodeAdapterTests.swift in Sources */,
 				55445405C0C4B604DD394B62 /* CursorAdapterTests.swift in Sources */,
 				CDFEE81802EC2892E50ECC79 /* NewtonProjectMatchingTests.swift in Sources */,
 				5B6C55A96362E9C52C35F0EB /* SQLiteStoreTests.swift in Sources */,

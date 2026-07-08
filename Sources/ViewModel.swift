@@ -197,7 +197,7 @@ final class SessionBrowserViewModel: ObservableObject {
                     vscodeCaches[cacheKey] = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDir)
                 }
                 isActive = vscodeCaches[cacheKey]!.contains(session.sourceSessionId)
-            case .cursor:
+            case .cursor, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
                 continue
             }
             if isActive != session.isInProgress {
@@ -231,7 +231,7 @@ final class SessionBrowserViewModel: ObservableObject {
             let workspaceDirectory = URL(fileURLWithPath: metadataPath).deletingLastPathComponent()
             let activeIDs = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDirectory)
             return activeIDs.contains(session.sourceSessionId)
-        case .cursor:
+        case .cursor, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
             return false
         }
     }
@@ -392,6 +392,10 @@ final class SessionBrowserViewModel: ObservableObject {
             return "Open in VS Code"
         case .revealPath:
             return "Reveal Transcript"
+        case .claudeResume:
+            return "Resume in Claude"
+        case .resumeInClaudeDesktop:
+            return "Resume in Claude Desktop"
         }
     }
 
@@ -405,16 +409,45 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     func canStartNewConversation(for record: SessionRecord) -> Bool {
-        record.workspacePath != nil
+        // Desktop sessions use the dedicated "Open in Claude Desktop" action instead of a
+        // Terminal-launched new conversation.
+        record.workspacePath != nil && record.source != .claudeDesktop
     }
 
     func startNewConversation(for record: SessionRecord) {
         do {
-            try WorkspaceLauncher.startNewConversation(in: record.workspacePath)
+            try WorkspaceLauncher.startNewConversation(for: record)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Desktop sessions resume in the Desktop app as their primary action; offer resuming the same
+    /// conversation in a terminal (`claude --resume`) as a secondary. Other sources already expose
+    /// their own resume as the primary, so they don't get this.
+    func canResumeInTerminal(for record: SessionRecord) -> Bool {
+        record.source == .claudeDesktop
+    }
+
+    func resumeInTerminal(for record: SessionRecord) {
+        do {
+            try WorkspaceLauncher.resumeClaudeInTerminal(sessionId: record.sourceSessionId, workingDirectory: record.workspacePath)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Desktop sessions carry Claude Desktop's own session id in `resumePayload`, so we can offer a
+    /// copyable `claude://resume?session=…` link that reopens the session in Desktop with no duplicate.
+    func canCopyClaudeDesktopLink(for record: SessionRecord) -> Bool {
+        record.source == .claudeDesktop && WorkspaceLauncher.claudeDesktopResumeURL(sessionId: record.resumePayload) != nil
+    }
+
+    func copyClaudeDesktopLink(for record: SessionRecord) {
+        guard let url = WorkspaceLauncher.claudeDesktopResumeURL(sessionId: record.resumePayload) else { return }
+        WorkspaceLauncher.copyToPasteboard(url.absoluteString)
     }
 
     func copyToClipboard(_ value: String) {
