@@ -678,14 +678,29 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
 
     /// Builds a `cliSessionId → DesktopSessionMeta` map from the Desktop metadata store. This is
     /// what Claude Desktop displays as the session title, so Desktop sessions prefer it.
+    ///
+    /// A `cliSessionId` can have MORE THAN ONE metadata file: resuming a session via the
+    /// `claude://resume` deep link makes Desktop write a second, title-less `local_<cliSessionId>`
+    /// file (shown in Desktop as "General coding session"). We must not let that null-title
+    /// duplicate clobber the real title, so per session we keep the best entry: a usable title
+    /// beats none, a user-set title beats an auto one, and newer breaks ties.
     private func loadDesktopMetadata() -> [String: DesktopSessionMeta] {
         guard let desktopSessionsRoot,
               FileManager.default.fileExists(atPath: desktopSessionsRoot.path),
-              let enumerator = FileManager.default.enumerator(at: desktopSessionsRoot, includingPropertiesForKeys: nil) else {
+              let enumerator = FileManager.default.enumerator(
+                at: desktopSessionsRoot,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+              ) else {
             return [:]
         }
 
-        var map: [String: DesktopSessionMeta] = [:]
+        struct Candidate {
+            let meta: DesktopSessionMeta
+            let rank: Int
+            let modified: Date
+        }
+
+        var best: [String: Candidate] = [:]
         for case let url as URL in enumerator
         where url.lastPathComponent.hasPrefix("local_") && url.pathExtension.lowercased() == "json" {
             guard let data = try? Data(contentsOf: url),
@@ -693,13 +708,28 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
                   let cliSessionId = object["cliSessionId"] as? String else {
                 continue
             }
-            map[cliSessionId] = DesktopSessionMeta(
-                title: object["title"] as? String,
-                titleSource: object["titleSource"] as? String,
-                metadataPath: url.path
+
+            let title = object["title"] as? String
+            let titleSource = object["titleSource"] as? String
+            let hasTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let rank = hasTitle ? (titleSource == "user" ? 2 : 1) : 0
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            let candidate = Candidate(
+                meta: DesktopSessionMeta(title: title, titleSource: titleSource, metadataPath: url.path),
+                rank: rank,
+                modified: modified
             )
+
+            if let existing = best[cliSessionId] {
+                if rank > existing.rank || (rank == existing.rank && modified > existing.modified) {
+                    best[cliSessionId] = candidate
+                }
+            } else {
+                best[cliSessionId] = candidate
+            }
         }
-        return map
+
+        return best.mapValues(\.meta)
     }
 
     /// Rewrites the `title`/`titleSource` fields of a Desktop metadata JSON file (preserving the

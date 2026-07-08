@@ -346,6 +346,48 @@ final class ClaudeCodeAdapterTests: XCTestCase {
         XCTAssertFalse(SessionSource.vscodeCopilot.supportsRename)
     }
 
+    func testDesktopTitlePrefersTitledMetadataOverNullTitleResumeDuplicate() throws {
+        let root = try makeRoot()
+        let sessionId = "12121212-1212-1212-1212-121212121212"
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: sessionId,
+            records: [
+                userRecord(entrypoint: "claude-desktop", text: "Do the thing."),
+                assistantRecord(content: [["type": "text", "text": "Done."]])
+            ]
+        )
+
+        let desktopRoot = root.deletingLastPathComponent().appendingPathComponent("claude-code-sessions", isDirectory: true)
+        let metaDir = desktopRoot.appendingPathComponent("acct/workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: metaDir, withIntermediateDirectories: true)
+
+        // Original Desktop metadata (has a real auto title).
+        let titledURL = metaDir.appendingPathComponent("local_original.json")
+        try jsonLine([
+            "sessionId": "local_original",
+            "cliSessionId": sessionId,
+            "title": "Real Desktop Title",
+            "titleSource": "auto"
+        ]).write(to: titledURL, atomically: true, encoding: .utf8)
+
+        // Resume-created duplicate for the same cliSessionId, with a null/absent title.
+        let dupURL = metaDir.appendingPathComponent("local_\(sessionId).json")
+        try jsonLine([
+            "sessionId": "local_\(sessionId)",
+            "cliSessionId": sessionId
+        ]).write(to: dupURL, atomically: true, encoding: .utf8)
+
+        let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root, desktopSessionsRoot: desktopRoot).discover().first)
+        XCTAssertEqual(record.title, "Real Desktop Title", "null-title resume duplicate must not clobber the real title")
+        XCTAssertEqual(
+            record.rawMetadataPath.map { URL(fileURLWithPath: $0).lastPathComponent },
+            "local_original.json",
+            "rename target should be the titled metadata file, not the duplicate"
+        )
+    }
+
     // MARK: - Plan derivation
 
     func testDerivesPlanPathFromTranscriptWhenFileExists() throws {
