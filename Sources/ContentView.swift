@@ -1097,6 +1097,16 @@ private struct SessionDetailView: View {
                     .help("Copy the Copilot CLI resume command for this session.")
                 }
 
+                if session.source == .claudeCodeCLI {
+                    Button {
+                        viewModel.copyClaudeResumeCommand(session)
+                    } label: {
+                        Label("Copy Resume Command", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Copy the claude --resume command for this session.")
+                }
+
                 if viewModel.canCopyClaudeDesktopLink(for: session) {
                     Button {
                         viewModel.copyClaudeDesktopLink(for: session)
@@ -1279,7 +1289,7 @@ private struct SessionDetailView: View {
     }
 
     private var showsUtilityActions: Bool {
-        session.source == .copilotCLI || canRevealRawFile
+        session.source == .copilotCLI || session.source == .claudeCodeCLI || canRevealRawFile
     }
 }
 

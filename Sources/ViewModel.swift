@@ -469,6 +469,11 @@ final class SessionBrowserViewModel: ObservableObject {
         WorkspaceLauncher.copyToPasteboard(command)
     }
 
+    func copyClaudeResumeCommand(_ record: SessionRecord) {
+        let command = WorkspaceLauncher.claudeResumeCommand(for: record)
+        WorkspaceLauncher.copyToPasteboard(command)
+    }
+
     func revealTranscript(for record: SessionRecord) {
         WorkspaceLauncher.reveal(path: record.rawTranscriptPath ?? record.rawMetadataPath)
     }
