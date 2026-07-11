@@ -472,6 +472,7 @@ public enum SessionSearchQueryParser {
            keyStart != index {
             let key = String(query[keyStart..<index])
             index = query.index(after: index)
+            skipWhitespace(in: query, from: &index)
 
             let value: String?
             if index < query.endIndex, query[index] == "\"" {

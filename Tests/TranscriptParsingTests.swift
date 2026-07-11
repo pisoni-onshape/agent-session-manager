@@ -55,6 +55,22 @@ final class TranscriptParsingTests: XCTestCase {
         )
     }
 
+    func testFieldedSearchParserTrimsWhitespaceAfterColon() {
+        // "project: newton" (space after colon) should parse identically to "project:newton"
+        let withSpace = SessionSearchQueryParser.parse("project: newton")
+        let withoutSpace = SessionSearchQueryParser.parse("project:newton")
+
+        XCTAssertEqual(withSpace.fieldClauses, withoutSpace.fieldClauses)
+        XCTAssertEqual(withSpace.freeTextTerms, withoutSpace.freeTextTerms)
+    }
+
+    func testFieldedSearchParserTrimsMultipleSpacesAndLeadingTrailingWhitespace() {
+        let query = SessionSearchQueryParser.parse("  project:  agent-session-manager  ")
+
+        XCTAssertEqual(query.fieldClauses, [SessionSearchFieldClause(field: .project, value: "agent-session-manager")])
+        XCTAssertEqual(query.freeTextTerms, [])
+    }
+
     func testUnlabeledToolbarSearchKeepsWholeQueryBehavior() {
         var filters = SessionFilterState()
         filters.searchText = "refresh behavior"
