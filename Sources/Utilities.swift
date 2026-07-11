@@ -653,6 +653,9 @@ struct SourceRoots {
     let claudeProjects: URL
     /// Claude Desktop's per-session metadata store (its "Code" tab), joined to transcripts by `cliSessionId`.
     let claudeCodeSessions: URL
+    /// Claude Code's per-process session-state store (`~/.claude/sessions/<pid>.json`), used to detect
+    /// in-progress CLI sessions by matching a live PID's `sessionId` against a record's `sourceSessionId`.
+    let claudeSessions: URL
 
     static let live = SourceRoots(
         copilotCLI: AppPaths.homeDirectory.appendingPathComponent(".copilot/session-state", isDirectory: true),
@@ -661,7 +664,8 @@ struct SourceRoots {
         cursorGlobalStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Cursor/User/globalStorage", isDirectory: true),
         vscodeWorkspaceStorage: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Code/User/workspaceStorage", isDirectory: true),
         claudeProjects: AppPaths.homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true),
-        claudeCodeSessions: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Claude/claude-code-sessions", isDirectory: true)
+        claudeCodeSessions: AppPaths.homeDirectory.appendingPathComponent("Library/Application Support/Claude/claude-code-sessions", isDirectory: true),
+        claudeSessions: ClaudeCodeAdapter.liveSessionsRoot
     )
 }
 

@@ -40,7 +40,7 @@ public final class SessionCatalog {
                 globalStorageRoot: roots.cursorGlobalStorage
             ),
             VSCodeCopilotAdapter(root: roots.vscodeWorkspaceStorage),
-            ClaudeCodeAdapter(root: roots.claudeProjects, desktopSessionsRoot: roots.claudeCodeSessions)
+            ClaudeCodeAdapter(root: roots.claudeProjects, desktopSessionsRoot: roots.claudeCodeSessions, sessionsRoot: roots.claudeSessions)
         ]
     }
 
@@ -661,6 +661,9 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
     let root: URL
     /// Claude Desktop's per-session metadata store; `nil` disables Desktop title enrichment.
     let desktopSessionsRoot: URL?
+    /// Claude Code's per-process session-state store (`~/.claude/sessions/<pid>.json`); `nil` disables
+    /// in-progress detection (e.g. in tests that don't exercise it).
+    let sessionsRoot: URL?
     /// Bump when the derived `SessionRecord` shape changes in a way not captured by file mtimes
     /// (e.g. resume-payload semantics), so a normal incremental refresh re-parses instead of
     /// reusing stale cached records. Avoids forcing users to delete/rebuild the catalog.
@@ -668,9 +671,52 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
     private let cache = ClaudeEntrypointCache()
     private static let logger = Logger(subsystem: "com.pisoni.AgentSessionManager", category: "ClaudeCodeAdapter")
 
-    init(root: URL, desktopSessionsRoot: URL? = nil) {
+    init(root: URL, desktopSessionsRoot: URL? = nil, sessionsRoot: URL? = nil) {
         self.root = root
         self.desktopSessionsRoot = desktopSessionsRoot
+        self.sessionsRoot = sessionsRoot
+    }
+
+    /// Canonical location of Claude Code's per-process session-state store. Defined here so both
+    /// `SourceRoots.live` and the ViewModel's live check share a single source of truth.
+    public static var liveSessionsRoot: URL {
+        AppPaths.homeDirectory.appendingPathComponent(".claude/sessions", isDirectory: true)
+    }
+
+    /// Scans `~/.claude/sessions/*.json` and returns the sessionIds whose recorded PID is still alive.
+    /// Claude Code writes one file per running process, mapping a live PID to its `sessionId`; this is
+    /// the analog of Copilot's `inuse.<PID>.lock` files. Only `cli`-entrypoint files are counted —
+    /// VS Code / Desktop liveness is not yet supported, so those sources stay not-in-progress.
+    public static func activeSessionIDs(in sessionsDirectory: URL) -> Set<String> {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: sessionsDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        var liveSessionIDs: Set<String> = []
+        for file in contents where file.pathExtension.lowercased() == "json" {
+            guard let data = try? Data(contentsOf: file),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sessionId = object["sessionId"] as? String,
+                  (object["entrypoint"] as? String) == "cli" else {
+                continue
+            }
+            // `pid` may decode as Int or Double depending on serialization; accept either.
+            let pid: Int32?
+            switch object["pid"] {
+            case let value as Int: pid = Int32(exactly: value)
+            case let value as Double: pid = Int32(exactly: value)
+            default: pid = nil
+            }
+            if let pid, kill(pid, 0) == 0 {
+                liveSessionIDs.insert(sessionId)
+            }
+        }
+        return liveSessionIDs
     }
 
     /// Title metadata Claude Desktop keeps for its "Code" tab sessions, keyed by `cliSessionId`.
@@ -782,6 +828,8 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
         ))?.filter(\.hasDirectoryPath) ?? []
 
         let desktopMetadata = loadDesktopMetadata()
+        // Live CLI sessions, computed once per scan. Membership marks a record in-progress (CLI only).
+        let activeSessionIDs = sessionsRoot.map { Self.activeSessionIDs(in: $0) } ?? []
         var candidates: [SessionScanCandidate] = []
         var seenPaths: Set<String> = []
 
@@ -807,26 +855,31 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
                 guard let source = Self.source(forEntrypoint: entrypoint) else { continue }
 
                 let sessionID = sessionFile.deletingPathExtension().lastPathComponent
+                // Only CLI sessions surface in-progress state today (see `activeSessionIDs`).
+                let isInProgress = source == .claudeCodeCLI && activeSessionIDs.contains(sessionID)
                 // Desktop sessions carry their authoritative title in the Desktop metadata store;
                 // fold its path into the fingerprint so title changes there trigger a re-index.
                 let desktopMeta = source == .claudeDesktop ? desktopMetadata[sessionID] : nil
+                // Fold liveness into the fingerprint (as Copilot does) so a background refresh
+                // re-indexes the record when its in-progress state flips.
                 let fingerprint = combinedFingerprint(
                     paths: [sessionFile.path, desktopMeta?.metadataPath],
-                    values: [source.rawValue, Self.recordSchemaVersion]
+                    values: [source.rawValue, Self.recordSchemaVersion, isInProgress ? "active" : "idle"]
                 )
 
                 candidates.append(
                     SessionScanCandidate(
                         id: "\(source.rawValue)::\(sessionID)",
                         fingerprint: fingerprint,
-                        isInProgress: false,
+                        isInProgress: isInProgress,
                         loadRecord: {
                             try Self.loadRecord(
                                 sessionFile: sessionFile,
                                 source: source,
                                 sessionId: sessionID,
                                 fingerprint: fingerprint,
-                                desktopMeta: desktopMeta
+                                desktopMeta: desktopMeta,
+                                isInProgress: isInProgress
                             )
                         }
                     )
@@ -910,7 +963,8 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
         source: SessionSource,
         sessionId: String,
         fingerprint: String,
-        desktopMeta: DesktopSessionMeta?
+        desktopMeta: DesktopSessionMeta?,
+        isInProgress: Bool = false
     ) throws -> SessionRecord? {
         let preview = try TranscriptPreviewExtractor.extractClaudeCodePreview(from: sessionFile)
         guard preview.firstUser != nil || preview.firstAssistant != nil else { return nil }
@@ -975,7 +1029,7 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
             resumeKind: resumeKind,
             resumePayload: resumePayload,
             isNewtonProject: false,
-            isInProgress: false
+            isInProgress: isInProgress
         )
     }
 }

@@ -461,4 +461,124 @@ final class ClaudeCodeAdapterTests: XCTestCase {
             realPlan.standardizedFileURL.path
         )
     }
+
+    // MARK: - In-progress detection
+
+    /// Creates an empty `~/.claude/sessions`-style directory alongside the projects root.
+    private func makeSessionsDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Writes a `<pid>.json` session-state file mirroring what Claude Code writes per process.
+    private func writeSessionState(
+        dir: URL,
+        pid: Int32,
+        sessionId: String,
+        entrypoint: String = "cli",
+        status: String = "busy"
+    ) throws {
+        let object: [String: Any] = [
+            "pid": Int(pid),
+            "sessionId": sessionId,
+            "entrypoint": entrypoint,
+            "status": status
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        try data.write(to: dir.appendingPathComponent("\(pid).json"))
+    }
+
+    func testCLISessionWithLivePIDIsInProgress() throws {
+        let root = try makeRoot()
+        let sessionsDir = try makeSessionsDir()
+        let sessionId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: sessionId,
+            records: [
+                userRecord(entrypoint: "cli", text: "Fix the build."),
+                assistantRecord(content: [["type": "text", "text": "On it."]])
+            ]
+        )
+        // The test process's own PID is guaranteed alive.
+        try writeSessionState(dir: sessionsDir, pid: ProcessInfo.processInfo.processIdentifier, sessionId: sessionId)
+
+        let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root, sessionsRoot: sessionsDir).discover().first)
+        XCTAssertEqual(record.source, .claudeCodeCLI)
+        XCTAssertTrue(record.isInProgress)
+    }
+
+    func testCLISessionWithDeadPIDIsNotInProgress() throws {
+        let root = try makeRoot()
+        let sessionsDir = try makeSessionsDir()
+        let sessionId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton3",
+            sessionId: sessionId,
+            records: [
+                userRecord(entrypoint: "cli", text: "Fix the build."),
+                assistantRecord(content: [["type": "text", "text": "On it."]])
+            ]
+        )
+        // A PID well beyond the macOS pid_max ceiling: no live process can hold it.
+        try writeSessionState(dir: sessionsDir, pid: 999_999, sessionId: sessionId)
+
+        let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root, sessionsRoot: sessionsDir).discover().first)
+        XCTAssertFalse(record.isInProgress)
+    }
+
+    func testVSCodeSessionIsNeverInProgressEvenWithLivePID() throws {
+        let root = try makeRoot()
+        let sessionsDir = try makeSessionsDir()
+        let sessionId = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        try writeSession(
+            root: root,
+            projectFolder: "-Users-pisoni-repos-newton2",
+            sessionId: sessionId,
+            records: [
+                userRecord(entrypoint: "claude-vscode", text: "Explain this.", cwd: "/Users/pisoni/repos/newton2"),
+                assistantRecord(content: [["type": "text", "text": "Sure."]], cwd: "/Users/pisoni/repos/newton2")
+            ]
+        )
+        // Even a live PID recorded with a non-cli entrypoint must not mark VS Code sessions in-progress.
+        try writeSessionState(
+            dir: sessionsDir,
+            pid: ProcessInfo.processInfo.processIdentifier,
+            sessionId: sessionId,
+            entrypoint: "claude-vscode"
+        )
+
+        let record = try XCTUnwrap(try ClaudeCodeAdapter(root: root, sessionsRoot: sessionsDir).discover().first)
+        XCTAssertEqual(record.source, .claudeCodeVSCode)
+        XCTAssertFalse(record.isInProgress)
+    }
+
+    func testActiveSessionIDsReturnsLiveCLISessionsOnly() throws {
+        let sessionsDir = try makeSessionsDir()
+        let liveCLI = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        let deadCLI = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        let liveVSCode = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        // Distinct live PIDs (real Claude Code keys each state file by a unique process id):
+        // this process and its parent (the test runner) are both alive during the test.
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let parentPID = getppid()
+        try writeSessionState(dir: sessionsDir, pid: ownPID, sessionId: liveCLI, entrypoint: "cli")
+        try writeSessionState(dir: sessionsDir, pid: 999_999, sessionId: deadCLI, entrypoint: "cli")
+        try writeSessionState(dir: sessionsDir, pid: parentPID, sessionId: liveVSCode, entrypoint: "claude-vscode")
+
+        let active = ClaudeCodeAdapter.activeSessionIDs(in: sessionsDir)
+        XCTAssertEqual(active, [liveCLI])
+    }
+
+    func testActiveSessionIDsIsEmptyWhenDirectoryMissing() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+        XCTAssertTrue(ClaudeCodeAdapter.activeSessionIDs(in: missing).isEmpty)
+    }
 }

@@ -372,7 +372,8 @@ final class SessionCatalogRefreshTests: XCTestCase {
             cursorGlobalStorage: globalStorageRoot,
             vscodeWorkspaceStorage: vscodeRoot,
             claudeProjects: directory.appendingPathComponent("claude-projects-empty", isDirectory: true),
-            claudeCodeSessions: directory.appendingPathComponent("claude-code-sessions-empty", isDirectory: true)
+            claudeCodeSessions: directory.appendingPathComponent("claude-code-sessions-empty", isDirectory: true),
+            claudeSessions: directory.appendingPathComponent("claude-sessions-empty", isDirectory: true)
         )
 
         let rebuildDatabaseURL = directory.appendingPathComponent("catalog-rebuild.sqlite3")
@@ -490,7 +491,8 @@ final class SessionCatalogRefreshTests: XCTestCase {
                 cursorGlobalStorage: cursorGlobalStorageRoot,
                 vscodeWorkspaceStorage: vscodeRoot,
                 claudeProjects: directory.appendingPathComponent("claude-projects-empty", isDirectory: true),
-                claudeCodeSessions: directory.appendingPathComponent("claude-code-sessions-empty", isDirectory: true)
+                claudeCodeSessions: directory.appendingPathComponent("claude-code-sessions-empty", isDirectory: true),
+                claudeSessions: directory.appendingPathComponent("claude-sessions-empty", isDirectory: true)
             )
         )
 

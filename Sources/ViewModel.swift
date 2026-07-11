@@ -181,6 +181,8 @@ final class SessionBrowserViewModel: ObservableObject {
     /// Applies in-progress state to all sessions by checking lock files / PIDs.
     private func applyInProgressStateToAll() {
         var vscodeCaches: [String: Set<String>] = [:]
+        // The Claude CLI session-state store is a single global directory, so scan it at most once.
+        var claudeActiveIDs: Set<String>?
         for i in allSessions.indices {
             let session = allSessions[i]
             let isActive: Bool
@@ -197,7 +199,12 @@ final class SessionBrowserViewModel: ObservableObject {
                     vscodeCaches[cacheKey] = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDir)
                 }
                 isActive = vscodeCaches[cacheKey]!.contains(session.sourceSessionId)
-            case .cursor, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+            case .claudeCodeCLI:
+                if claudeActiveIDs == nil {
+                    claudeActiveIDs = ClaudeCodeAdapter.activeSessionIDs(in: ClaudeCodeAdapter.liveSessionsRoot)
+                }
+                isActive = claudeActiveIDs!.contains(session.sourceSessionId)
+            case .cursor, .claudeCodeVSCode, .claudeDesktop:
                 continue
             }
             if isActive != session.isInProgress {
@@ -231,7 +238,10 @@ final class SessionBrowserViewModel: ObservableObject {
             let workspaceDirectory = URL(fileURLWithPath: metadataPath).deletingLastPathComponent()
             let activeIDs = VSCodeCopilotAdapter.activeSessionIDs(in: workspaceDirectory)
             return activeIDs.contains(session.sourceSessionId)
-        case .cursor, .claudeCodeCLI, .claudeCodeVSCode, .claudeDesktop:
+        case .claudeCodeCLI:
+            let activeIDs = ClaudeCodeAdapter.activeSessionIDs(in: ClaudeCodeAdapter.liveSessionsRoot)
+            return activeIDs.contains(session.sourceSessionId)
+        case .cursor, .claudeCodeVSCode, .claudeDesktop:
             return false
         }
     }

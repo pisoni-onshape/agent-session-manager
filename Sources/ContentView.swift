@@ -885,6 +885,13 @@ private struct SessionDetailView: View {
     @State private var showInProgressResumeWarning = false
     @FocusState private var titleFieldFocused: Bool
 
+    /// True when resuming this session would spawn a fresh terminal-based resume that could conflict
+    /// with a still-live session. Applies to Copilot Connect and Claude CLI resumes; drives the orange
+    /// primary-button tint and the "Session Currently Active" confirmation.
+    private var warnsOnInProgressResume: Bool {
+        session.isInProgress && (session.resumeKind == .copilotConnect || session.resumeKind == .claudeResume)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -1014,7 +1021,7 @@ private struct SessionDetailView: View {
     private var primaryActionButtons: some View {
         HStack(spacing: 10) {
             Button {
-                if session.isInProgress && session.resumeKind == .copilotConnect {
+                if warnsOnInProgressResume {
                     showInProgressResumeWarning = true
                 } else {
                     viewModel.performPrimaryAction(for: session)
@@ -1023,7 +1030,7 @@ private struct SessionDetailView: View {
                 primaryActionLabel
             }
             .buttonStyle(.borderedProminent)
-            .tint(session.isInProgress && session.resumeKind == .copilotConnect ? .orange : nil)
+            .tint(warnsOnInProgressResume ? .orange : nil)
             .help(primaryActionHelpText)
             .alert("Session Currently Active", isPresented: $showInProgressResumeWarning) {
                 Button("Resume Anyway", role: .destructive) {
