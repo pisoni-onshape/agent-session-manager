@@ -147,6 +147,73 @@ final class SQLiteStoreTests: XCTestCase {
         }
     }
 
+    func testCatalogExclusionsPersistAcrossStoreReloads() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let exclusions: [SessionCatalogExclusion] = [
+            SessionCatalogExclusion.session(
+                SessionRecord(
+                    source: .copilotCLI,
+                    sourceSessionId: "session-1",
+                    workspacePath: "/Users/pisoni/repos/newton5",
+                    projectName: "newton5",
+                    branch: "main",
+                    conversationModel: nil,
+                    startedAt: nil,
+                    updatedAt: nil,
+                    title: "Session 1",
+                    summary: nil,
+                    firstUserPreview: nil,
+                    firstAssistantPreview: nil,
+                    rawTranscriptPath: nil,
+                    rawMetadataPath: nil,
+                    relatedPlanPath: nil,
+                    fingerprint: "v1",
+                    resumeKind: .copilotConnect,
+                    resumePayload: "session-1",
+                    isNewtonProject: true
+                )
+            ),
+            SessionCatalogExclusion.project(named: "newton6"),
+            SessionCatalogExclusion.branch("feature/hide-me", inProject: "newton7")
+        ]
+
+        do {
+            let store = try SQLiteSessionStore(databaseURL: databaseURL)
+            try exclusions.forEach(store.upsertExclusion)
+        }
+
+        do {
+            let reopenedStore = try SQLiteSessionStore(databaseURL: databaseURL)
+            let loaded = try reopenedStore.fetchExclusions()
+            XCTAssertEqual(Set(loaded.map(\.id)), Set(exclusions.map(\.id)))
+        }
+    }
+
+    func testRemoveSessionsDeletesTranscriptEntriesForMatchingIDs() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        let keep = makeRecord(sessionID: "keep", title: "Keep", fingerprint: "v1")
+        let remove = makeRecord(sessionID: "remove", title: "Remove", fingerprint: "v1")
+        try store.replaceAll(
+            records: [keep, remove],
+            transcriptEntriesBySessionID: [
+                keep.id: [TranscriptIndexEntry(sessionRecordID: keep.id, entryIndex: 0, text: "keep me")],
+                remove.id: [TranscriptIndexEntry(sessionRecordID: remove.id, entryIndex: 0, text: "remove me")]
+            ]
+        )
+
+        try store.removeSessions(withIDs: [remove.id])
+
+        XCTAssertEqual(try store.fetchAll().map(\.id), [keep.id])
+        XCTAssertEqual(try store.searchTranscriptEntries(sessionIDs: [keep.id, remove.id], query: "remove").count, 0)
+    }
+
     func testSQLiteContentionPolicyClassifiesBusyAndLockedCodesAsTransient() {
         let extendedBusyCode = SQLITE_BUSY | Int32(1 << 8)
 

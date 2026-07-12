@@ -3,15 +3,18 @@ import AgentSessionManagerCore
 
 struct SettingsView: View {
     @ObservedObject var settings: AppSettingsStore
+    @ObservedObject var viewModel: SessionBrowserViewModel
     @FocusState private var focusedField: Field?
     @State private var newtonReposRootPathDraft: String
+    @State private var exclusionSearchText = ""
 
     private enum Field: Hashable {
         case newtonReposRootPath
     }
 
-    init(settings: AppSettingsStore) {
+    init(settings: AppSettingsStore, viewModel: SessionBrowserViewModel) {
         self.settings = settings
+        self.viewModel = viewModel
         _newtonReposRootPathDraft = State(initialValue: settings.newtonReposRootPath)
     }
 
@@ -68,6 +71,46 @@ struct SettingsView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    Text("Exclusions")
+                        .font(.headline)
+
+                    TextField("Search excluded sessions, projects, and branches", text: $exclusionSearchText)
+                        .textFieldStyle(.roundedBorder)
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ExclusionListGroup(
+                                title: "Sessions",
+                                exclusions: filteredExclusions(viewModel.sessionExclusions),
+                                emptyText: "No excluded sessions.",
+                                onRestore: viewModel.restoreExclusion
+                            )
+                            ExclusionListGroup(
+                                title: "Projects",
+                                exclusions: filteredExclusions(viewModel.projectExclusions),
+                                emptyText: "No excluded projects.",
+                                onRestore: viewModel.restoreExclusion
+                            )
+                            ExclusionListGroup(
+                                title: "Branches",
+                                exclusions: filteredExclusions(viewModel.branchExclusions),
+                                emptyText: "No excluded branches.",
+                                onRestore: viewModel.restoreExclusion
+                            )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 250)
+
+                    Text("Re-including an item restores it on the next refresh. Excluding only affects Agent Session Manager - it never deletes files from disk.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Auto Session Refresh") {
@@ -116,8 +159,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
-        .frame(width: 620)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 720, height: 760)
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
         }
@@ -137,5 +179,60 @@ struct SettingsView: View {
     private func commitNewtonReposRootPath() {
         settings.setNewtonReposRootPath(newtonReposRootPathDraft)
         newtonReposRootPathDraft = settings.newtonReposRootPath
+    }
+
+    private func filteredExclusions(_ exclusions: [SessionCatalogExclusion]) -> [SessionCatalogExclusion] {
+        let query = exclusionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return exclusions }
+
+        return exclusions.filter { exclusion in
+            exclusion.displayTitle.localizedCaseInsensitiveContains(query)
+                || exclusion.detailText.localizedCaseInsensitiveContains(query)
+                || exclusion.kind.displayName.localizedCaseInsensitiveContains(query)
+        }
+    }
+}
+
+private struct ExclusionListGroup: View {
+    let title: String
+    let exclusions: [SessionCatalogExclusion]
+    let emptyText: String
+    let onRestore: (SessionCatalogExclusion) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+
+            if exclusions.isEmpty {
+                Text(emptyText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(exclusions) { exclusion in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(exclusion.displayTitle)
+                                .font(.callout.weight(.semibold))
+                            Text(exclusion.detailText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Button("Re-include") {
+                            onRestore(exclusion)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.secondary.opacity(0.08))
+                    )
+                }
+            }
+        }
     }
 }

@@ -291,23 +291,15 @@ struct ContentView: View {
             }
 
             HStack(spacing: 10) {
-                FilterMenuChip(
+                SearchableFilterChip(
                     title: "Project",
                     valueText: viewModel.filters.selectedProject == SessionFilterState.allProjectsToken ? "All Projects" : viewModel.filters.selectedProject,
                     systemImage: "folder",
                     isActive: viewModel.filters.hasCustomProjectSelection,
                     prominence: .expanded,
-                    items: viewModel.availableProjects.map { project in
-                        let isDefault = project == SessionFilterState.allProjectsToken
-                        let title = isDefault ? "All Projects" : project
-                        return FilterMenuItem(
-                            id: project,
-                            title: title,
-                            isSelected: viewModel.filters.selectedProject == project,
-                            highlightsSelection: !isDefault,
-                            action: { viewModel.filters.selectedProject = project }
-                        )
-                    }
+                    items: viewModel.availableProjectOptions,
+                    selectedItemID: viewModel.filters.selectedProject,
+                    onSelect: { viewModel.filters.selectedProject = $0 }
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -316,23 +308,15 @@ struct ContentView: View {
                     .fixedSize()
             }
 
-            FilterMenuChip(
+            SearchableFilterChip(
                 title: "Branch",
                 valueText: viewModel.filters.selectedBranch == SessionFilterState.allBranchesToken ? "All Branches" : viewModel.filters.selectedBranch,
                 systemImage: "arrow.triangle.branch",
                 isActive: viewModel.filters.hasCustomBranchSelection,
                 prominence: .expanded,
-                items: viewModel.availableBranches.map { branch in
-                    let isDefault = branch == SessionFilterState.allBranchesToken
-                    let title = isDefault ? "All Branches" : branch
-                    return FilterMenuItem(
-                        id: branch,
-                        title: title,
-                        isSelected: viewModel.filters.selectedBranch == branch,
-                        highlightsSelection: !isDefault,
-                        action: { viewModel.filters.selectedBranch = branch }
-                    )
-                }
+                items: viewModel.availableBranchOptions,
+                selectedItemID: viewModel.filters.selectedBranch,
+                onSelect: { viewModel.filters.selectedBranch = $0 }
             )
 
             HStack(spacing: 10) {
@@ -872,6 +856,13 @@ private struct SearchMatchPillButton: View {
     }
 }
 
+private struct PendingExclusionAction: Identifiable {
+    let id = UUID()
+    let exclusion: SessionCatalogExclusion
+    let title: String
+    let message: String
+}
+
 private struct SessionDetailView: View {
     let session: SessionRecord
     @ObservedObject var viewModel: SessionBrowserViewModel
@@ -883,6 +874,7 @@ private struct SessionDetailView: View {
     @State private var isEditingTitle = false
     @State private var editedTitle = ""
     @State private var showInProgressResumeWarning = false
+    @State private var pendingExclusion: PendingExclusionAction?
     @FocusState private var titleFieldFocused: Bool
 
     /// True when resuming this session would spawn a fresh terminal-based resume that could conflict
@@ -901,6 +893,16 @@ private struct SessionDetailView: View {
                 pathSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .alert(item: $pendingExclusion) { pendingExclusion in
+            Alert(
+                title: Text(pendingExclusion.title),
+                message: Text(pendingExclusion.message),
+                primaryButton: .destructive(Text("Exclude")) {
+                    viewModel.exclude(pendingExclusion.exclusion)
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 
@@ -1193,15 +1195,40 @@ private struct SessionDetailView: View {
     }
 
     private var metadataSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let branchExcludeAction: (() -> Void)? = session.branch == nil ? nil : { queueBranchExclusion() }
+        return VStack(alignment: .leading, spacing: 14) {
             Text("Metadata")
                 .font(.headline)
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
                 metadataRow(title: "Source", value: session.source.displayName, copyValue: nil, showsCopyButton: false)
-                metadataRow(title: "Session ID", value: session.sourceSessionId, copyValue: session.sourceSessionId)
-                metadataRow(title: "Project", value: session.projectName, copyValue: session.projectName)
-                metadataRow(title: "Workspace", value: session.workspacePath ?? "—", copyValue: session.workspacePath)
-                metadataRow(title: "Branch", value: session.branch ?? "—", copyValue: session.branch)
+                metadataRow(
+                    title: "Session ID",
+                    value: session.sourceSessionId,
+                    copyValue: session.sourceSessionId,
+                    excludeLabel: "Exclude this session",
+                    excludeAction: { queueSessionExclusion() }
+                )
+                metadataRow(
+                    title: "Project",
+                    value: session.projectName,
+                    copyValue: session.projectName,
+                    excludeLabel: "Exclude this project",
+                    excludeAction: { queueProjectExclusion() }
+                )
+                metadataRow(
+                    title: "Workspace",
+                    value: session.workspacePath ?? "—",
+                    copyValue: session.workspacePath,
+                    excludeLabel: "Exclude this project",
+                    excludeAction: { queueProjectExclusion() }
+                )
+                metadataRow(
+                    title: "Branch",
+                    value: session.branch ?? "—",
+                    copyValue: session.branch,
+                    excludeLabel: session.branch == nil ? nil : "Exclude this branch",
+                    excludeAction: branchExcludeAction
+                )
                 metadataRow(title: "Model", value: session.conversationModel ?? "—", copyValue: nil, showsCopyButton: false)
                 metadataRow(
                     title: "Started",
@@ -1253,35 +1280,83 @@ private struct SessionDetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func metadataRow(title: String, value: String, copyValue: String?, showsCopyButton: Bool = true) -> some View {
-        GridRow {
-            Text(title)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 10) {
-                if showsCopyButton {
-                    CopyValueButton(
-                        value: copyValue,
-                        label: "Copy \(title)"
-                    ) {
-                        if let copyValue {
-                            viewModel.copyToClipboard(copyValue)
-                        }
-                    }
-                } else {
-                    Color.clear
-                        .frame(width: CopyValueButton.controlSize, height: CopyValueButton.controlSize)
-                        .accessibilityHidden(true)
-                }
+    private func metadataRow(
+        title: String,
+        value: String,
+        copyValue: String?,
+        showsCopyButton: Bool = true,
+        excludeLabel: String? = nil,
+        excludeAction: (() -> Void)? = nil
+    ) -> AnyView {
+        AnyView(
+            HStack(alignment: .top, spacing: 14) {
+                Text(title)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 88, alignment: .leading)
 
-                SelectableTextLabel(
-                    text: value,
-                    font: .preferredFont(forTextStyle: .body),
-                    textColor: .labelColor
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 10) {
+                    if showsCopyButton {
+                        CopyValueButton(
+                            value: copyValue,
+                            label: "Copy \(title)"
+                        ) {
+                            if let copyValue {
+                                viewModel.copyToClipboard(copyValue)
+                            }
+                        }
+                    } else {
+                        Color.clear
+                            .frame(width: CopyValueButton.controlSize, height: CopyValueButton.controlSize)
+                            .accessibilityHidden(true)
+                    }
+
+                    if let excludeAction, let excludeLabel {
+                        ExcludeValueButton(label: excludeLabel, action: excludeAction)
+                    } else {
+                        Color.clear
+                            .frame(width: ExcludeValueButton.controlSize, height: ExcludeValueButton.controlSize)
+                            .accessibilityHidden(true)
+                    }
+
+                    SelectableTextLabel(
+                        text: value,
+                        font: .preferredFont(forTextStyle: .body),
+                        textColor: .labelColor
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-        }
+        )
+    }
+
+    private func queueSessionExclusion() {
+        let exclusion = SessionCatalogExclusion.session(session)
+        pendingExclusion = PendingExclusionAction(
+            exclusion: exclusion,
+            title: "Exclude This Session?",
+            message: "This removes only this session from Agent Session Manager. Files on disk stay untouched."
+        )
+    }
+
+    private func queueProjectExclusion() {
+        let exclusion = SessionCatalogExclusion.project(named: session.projectName)
+        let affectedCount = viewModel.matchingSessionCount(for: exclusion)
+        pendingExclusion = PendingExclusionAction(
+            exclusion: exclusion,
+            title: "Exclude This Project?",
+            message: "This removes \(affectedCount) \(affectedCount == 1 ? "session" : "sessions") from Agent Session Manager and keeps the project hidden on future refreshes. Files on disk stay untouched."
+        )
+    }
+
+    private func queueBranchExclusion() {
+        guard let branch = session.branch else { return }
+        let exclusion = SessionCatalogExclusion.branch(branch, inProject: session.projectName)
+        let affectedCount = viewModel.matchingSessionCount(for: exclusion)
+        pendingExclusion = PendingExclusionAction(
+            exclusion: exclusion,
+            title: "Exclude This Branch?",
+            message: "This removes \(affectedCount) \(affectedCount == 1 ? "session" : "sessions") from the \(session.projectName) project inside Agent Session Manager and keeps that branch hidden on future refreshes. Files on disk stay untouched."
+        )
     }
 
     private var canRevealRawFile: Bool {
@@ -1315,6 +1390,180 @@ private struct FilterMenuItem: Identifiable {
 private enum FilterMenuChipProminence {
     case compact
     case expanded
+}
+
+private struct SearchableFilterChip: View {
+    let title: String
+    let valueText: String
+    let systemImage: String
+    let isActive: Bool
+    var prominence: FilterMenuChipProminence = .compact
+    let items: [SessionFilterOption]
+    let selectedItemID: String
+    let onSelect: (String) -> Void
+
+    @State private var isPresented = false
+    @State private var query = ""
+
+    var body: some View {
+        Button {
+            query = ""
+            isPresented = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .imageScale(.small)
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+
+                VStack(alignment: .leading, spacing: prominence == .expanded ? 2 : 1) {
+                    Text(valueText)
+                        .font(valueFont)
+                        .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Text(title)
+                        .font(titleFont)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, verticalPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isActive ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.08))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isActive ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06))
+            }
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField("Search \(title.lowercased())", text: $query)
+                    .textFieldStyle(.roundedBorder)
+
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        if let defaultItem = items.first {
+                            optionButton(defaultItem)
+                            Divider()
+                                .padding(.vertical, 4)
+                        }
+
+                        let secondaryItems = filteredItems.dropFirst()
+                        if secondaryItems.isEmpty {
+                            Text("No matching \(title.lowercased())")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 16)
+                        } else {
+                            ForEach(Array(secondaryItems)) { item in
+                                optionButton(item)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(14)
+            .frame(width: 340, height: 320)
+        }
+    }
+
+    private var filteredItems: [SessionFilterOption] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return items }
+        guard let defaultItem = items.first else { return [] }
+
+        let matchingItems = items.dropFirst().filter {
+            $0.title.localizedCaseInsensitiveContains(normalizedQuery)
+        }
+        return [defaultItem] + matchingItems
+    }
+
+    @ViewBuilder
+    private func optionButton(_ item: SessionFilterOption) -> some View {
+        Button {
+            onSelect(item.id)
+            query = ""
+            isPresented = false
+        } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .foregroundStyle(item.id == selectedItemID && item.id != items.first?.id ? Color.accentColor : Color.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if item.id != items.first?.id {
+                        Text("\(item.count) \(item.count == 1 ? "session" : "sessions")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                if item.id == items.first?.id {
+                    Text("\(item.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if item.id == selectedItemID {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(item.id == items.first?.id ? Color.secondary : Color.accentColor)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(item.id == selectedItemID ? Color.accentColor.opacity(0.12) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var valueFont: Font {
+        switch prominence {
+        case .compact:
+            return .callout.weight(.semibold)
+        case .expanded:
+            return .body.weight(.semibold)
+        }
+    }
+
+    private var titleFont: Font {
+        switch prominence {
+        case .compact:
+            return .caption2
+        case .expanded:
+            return .caption
+        }
+    }
+
+    private var verticalPadding: CGFloat {
+        switch prominence {
+        case .compact:
+            return 8
+        case .expanded:
+            return 10
+        }
+    }
 }
 
 private struct FilterMenuChip: View {
@@ -1445,6 +1694,26 @@ private struct CopyValueButton: View {
         }
         .buttonStyle(.plain)
         .disabled(value == nil)
+        .help(label)
+        .pointingHandCursor()
+    }
+}
+
+private struct ExcludeValueButton: View {
+    static let controlSize: CGFloat = 24
+
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "eye.slash")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.orange)
+                .frame(width: Self.controlSize, height: Self.controlSize)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
         .help(label)
         .pointingHandCursor()
     }

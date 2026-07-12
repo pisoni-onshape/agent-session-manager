@@ -286,6 +286,118 @@ public struct SessionRecord: Identifiable, Equatable, Sendable {
     }
 }
 
+public enum SessionCatalogExclusionKind: String, Codable, CaseIterable, Identifiable, Sendable {
+    case session
+    case project
+    case branch
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .session:
+            return "Session"
+        case .project:
+            return "Project"
+        case .branch:
+            return "Branch"
+        }
+    }
+}
+
+public struct SessionCatalogExclusion: Codable, Equatable, Hashable, Identifiable, Sendable {
+    public let kind: SessionCatalogExclusionKind
+    public let source: SessionSource?
+    public let sourceSessionId: String?
+    public let projectName: String?
+    public let branch: String?
+    public let createdAt: Date
+
+    public init(
+        kind: SessionCatalogExclusionKind,
+        source: SessionSource? = nil,
+        sourceSessionId: String? = nil,
+        projectName: String? = nil,
+        branch: String? = nil,
+        createdAt: Date = Date()
+    ) {
+        self.kind = kind
+        self.source = source
+        self.sourceSessionId = sourceSessionId
+        self.projectName = projectName
+        self.branch = branch
+        self.createdAt = createdAt
+    }
+
+    public var id: String {
+        switch kind {
+        case .session:
+            return "session::\(source?.rawValue ?? "unknown")::\(sourceSessionId ?? "")"
+        case .project:
+            return "project::\(projectName ?? "")"
+        case .branch:
+            return "branch::\(projectName ?? "")::\(branch ?? "")"
+        }
+    }
+
+    public var displayTitle: String {
+        switch kind {
+        case .session:
+            return sourceSessionId ?? "Unknown Session"
+        case .project:
+            return projectName ?? "Unknown Project"
+        case .branch:
+            return branch ?? "Unknown Branch"
+        }
+    }
+
+    public var detailText: String {
+        switch kind {
+        case .session:
+            let sourceText = source?.displayName ?? "Unknown Source"
+            if let projectName {
+                return "\(sourceText) - \(projectName)"
+            }
+            return sourceText
+        case .project:
+            return "All sessions in this project stay hidden until re-included."
+        case .branch:
+            if let projectName {
+                return "\(projectName) only"
+            }
+            return "Project-scoped branch exclusion"
+        }
+    }
+
+    public func matches(record: SessionRecord) -> Bool {
+        switch kind {
+        case .session:
+            return record.source == source && record.sourceSessionId == sourceSessionId
+        case .project:
+            return record.projectName == projectName
+        case .branch:
+            return record.projectName == projectName && record.branch == branch
+        }
+    }
+
+    public static func session(_ record: SessionRecord) -> SessionCatalogExclusion {
+        SessionCatalogExclusion(
+            kind: .session,
+            source: record.source,
+            sourceSessionId: record.sourceSessionId,
+            projectName: record.projectName
+        )
+    }
+
+    public static func project(named projectName: String) -> SessionCatalogExclusion {
+        SessionCatalogExclusion(kind: .project, projectName: projectName)
+    }
+
+    public static func branch(_ branch: String, inProject projectName: String) -> SessionCatalogExclusion {
+        SessionCatalogExclusion(kind: .branch, projectName: projectName, branch: branch)
+    }
+}
+
 public enum SessionSearchField: String, CaseIterable, Sendable {
     case title
     case project

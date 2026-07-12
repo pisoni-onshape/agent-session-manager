@@ -46,6 +46,24 @@ private final class SessionCatalogController: @unchecked Sendable {
         }
     }
 
+    func loadExclusions() async throws -> [SessionCatalogExclusion] {
+        try await run { catalog in
+            try catalog.fetchExclusions()
+        }
+    }
+
+    func addExclusion(_ exclusion: SessionCatalogExclusion) async throws {
+        try await run { catalog in
+            try catalog.addExclusion(exclusion)
+        }
+    }
+
+    func removeExclusion(id: String) async throws {
+        try await run { catalog in
+            try catalog.removeExclusion(id: id)
+        }
+    }
+
     func reclassifySessions(_ records: [SessionRecord]) async -> [SessionRecord] {
         await withCheckedContinuation { continuation in
             queue.async {
@@ -81,10 +99,17 @@ private final class SessionCatalogController: @unchecked Sendable {
     }
 }
 
+struct SessionFilterOption: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let count: Int
+}
+
 @MainActor
 final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var allSessions: [SessionRecord] = []
     @Published private(set) var starredSessionIDs: Set<String> = []
+    @Published private(set) var exclusions: [SessionCatalogExclusion] = []
     @Published var filters = SessionFilterState() {
         didSet {
             scheduleSearch()
@@ -141,6 +166,7 @@ final class SessionBrowserViewModel: ObservableObject {
         }
         do {
             starredSessionIDs = try await catalogController.starredSessionIDs()
+            exclusions = try await catalogController.loadExclusions()
             let persisted = try await catalogController.loadPersistedSessions()
             applySessions(persisted)
             applyInProgressStateToAll()
@@ -325,11 +351,19 @@ final class SessionBrowserViewModel: ObservableObject {
     }
 
     var availableProjects: [String] {
-        [SessionFilterState.allProjectsToken] + Array(Set(allSessions.map(\.projectName))).sorted()
+        availableProjectOptions.map(\.id)
     }
 
     var availableBranches: [String] {
-        [SessionFilterState.allBranchesToken] + Array(Set(allSessions.compactMap(\.branch))).sorted()
+        availableBranchOptions.map(\.id)
+    }
+
+    var availableProjectOptions: [SessionFilterOption] {
+        makeProjectOptions(for: filters)
+    }
+
+    var availableBranchOptions: [SessionFilterOption] {
+        makeBranchOptions(for: filters)
     }
 
     var sessionCountSummary: String {
@@ -535,8 +569,53 @@ final class SessionBrowserViewModel: ObservableObject {
         }
     }
 
+    var sessionExclusions: [SessionCatalogExclusion] {
+        exclusions.filter { $0.kind == .session }
+    }
+
+    var projectExclusions: [SessionCatalogExclusion] {
+        exclusions.filter { $0.kind == .project }
+    }
+
+    var branchExclusions: [SessionCatalogExclusion] {
+        exclusions.filter { $0.kind == .branch }
+    }
+
+    func matchingSessionCount(for exclusion: SessionCatalogExclusion) -> Int {
+        allSessions.filter { exclusion.matches(record: $0) }.count
+    }
+
+    func exclude(_ exclusion: SessionCatalogExclusion) {
+        Task {
+            do {
+                let controller = try catalogOrThrow()
+                try await controller.addExclusion(exclusion)
+                exclusions = try await controller.loadExclusions()
+                applySessions(allSessions.filter { !exclusion.matches(record: $0) })
+                errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func restoreExclusion(_ exclusion: SessionCatalogExclusion) {
+        Task {
+            do {
+                let controller = try catalogOrThrow()
+                try await controller.removeExclusion(id: exclusion.id)
+                exclusions = try await controller.loadExclusions()
+                await refreshSessions()
+                errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func applySessions(_ sessions: [SessionRecord]) {
         allSessions = sessions
+        normalizeFiltersAgainstAvailableOptions()
         if selectedSessionID == nil || !sessions.contains(where: { $0.id == selectedSessionID }) {
             selectedSessionID = sessions.first?.id
         }
@@ -558,6 +637,86 @@ final class SessionBrowserViewModel: ObservableObject {
 
     private var parsedSearchQuery: ParsedSessionSearchQuery {
         SessionSearchQueryParser.parse(filters.searchText)
+    }
+
+    private func normalizeFiltersAgainstAvailableOptions() {
+        var updatedFilters = filters
+        let availableProjectIDs = Set(makeProjectOptions(for: updatedFilters).map(\.id))
+        if !availableProjectIDs.contains(updatedFilters.selectedProject) {
+            updatedFilters.selectedProject = SessionFilterState.allProjectsToken
+        }
+
+        let availableBranchIDs = Set(makeBranchOptions(for: updatedFilters).map(\.id))
+        if !availableBranchIDs.contains(updatedFilters.selectedBranch) {
+            updatedFilters.selectedBranch = SessionFilterState.allBranchesToken
+        }
+
+        if updatedFilters != filters {
+            filters = updatedFilters
+        }
+    }
+
+    private func sessionsForProjectOptions() -> [SessionRecord] {
+        sessionsForFilterOptions(filters: filters, includeProjectSelection: false, includeBranchSelection: false)
+    }
+
+    private func sessionsForBranchOptions() -> [SessionRecord] {
+        sessionsForFilterOptions(filters: filters, includeProjectSelection: true, includeBranchSelection: false)
+    }
+
+    private func makeProjectOptions(for filters: SessionFilterState) -> [SessionFilterOption] {
+        let sessions = sessionsForFilterOptions(filters: filters, includeProjectSelection: false, includeBranchSelection: false)
+        let counts = Dictionary(grouping: sessions, by: \.projectName).mapValues(\.count)
+        let options = counts.keys.sorted().map { projectName in
+            SessionFilterOption(id: projectName, title: projectName, count: counts[projectName] ?? 0)
+        }
+        return [SessionFilterOption(id: SessionFilterState.allProjectsToken, title: "All Projects", count: sessions.count)] + options
+    }
+
+    private func makeBranchOptions(for filters: SessionFilterState) -> [SessionFilterOption] {
+        let sessions = sessionsForFilterOptions(filters: filters, includeProjectSelection: true, includeBranchSelection: false)
+        let counts = Dictionary(grouping: sessions.compactMap(\.branch), by: { $0 }).mapValues(\.count)
+        let options = counts.keys.sorted().map { branchName in
+            SessionFilterOption(id: branchName, title: branchName, count: counts[branchName] ?? 0)
+        }
+        return [SessionFilterOption(id: SessionFilterState.allBranchesToken, title: "All Branches", count: sessions.count)] + options
+    }
+
+    private func sessionsForFilterOptions(
+        filters: SessionFilterState,
+        includeProjectSelection: Bool,
+        includeBranchSelection: Bool
+    ) -> [SessionRecord] {
+        allSessions.filter { record in
+            if let source = filters.selectedSource, record.source != source {
+                return false
+            }
+            if includeProjectSelection,
+               filters.selectedProject != SessionFilterState.allProjectsToken,
+               record.projectName != filters.selectedProject {
+                return false
+            }
+            if includeBranchSelection,
+               filters.selectedBranch != SessionFilterState.allBranchesToken,
+               record.branch != filters.selectedBranch {
+                return false
+            }
+            switch filters.starFilter {
+            case .all:
+                break
+            case .starred:
+                guard starredSessionIDs.contains(record.id) else { return false }
+            case .unstarred:
+                guard !starredSessionIDs.contains(record.id) else { return false }
+            }
+            if filters.newtonOnly, !record.isNewtonProject {
+                return false
+            }
+            if filters.inProgressOnly, !record.isInProgress {
+                return false
+            }
+            return true
+        }
     }
 
     private func searchScopeSignature(for sessions: [SessionRecord]) -> String {

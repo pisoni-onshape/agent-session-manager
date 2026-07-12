@@ -279,6 +279,138 @@ final class SessionCatalogRefreshTests: XCTestCase {
         )
     }
 
+    func testProjectExclusionSkipsCandidateLoadDuringRefresh() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        try store.upsertExclusion(.project(named: "newton5"))
+
+        var parseCount = 0
+        let excludedRecord = try makeRecord(
+            sessionID: "excluded-project",
+            title: "Excluded project",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "This transcript should never be parsed."
+        )
+        let adapter = FakeSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: excludedRecord.id,
+                    fingerprint: excludedRecord.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: "newton5",
+                        branch: "main"
+                    ),
+                    loadRecord: {
+                        parseCount += 1
+                        return excludedRecord
+                    }
+                )
+            ]
+        )
+
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let refreshed = try catalog.refreshSessions()
+
+        XCTAssertEqual(parseCount, 0)
+        XCTAssertTrue(refreshed.isEmpty)
+        XCTAssertTrue(try store.fetchAll().isEmpty)
+    }
+
+    func testBranchExclusionOnlyRemovesMatchingProjectBranch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let store = try SQLiteSessionStore(databaseURL: databaseURL)
+        try store.upsertExclusion(.branch("feature/hide-me", inProject: "newton5"))
+
+        let baseExcluded = try makeRecord(
+            sessionID: "excluded-branch",
+            title: "Excluded branch",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Should be excluded."
+        )
+        let excluded = SessionRecord(
+            source: baseExcluded.source,
+            sourceSessionId: baseExcluded.sourceSessionId,
+            workspacePath: baseExcluded.workspacePath,
+            projectName: baseExcluded.projectName,
+            branch: "feature/hide-me",
+            conversationModel: baseExcluded.conversationModel,
+            startedAt: baseExcluded.startedAt,
+            updatedAt: baseExcluded.updatedAt,
+            title: baseExcluded.title,
+            summary: baseExcluded.summary,
+            firstUserPreview: baseExcluded.firstUserPreview,
+            firstAssistantPreview: baseExcluded.firstAssistantPreview,
+            rawTranscriptPath: baseExcluded.rawTranscriptPath,
+            rawMetadataPath: baseExcluded.rawMetadataPath,
+            relatedPlanPath: baseExcluded.relatedPlanPath,
+            fingerprint: baseExcluded.fingerprint,
+            resumeKind: baseExcluded.resumeKind,
+            resumePayload: baseExcluded.resumePayload,
+            isNewtonProject: baseExcluded.isNewtonProject
+        )
+        let kept = SessionRecord(
+            source: .copilotCLI,
+            sourceSessionId: "kept-branch",
+            workspacePath: excluded.workspacePath,
+            projectName: "newton6",
+            branch: "feature/hide-me",
+            conversationModel: excluded.conversationModel,
+            startedAt: excluded.startedAt,
+            updatedAt: excluded.updatedAt,
+            title: "Kept branch",
+            summary: excluded.summary,
+            firstUserPreview: excluded.firstUserPreview,
+            firstAssistantPreview: excluded.firstAssistantPreview,
+            rawTranscriptPath: excluded.rawTranscriptPath,
+            rawMetadataPath: excluded.rawMetadataPath,
+            relatedPlanPath: excluded.relatedPlanPath,
+            fingerprint: "v2",
+            resumeKind: excluded.resumeKind,
+            resumePayload: "kept-branch",
+            isNewtonProject: true
+        )
+
+        let adapter = FakeSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: excluded.id,
+                    fingerprint: excluded.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: excluded.projectName,
+                        branch: excluded.branch
+                    ),
+                    loadRecord: { excluded }
+                ),
+                SessionScanCandidate(
+                    id: kept.id,
+                    fingerprint: kept.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: kept.projectName,
+                        branch: kept.branch
+                    ),
+                    loadRecord: { kept }
+                )
+            ]
+        )
+
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let refreshed = try catalog.refreshSessions()
+
+        XCTAssertEqual(refreshed.map(\.id), [kept.id])
+        XCTAssertEqual(try store.fetchAll().map(\.id), [kept.id])
+    }
+
     func testCursorGlobalPlanLinkIsPersistedAndIndexedDuringRebuildAndRefresh() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

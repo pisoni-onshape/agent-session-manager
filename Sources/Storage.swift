@@ -263,6 +263,84 @@ final class SQLiteSessionStore {
         }
     }
 
+    func fetchExclusions() throws -> [SessionCatalogExclusion] {
+        let sql = """
+        SELECT kind, source, source_session_id, project_name, branch, created_at
+        FROM catalog_exclusions
+        ORDER BY kind ASC, project_name ASC, branch ASC, source_session_id ASC;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw prepareError()
+        }
+        defer { sqlite3_finalize(statement) }
+
+        var exclusions: [SessionCatalogExclusion] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let rawKind = string(from: statement, column: 0),
+                  let kind = SessionCatalogExclusionKind(rawValue: rawKind) else {
+                continue
+            }
+
+            exclusions.append(
+                SessionCatalogExclusion(
+                    kind: kind,
+                    source: string(from: statement, column: 1).flatMap(SessionSource.init(rawValue:)),
+                    sourceSessionId: string(from: statement, column: 2),
+                    projectName: string(from: statement, column: 3),
+                    branch: string(from: statement, column: 4),
+                    createdAt: ISO8601DateCoding.parse(string(from: statement, column: 5)) ?? .distantPast
+                )
+            )
+        }
+
+        return exclusions
+    }
+
+    func upsertExclusion(_ exclusion: SessionCatalogExclusion) throws {
+        let sql = """
+        INSERT INTO catalog_exclusions (
+            id,
+            kind,
+            source,
+            source_session_id,
+            project_name,
+            branch,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            kind = excluded.kind,
+            source = excluded.source,
+            source_session_id = excluded.source_session_id,
+            project_name = excluded.project_name,
+            branch = excluded.branch,
+            created_at = excluded.created_at;
+        """
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw prepareError()
+        }
+        defer { sqlite3_finalize(statement) }
+
+        bind(exclusion.id, to: statement, index: 1)
+        bind(exclusion.kind.rawValue, to: statement, index: 2)
+        bind(exclusion.source?.rawValue, to: statement, index: 3)
+        bind(exclusion.sourceSessionId, to: statement, index: 4)
+        bind(exclusion.projectName, to: statement, index: 5)
+        bind(exclusion.branch, to: statement, index: 6)
+        bind(ISO8601DateCoding.string(exclusion.createdAt), to: statement, index: 7)
+
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw stepError()
+        }
+    }
+
+    func removeExclusion(id: String) throws {
+        try deleteRecords(withIDs: [id], from: "catalog_exclusions", idColumn: "id")
+    }
+
     func updateTitle(for sessionID: String, newTitle: String) throws {
         let sql = "UPDATE sessions SET title = ? WHERE id = ?;"
         var statement: OpaquePointer?
@@ -438,6 +516,22 @@ final class SQLiteSessionStore {
         return indexedIDs
     }
 
+    func removeSessions(withIDs sessionIDs: [String]) throws {
+        guard !sessionIDs.isEmpty else { return }
+
+        try withBulkWritePragmas {
+            try execute("BEGIN IMMEDIATE TRANSACTION;")
+            do {
+                try deleteRecords(withIDs: sessionIDs, from: "sessions", idColumn: "id")
+                try deleteRecords(withIDs: sessionIDs, from: "transcript_entries", idColumn: "session_id")
+                try execute("COMMIT;")
+            } catch {
+                try? execute("ROLLBACK;")
+                throw error
+            }
+        }
+    }
+
     private func migrate() throws {
         try execute(
             """
@@ -481,6 +575,21 @@ final class SQLiteSessionStore {
             );
             """
         )
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS catalog_exclusions (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                source TEXT,
+                source_session_id TEXT,
+                project_name TEXT,
+                branch TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        try execute("CREATE INDEX IF NOT EXISTS catalog_exclusions_kind_idx ON catalog_exclusions(kind);")
+        try execute("CREATE INDEX IF NOT EXISTS catalog_exclusions_project_idx ON catalog_exclusions(project_name);")
 
         let columns = try existingColumnNames(in: "sessions")
         if !columns.contains("conversation_model") {

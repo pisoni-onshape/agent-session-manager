@@ -1,11 +1,33 @@
 import Foundation
 import OSLog
 
+struct SessionScanCandidateExclusionMetadata: Sendable {
+    let projectName: String?
+    let branch: String?
+
+    static let empty = SessionScanCandidateExclusionMetadata(projectName: nil, branch: nil)
+}
+
 struct SessionScanCandidate {
     let id: String
     let fingerprint: String
     let isInProgress: Bool
+    let exclusionMetadata: SessionScanCandidateExclusionMetadata
     let loadRecord: () throws -> SessionRecord?
+
+    init(
+        id: String,
+        fingerprint: String,
+        isInProgress: Bool,
+        exclusionMetadata: SessionScanCandidateExclusionMetadata = .empty,
+        loadRecord: @escaping () throws -> SessionRecord?
+    ) {
+        self.id = id
+        self.fingerprint = fingerprint
+        self.isInProgress = isInProgress
+        self.exclusionMetadata = exclusionMetadata
+        self.loadRecord = loadRecord
+    }
 }
 
 protocol SessionSourceAdapter {
@@ -15,6 +37,67 @@ protocol SessionSourceAdapter {
 extension SessionSourceAdapter {
     func discover() throws -> [SessionRecord] {
         try scanCandidates().compactMap { try $0.loadRecord() }
+    }
+}
+
+private struct SessionCatalogExclusionLookup {
+    let sessionIDs: Set<String>
+    let projectNames: Set<String>
+    let branchesByProject: [String: Set<String>]
+
+    init(exclusions: [SessionCatalogExclusion]) {
+        var sessionIDs: Set<String> = []
+        var projectNames: Set<String> = []
+        var branchesByProject: [String: Set<String>] = [:]
+
+        for exclusion in exclusions {
+            switch exclusion.kind {
+            case .session:
+                if let source = exclusion.source, let sourceSessionId = exclusion.sourceSessionId {
+                    sessionIDs.insert("\(source.rawValue)::\(sourceSessionId)")
+                }
+            case .project:
+                if let projectName = exclusion.projectName {
+                    projectNames.insert(projectName)
+                }
+            case .branch:
+                if let projectName = exclusion.projectName, let branch = exclusion.branch {
+                    branchesByProject[projectName, default: []].insert(branch)
+                }
+            }
+        }
+
+        self.sessionIDs = sessionIDs
+        self.projectNames = projectNames
+        self.branchesByProject = branchesByProject
+    }
+
+    func matches(candidate: SessionScanCandidate) -> Bool {
+        if sessionIDs.contains(candidate.id) {
+            return true
+        }
+        if let projectName = candidate.exclusionMetadata.projectName, projectNames.contains(projectName) {
+            return true
+        }
+        if let projectName = candidate.exclusionMetadata.projectName,
+           let branch = candidate.exclusionMetadata.branch,
+           branchesByProject[projectName]?.contains(branch) == true {
+            return true
+        }
+        return false
+    }
+
+    func matches(record: SessionRecord) -> Bool {
+        if sessionIDs.contains(record.id) {
+            return true
+        }
+        if projectNames.contains(record.projectName) {
+            return true
+        }
+        if let branch = record.branch, branchesByProject[record.projectName]?.contains(branch) == true {
+            return true
+        }
+        return false
     }
 }
 
@@ -49,7 +132,9 @@ public final class SessionCatalog {
     }
 
     public func loadPersistedSessions() throws -> [SessionRecord] {
-        reclassifySessions(try store.fetchAll())
+        let exclusions = try store.fetchExclusions()
+        let lookup = SessionCatalogExclusionLookup(exclusions: exclusions)
+        return reclassifySessions(try store.fetchAll()).filter { !lookup.matches(record: $0) }
     }
 
     public func starredSessionIDs() throws -> Set<String> {
@@ -58,6 +143,22 @@ public final class SessionCatalog {
 
     public func setSessionStarred(_ isStarred: Bool, for sessionID: String) throws {
         try store.setSessionStarred(isStarred, for: sessionID)
+    }
+
+    public func fetchExclusions() throws -> [SessionCatalogExclusion] {
+        try store.fetchExclusions()
+    }
+
+    public func addExclusion(_ exclusion: SessionCatalogExclusion) throws {
+        try store.upsertExclusion(exclusion)
+        let existingSessionIDs = try store.fetchAll().filter { exclusion.matches(record: $0) }.map(\.id)
+        if !existingSessionIDs.isEmpty {
+            try store.removeSessions(withIDs: existingSessionIDs)
+        }
+    }
+
+    public func removeExclusion(id: String) throws {
+        try store.removeExclusion(id: id)
     }
 
     public func searchTranscriptIndex(
@@ -81,6 +182,8 @@ public final class SessionCatalog {
 
         let stateLoadStart = clock.now
         let existingRecords = try store.fetchAll()
+        let exclusions = try store.fetchExclusions()
+        let exclusionLookup = SessionCatalogExclusionLookup(exclusions: exclusions)
         let existingByID = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.id, $0) })
         let indexedSessionIDs = try store.indexedSessionIDs(for: Array(existingByID.keys))
         let stateLoadDuration = clock.now - stateLoadStart
@@ -114,6 +217,9 @@ public final class SessionCatalog {
         var candidatesNeedingLoad: [SessionScanCandidate] = []
 
         for candidate in candidates {
+            if exclusionLookup.matches(candidate: candidate) {
+                continue
+            }
             if let existingRecord = existingByID[candidate.id],
                existingRecord.fingerprint == candidate.fingerprint,
                indexedSessionIDs.contains(candidate.id) {
@@ -136,6 +242,17 @@ public final class SessionCatalog {
             let loadDuration = clock.now - loadStart
 
             guard let loadedRecord else {
+                return RefreshLoadResult(
+                    candidateID: candidate.id,
+                    isInProgress: candidate.isInProgress,
+                    record: nil,
+                    transcriptEntries: [],
+                    loadDuration: loadDuration,
+                    transcriptExtractionDuration: .zero
+                )
+            }
+
+            if exclusionLookup.matches(record: loadedRecord) {
                 return RefreshLoadResult(
                     candidateID: candidate.id,
                     isInProgress: candidate.isInProgress,
@@ -207,6 +324,7 @@ public final class SessionCatalog {
     public func rebuildSessions() throws -> [SessionRecord] {
         let clock = ContinuousClock()
         let rebuildStart = clock.now
+        let exclusionLookup = SessionCatalogExclusionLookup(exclusions: try store.fetchExclusions())
 
         let scanResults = try parallelMap(adapters) { adapter in
             let scanStart = clock.now
@@ -224,10 +342,17 @@ public final class SessionCatalog {
         let adapterScanSummaries = scanResults.map {
             "\($0.adapterName): \($0.candidates.count) candidates in \(Self.formatDurationForLog($0.duration))"
         }
+        let includedCandidates = candidates.filter { !exclusionLookup.matches(candidate: $0) }
 
-        let loadResults = try parallelMap(candidates) { candidate in
+        let loadResults = try parallelMap(includedCandidates) { candidate in
             let loadStart = clock.now
             let record = try candidate.loadRecord()
+            if let record, exclusionLookup.matches(record: record) {
+                return RebuildLoadResult(
+                    record: nil,
+                    loadDuration: clock.now - loadStart
+                )
+            }
             return RebuildLoadResult(
                 record: record,
                 loadDuration: clock.now - loadStart
@@ -503,11 +628,13 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
                 values: [inProgressState.fingerprintValue]
             )
             fingerprintDuration += clock.now - fingerprintStart
+            let exclusionMetadata = Self.exclusionMetadata(workspaceURL: workspaceURL, fallbackSessionID: sessionID)
 
             return SessionScanCandidate(
                 id: "\(SessionSource.copilotCLI.rawValue)::\(sessionID)",
                 fingerprint: fingerprint,
                 isInProgress: inProgressState.isActive,
+                exclusionMetadata: exclusionMetadata,
                 loadRecord: {
                     try loadRecord(
                         sessionDirectory: sessionDirectory,
@@ -527,6 +654,23 @@ public struct CopilotCLIAdapter: SessionSourceAdapter {
             "Scan details - total: \(SessionCatalog.formatDurationForLog(totalDuration), privacy: .public), session enumeration: \(SessionCatalog.formatDurationForLog(sessionEnumerationDuration), privacy: .public), plan lookup: \(SessionCatalog.formatDurationForLog(planLookupDuration), privacy: .public), in-progress checks: \(SessionCatalog.formatDurationForLog(inProgressCheckDuration), privacy: .public), fingerprinting: \(SessionCatalog.formatDurationForLog(fingerprintDuration), privacy: .public); session directories: \(sessionDirectories.count), candidates: \(candidates.count)"
         )
         return candidates
+    }
+
+    private static func exclusionMetadata(
+        workspaceURL: URL,
+        fallbackSessionID: String
+    ) -> SessionScanCandidateExclusionMetadata {
+        guard let yaml = try? String(contentsOf: workspaceURL, encoding: .utf8) else {
+            return .empty
+        }
+
+        let metadata = FlatYAMLParser.parse(yaml)
+        let workspacePath = metadata["cwd"] ?? metadata["git_root"]
+        let fallbackProjectName = metadata["repository"] ?? metadata["id"] ?? fallbackSessionID
+        return SessionScanCandidateExclusionMetadata(
+            projectName: PathUtilities.displayProjectName(workspacePath: workspacePath, fallback: fallbackProjectName),
+            branch: metadata["branch"]
+        )
     }
 
     /// Checks whether the session directory has an active `inuse.{PID}.lock` file with a live PID.
@@ -872,6 +1016,7 @@ public struct ClaudeCodeAdapter: SessionSourceAdapter {
                         id: "\(source.rawValue)::\(sessionID)",
                         fingerprint: fingerprint,
                         isInProgress: isInProgress,
+                        exclusionMetadata: .empty,
                         loadRecord: {
                             try Self.loadRecord(
                                 sessionFile: sessionFile,
@@ -1299,6 +1444,10 @@ struct CursorAdapter: SessionSourceAdapter {
                         id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
                         fingerprint: fingerprint,
                         isInProgress: false,
+                        exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                            projectName: projectName,
+                            branch: branch
+                        ),
                         loadRecord: {
                             try loadFileBackedRecord(
                                 sessionID: sessionID,
@@ -1376,6 +1525,10 @@ struct CursorAdapter: SessionSourceAdapter {
                         id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
                         fingerprint: fingerprint,
                         isInProgress: false,
+                        exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                            projectName: workspaceReference.projectName,
+                            branch: nil
+                        ),
                         loadRecord: {
                             try loadWorkspaceChatRecord(
                                 transcriptFile: session.transcriptFile,
@@ -1447,6 +1600,10 @@ struct CursorAdapter: SessionSourceAdapter {
                     id: "\(SessionSource.cursor.rawValue)::\(sessionID)",
                     fingerprint: fingerprint,
                     isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: projectName,
+                        branch: branch
+                    ),
                     loadRecord: {
                         try loadGlobalComposerRecord(
                             sessionID: sessionID,
@@ -2101,6 +2258,10 @@ public struct VSCodeCopilotAdapter: SessionSourceAdapter {
                     id: "\(SessionSource.vscodeCopilot.rawValue)::\(sessionID)",
                     fingerprint: fingerprint,
                     isInProgress: isActive,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: projectName,
+                        branch: nil
+                    ),
                     loadRecord: {
                         try loadRecord(
                             transcriptFile: session.transcriptFile,

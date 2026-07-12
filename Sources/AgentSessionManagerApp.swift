@@ -80,7 +80,7 @@ struct AgentSessionManagerApp: App {
         }
         .defaultSize(width: 920, height: 720)
         Settings {
-            SettingsView(settings: settings)
+            SettingsView(settings: settings, viewModel: viewModel)
         }
     }
 

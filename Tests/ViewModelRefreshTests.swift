@@ -237,6 +237,78 @@ final class ViewModelRefreshTests: XCTestCase {
         XCTAssertFalse(viewModel.lastRefreshDisplayText?.contains(" in ") == true)
     }
 
+    func testProjectExclusionResetsActiveProjectFilterAndRemovesSessions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let excludedProjectRecord = try makeRecord(
+            sessionID: "excluded-project",
+            title: "Excluded Project",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Excluded project transcript."
+        )
+        let keptRecord = SessionRecord(
+            source: .copilotCLI,
+            sourceSessionId: "kept-project",
+            workspacePath: "/Users/pisoni/repos/newton6",
+            projectName: "newton6",
+            branch: "main",
+            conversationModel: excludedProjectRecord.conversationModel,
+            startedAt: excludedProjectRecord.startedAt,
+            updatedAt: excludedProjectRecord.updatedAt,
+            title: "Kept Project",
+            summary: excludedProjectRecord.summary,
+            firstUserPreview: excludedProjectRecord.firstUserPreview,
+            firstAssistantPreview: excludedProjectRecord.firstAssistantPreview,
+            rawTranscriptPath: excludedProjectRecord.rawTranscriptPath,
+            rawMetadataPath: excludedProjectRecord.rawMetadataPath,
+            relatedPlanPath: excludedProjectRecord.relatedPlanPath,
+            fingerprint: "v2",
+            resumeKind: excludedProjectRecord.resumeKind,
+            resumePayload: "kept-project",
+            isNewtonProject: true
+        )
+
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: excludedProjectRecord.id,
+                    fingerprint: excludedProjectRecord.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: excludedProjectRecord.projectName,
+                        branch: excludedProjectRecord.branch
+                    ),
+                    loadRecord: { excludedProjectRecord }
+                ),
+                SessionScanCandidate(
+                    id: keptRecord.id,
+                    fingerprint: keptRecord.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: keptRecord.projectName,
+                        branch: keptRecord.branch
+                    ),
+                    loadRecord: { keptRecord }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let viewModel = SessionBrowserViewModel(catalog: catalog)
+
+        await viewModel.loadInitialData()
+        viewModel.filters.selectedProject = excludedProjectRecord.projectName
+
+        viewModel.exclude(.project(named: excludedProjectRecord.projectName))
+        await waitForCondition {
+            viewModel.exclusions.contains(where: { $0.projectName == excludedProjectRecord.projectName })
+                && viewModel.filters.selectedProject == SessionFilterState.allProjectsToken
+                && viewModel.displayedSessions.map(\.id) == [keptRecord.id]
+        }
+    }
+
     func testScheduledRefreshFlushesAfterWindowLosesFocusEvenIfItRefocusesImmediately() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
