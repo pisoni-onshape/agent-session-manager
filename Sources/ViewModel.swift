@@ -105,6 +105,77 @@ struct SessionFilterOption: Identifiable, Equatable {
     let count: Int
 }
 
+enum CatalogManagementScope: String, CaseIterable, Identifiable {
+    case projects
+    case branches
+    case sessions
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .projects:
+            return "Projects"
+        case .branches:
+            return "Branches"
+        case .sessions:
+            return "Sessions"
+        }
+    }
+}
+
+enum CatalogManagementItemState: String, Equatable {
+    case included
+    case excluded
+
+    var title: String {
+        switch self {
+        case .included:
+            return "Included"
+        case .excluded:
+            return "Excluded"
+        }
+    }
+}
+
+enum CatalogManagementItemKind: Equatable {
+    case project
+    case branch
+    case session
+}
+
+struct CatalogManagementItem: Identifiable, Equatable {
+    let id: String
+    let kind: CatalogManagementItemKind
+    let state: CatalogManagementItemState
+    let title: String
+    let subtitle: String
+    let count: Int?
+    let projectName: String?
+    let branch: String?
+    let source: SessionSource?
+    let sourceSessionId: String?
+
+    var exclusion: SessionCatalogExclusion? {
+        switch kind {
+        case .project:
+            guard let projectName else { return nil }
+            return .project(named: projectName)
+        case .branch:
+            guard let projectName, let branch else { return nil }
+            return .branch(branch, inProject: projectName)
+        case .session:
+            guard let source, let sourceSessionId else { return nil }
+            return SessionCatalogExclusion(
+                kind: .session,
+                source: source,
+                sourceSessionId: sourceSessionId,
+                projectName: projectName
+            )
+        }
+    }
+}
+
 @MainActor
 final class SessionBrowserViewModel: ObservableObject {
     @Published private(set) var allSessions: [SessionRecord] = []
@@ -581,6 +652,134 @@ final class SessionBrowserViewModel: ObservableObject {
         exclusions.filter { $0.kind == .branch }
     }
 
+    var catalogProjectItems: [CatalogManagementItem] {
+        let indexedProjects = Set(allSessions.map(\.projectName))
+        let excludedProjects = Set(projectExclusions.compactMap(\.projectName))
+        let counts = Dictionary(grouping: allSessions, by: \.projectName).mapValues(\.count)
+
+        return indexedProjects.union(excludedProjects).sorted().map { projectName in
+            let count = counts[projectName] ?? 0
+            return CatalogManagementItem(
+                id: projectName,
+                kind: .project,
+                state: excludedProjects.contains(projectName) ? .excluded : .included,
+                title: projectName,
+                subtitle: count == 0 ? "No indexed sessions currently loaded" : "\(count) indexed \(count == 1 ? "session" : "sessions")",
+                count: count,
+                projectName: projectName,
+                branch: nil,
+                source: nil,
+                sourceSessionId: nil
+            )
+        }
+    }
+
+    var catalogBranchItems: [CatalogManagementItem] {
+        struct BranchKey: Hashable {
+            let projectName: String
+            let branch: String
+        }
+
+        let indexedKeyValues: [BranchKey] = allSessions.compactMap { record in
+            record.branch.map { BranchKey(projectName: record.projectName, branch: $0) }
+        }
+        let indexedKeys = Set(indexedKeyValues)
+        let excludedKeyValues: [BranchKey] = branchExclusions.compactMap { exclusion in
+            guard let projectName = exclusion.projectName, let branch = exclusion.branch else { return nil }
+            return BranchKey(projectName: projectName, branch: branch)
+        }
+        let excludedKeys = Set(excludedKeyValues)
+        let counts = Dictionary(
+            grouping: indexedKeyValues,
+            by: { $0 }
+        ).mapValues(\.count)
+
+        return indexedKeys.union(excludedKeys)
+            .sorted {
+                if $0.projectName != $1.projectName {
+                    return $0.projectName.localizedCaseInsensitiveCompare($1.projectName) == .orderedAscending
+                }
+                return $0.branch.localizedCaseInsensitiveCompare($1.branch) == .orderedAscending
+            }
+            .map { key in
+                let count = counts[key] ?? 0
+                return CatalogManagementItem(
+                    id: "\(key.projectName)::\(key.branch)",
+                    kind: .branch,
+                    state: excludedKeys.contains(key) ? .excluded : .included,
+                    title: key.branch,
+                    subtitle: "\(key.projectName) - \(count == 0 ? "not currently indexed" : "\(count) indexed \(count == 1 ? "session" : "sessions")")",
+                    count: count,
+                    projectName: key.projectName,
+                    branch: key.branch,
+                    source: nil,
+                    sourceSessionId: nil
+                )
+            }
+    }
+
+    var catalogSessionItems: [CatalogManagementItem] {
+        var itemsByID: [String: CatalogManagementItem] = [:]
+
+        for record in allSessions {
+            itemsByID[record.id] = CatalogManagementItem(
+                id: record.id,
+                kind: .session,
+                state: .included,
+                title: record.title,
+                subtitle: [record.source.displayName, record.projectName, record.sourceSessionId]
+                    .joined(separator: " - "),
+                count: nil,
+                projectName: record.projectName,
+                branch: record.branch,
+                source: record.source,
+                sourceSessionId: record.sourceSessionId
+            )
+        }
+
+        for exclusion in sessionExclusions {
+            guard let source = exclusion.source,
+                  let sourceSessionId = exclusion.sourceSessionId else {
+                continue
+            }
+
+            let id = "\(source.rawValue)::\(sourceSessionId)"
+            if itemsByID[id] == nil {
+                itemsByID[id] = CatalogManagementItem(
+                    id: id,
+                    kind: .session,
+                    state: .excluded,
+                    title: sourceSessionId,
+                    subtitle: [source.displayName, exclusion.projectName ?? "Unknown Project", "Excluded"]
+                        .joined(separator: " - "),
+                    count: nil,
+                    projectName: exclusion.projectName,
+                    branch: nil,
+                    source: source,
+                    sourceSessionId: sourceSessionId
+                )
+            }
+        }
+
+        return itemsByID.values.sorted {
+            if $0.state != $1.state {
+                return $0.state.rawValue.localizedCaseInsensitiveCompare($1.state.rawValue) == .orderedAscending
+            }
+            return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+    }
+
+    func catalogItems(for scope: CatalogManagementScope) -> [CatalogManagementItem] {
+        switch scope {
+        case .projects:
+            return catalogProjectItems
+        case .branches:
+            return catalogBranchItems
+        case .sessions:
+            return catalogSessionItems
+        }
+    }
+
     func matchingSessionCount(for exclusion: SessionCatalogExclusion) -> Int {
         allSessions.filter { exclusion.matches(record: $0) }.count
     }
@@ -607,6 +806,46 @@ final class SessionBrowserViewModel: ObservableObject {
                 exclusions = try await controller.loadExclusions()
                 await refreshSessions()
                 errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func excludeCatalogItems(_ items: [CatalogManagementItem]) {
+        let exclusionsToAdd = items
+            .filter { $0.state == .included }
+            .compactMap(\.exclusion)
+        guard !exclusionsToAdd.isEmpty else { return }
+
+        Task {
+            do {
+                let controller = try catalogOrThrow()
+                for exclusion in exclusionsToAdd {
+                    try await controller.addExclusion(exclusion)
+                }
+                exclusions = try await controller.loadExclusions()
+                await performRefresh(activity: .incremental, operation: { try await controller.refreshSessions() })
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func includeCatalogItems(_ items: [CatalogManagementItem]) {
+        let exclusionIDs = items
+            .filter { $0.state == .excluded }
+            .compactMap(\.exclusion?.id)
+        guard !exclusionIDs.isEmpty else { return }
+
+        Task {
+            do {
+                let controller = try catalogOrThrow()
+                for exclusionID in exclusionIDs {
+                    try await controller.removeExclusion(id: exclusionID)
+                }
+                exclusions = try await controller.loadExclusions()
+                await performRefresh(activity: .incremental, operation: { try await controller.refreshSessions() })
             } catch {
                 errorMessage = error.localizedDescription
             }

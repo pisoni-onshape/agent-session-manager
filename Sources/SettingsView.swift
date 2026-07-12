@@ -1,12 +1,48 @@
 import SwiftUI
 import AgentSessionManagerCore
 
+private enum SettingsPage: String, CaseIterable, Identifiable {
+    case general
+    case sessionCatalog
+    case catalogItems
+    case autoRefresh
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general:
+            return "General"
+        case .sessionCatalog:
+            return "Session Catalog"
+        case .catalogItems:
+            return "Indexes"
+        case .autoRefresh:
+            return "Auto Refresh"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general:
+            return "gearshape"
+        case .sessionCatalog:
+            return "externaldrive"
+        case .catalogItems:
+            return "square.stack.3d.up"
+        case .autoRefresh:
+            return "arrow.clockwise"
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var settings: AppSettingsStore
     @ObservedObject var viewModel: SessionBrowserViewModel
+
     @FocusState private var focusedField: Field?
+    @State private var selectedPage: SettingsPage = .general
     @State private var newtonReposRootPathDraft: String
-    @State private var exclusionSearchText = ""
 
     private enum Field: Hashable {
         case newtonReposRootPath
@@ -19,8 +55,62 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        Form {
-            Section("General") {
+        HStack(spacing: 0) {
+            List(SettingsPage.allCases, selection: $selectedPage) { page in
+                Label(page.title, systemImage: page.systemImage)
+                    .tag(page)
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 190, idealWidth: 200, maxWidth: 220)
+
+            Divider()
+
+            ScrollView {
+                currentPage
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: 920, height: 760)
+        .onAppear {
+            settings.refreshLaunchAtLoginStatus()
+        }
+        .onChange(of: focusedField) { _, newValue in
+            if newValue != .newtonReposRootPath {
+                commitNewtonReposRootPath()
+            }
+        }
+        .onChange(of: settings.newtonReposRootPath) { _, newValue in
+            if newtonReposRootPathDraft != newValue {
+                newtonReposRootPathDraft = newValue
+            }
+        }
+        .onDisappear(perform: commitNewtonReposRootPath)
+    }
+
+    @ViewBuilder
+    private var currentPage: some View {
+        switch selectedPage {
+        case .general:
+            generalPage
+        case .sessionCatalog:
+            sessionCatalogPage
+        case .catalogItems:
+            CatalogItemsManagementPage(viewModel: viewModel)
+        case .autoRefresh:
+            autoRefreshPage
+        }
+    }
+
+    private var generalPage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            pageHeader(
+                title: "General",
+                subtitle: "Configure app-wide behavior for launch and startup."
+            )
+
+            settingsCard {
                 Toggle(
                     "Launch at Login",
                     isOn: Binding(
@@ -29,20 +119,29 @@ struct SettingsView: View {
                     )
                 )
 
-                if let launchAtLoginStatusDetail = settings.launchAtLoginStatusDetail {
-                    Text(launchAtLoginStatusDetail)
+                if let detail = settings.launchAtLoginStatusDetail {
+                    Text(detail)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
 
-                if let launchAtLoginErrorMessage = settings.launchAtLoginErrorMessage {
-                    Text(launchAtLoginErrorMessage)
+                if let error = settings.launchAtLoginErrorMessage {
+                    Text(error)
                         .font(.callout)
                         .foregroundStyle(.red)
                 }
             }
+        }
+    }
 
-            Section("Session Catalog") {
+    private var sessionCatalogPage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            pageHeader(
+                title: "Session Catalog",
+                subtitle: "Adjust how Newton workspace metadata is interpreted for cataloging."
+            )
+
+            settingsCard {
                 VStack(alignment: .leading, spacing: 8) {
                     LabeledContent("Newton repos path") {
                         TextField(
@@ -51,69 +150,38 @@ struct SettingsView: View {
                             prompt: Text("/Users/you/repos")
                                 .foregroundStyle(.secondary)
                         )
-                            .textFieldStyle(.plain)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.white.opacity(0.22))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.18))
-                            )
-                            .focused($focusedField, equals: .newtonReposRootPath)
-                            .onSubmit(commitNewtonReposRootPath)
-                            .frame(minWidth: 390)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.22))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.18))
+                        )
+                        .focused($focusedField, equals: .newtonReposRootPath)
+                        .onSubmit(commitNewtonReposRootPath)
+                        .frame(minWidth: 420)
                     }
 
                     Text("Only repos directly under this root whose names start with `newton` are included by the Newton-only filter.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Divider()
-                        .padding(.vertical, 4)
-
-                    Text("Exclusions")
-                        .font(.headline)
-
-                    TextField("Search excluded sessions, projects, and branches", text: $exclusionSearchText)
-                        .textFieldStyle(.roundedBorder)
-
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ExclusionListGroup(
-                                title: "Sessions",
-                                exclusions: filteredExclusions(viewModel.sessionExclusions),
-                                emptyText: "No excluded sessions.",
-                                onRestore: viewModel.restoreExclusion
-                            )
-                            ExclusionListGroup(
-                                title: "Projects",
-                                exclusions: filteredExclusions(viewModel.projectExclusions),
-                                emptyText: "No excluded projects.",
-                                onRestore: viewModel.restoreExclusion
-                            )
-                            ExclusionListGroup(
-                                title: "Branches",
-                                exclusions: filteredExclusions(viewModel.branchExclusions),
-                                emptyText: "No excluded branches.",
-                                onRestore: viewModel.restoreExclusion
-                            )
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(height: 250)
-
-                    Text("Re-including an item restores it on the next refresh. Excluding only affects Agent Session Manager - it never deletes files from disk.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
             }
+        }
+    }
 
-            Section("Auto Session Refresh") {
+    private var autoRefreshPage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            pageHeader(
+                title: "Auto Refresh",
+                subtitle: "Control when the catalog refreshes while the app is open."
+            )
+
+            settingsCard {
                 Picker(
                     "Refresh on a timer",
                     selection: Binding(
@@ -157,23 +225,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
-        .padding(20)
-        .frame(width: 720, height: 760)
-        .onAppear {
-            settings.refreshLaunchAtLoginStatus()
-        }
-        .onChange(of: focusedField) { _, newValue in
-            if newValue != .newtonReposRootPath {
-                commitNewtonReposRootPath()
-            }
-        }
-        .onChange(of: settings.newtonReposRootPath) { _, newValue in
-            if newtonReposRootPathDraft != newValue {
-                newtonReposRootPathDraft = newValue
-            }
-        }
-        .onDisappear(perform: commitNewtonReposRootPath)
     }
 
     private func commitNewtonReposRootPath() {
@@ -181,58 +232,301 @@ struct SettingsView: View {
         newtonReposRootPathDraft = settings.newtonReposRootPath
     }
 
-    private func filteredExclusions(_ exclusions: [SessionCatalogExclusion]) -> [SessionCatalogExclusion] {
-        let query = exclusionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return exclusions }
-
-        return exclusions.filter { exclusion in
-            exclusion.displayTitle.localizedCaseInsensitiveContains(query)
-                || exclusion.detailText.localizedCaseInsensitiveContains(query)
-                || exclusion.kind.displayName.localizedCaseInsensitiveContains(query)
+    @ViewBuilder
+    private func pageHeader(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.title2.weight(.semibold))
+            Text(subtitle)
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 }
 
-private struct ExclusionListGroup: View {
-    let title: String
-    let exclusions: [SessionCatalogExclusion]
-    let emptyText: String
-    let onRestore: (SessionCatalogExclusion) -> Void
+private struct CatalogItemsManagementPage: View {
+    @ObservedObject var viewModel: SessionBrowserViewModel
+
+    @State private var selectedScope: CatalogManagementScope = .projects
+    @State private var projectSearchText = ""
+    @State private var branchSearchText = ""
+    @State private var sessionSearchText = ""
+    @State private var selectedProjectIDs: Set<String> = []
+    @State private var selectedBranchIDs: Set<String> = []
+    @State private var selectedSessionIDs: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-
-            if exclusions.isEmpty {
-                Text(emptyText)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Indexes")
+                    .font(.title2.weight(.semibold))
+                Text("Manage indexed and excluded projects, branches, and sessions using the already-loaded catalog state.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-            } else {
-                ForEach(exclusions) { exclusion in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(exclusion.displayTitle)
-                                .font(.callout.weight(.semibold))
-                            Text(exclusion.detailText)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+            }
 
-                        Spacer(minLength: 8)
-
-                        Button("Re-include") {
-                            onRestore(exclusion)
-                        }
-                        .buttonStyle(.bordered)
+            settingsCard {
+                Picker("Scope", selection: $selectedScope) {
+                    ForEach(CatalogManagementScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
                     }
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.secondary.opacity(0.08))
-                    )
+                }
+                .pickerStyle(.segmented)
+
+                TextField(searchPlaceholder, text: searchTextBinding)
+                    .textFieldStyle(.roundedBorder)
+
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        if filteredItems.isEmpty {
+                            Text("No matching \(selectedScope.title.lowercased()).")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 24)
+                        } else {
+                            ForEach(filteredItems) { item in
+                                CatalogManagementRow(
+                                    item: item,
+                                    isSelected: selectionBinding(for: item).wrappedValue,
+                                    onToggleSelected: { isSelected in
+                                        selectionBinding(for: item).wrappedValue = isSelected
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                .frame(minHeight: 360)
+
+                HStack {
+                    Text(summaryText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Button("Clear Selection") {
+                        clearSelection(for: selectedScope)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(currentSelection.isEmpty)
+
+                    Button("Include Selected") {
+                        viewModel.includeCatalogItems(selectedItems)
+                        clearSelection(for: selectedScope)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!selectedItems.contains(where: { $0.state == .excluded }))
+
+                    Button("Exclude Selected") {
+                        viewModel.excludeCatalogItems(selectedItems)
+                        clearSelection(for: selectedScope)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!selectedItems.contains(where: { $0.state == .included }))
                 }
             }
         }
+    }
+
+    private var searchPlaceholder: String {
+        "Search \(selectedScope.title.lowercased())"
+    }
+
+    private var searchTextBinding: Binding<String> {
+        switch selectedScope {
+        case .projects:
+            return $projectSearchText
+        case .branches:
+            return $branchSearchText
+        case .sessions:
+            return $sessionSearchText
+        }
+    }
+
+    private var currentSearchText: String {
+        searchTextBinding.wrappedValue
+    }
+
+    private var currentSelection: Set<String> {
+        switch selectedScope {
+        case .projects:
+            return selectedProjectIDs
+        case .branches:
+            return selectedBranchIDs
+        case .sessions:
+            return selectedSessionIDs
+        }
+    }
+
+    private var filteredItems: [CatalogManagementItem] {
+        let query = currentSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let items = viewModel.catalogItems(for: selectedScope)
+        guard !query.isEmpty else { return items }
+
+        return items.filter { item in
+            item.title.localizedCaseInsensitiveContains(query)
+                || item.subtitle.localizedCaseInsensitiveContains(query)
+                || item.state.title.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var selectedItems: [CatalogManagementItem] {
+        let selectedIDs = currentSelection
+        return viewModel.catalogItems(for: selectedScope).filter { selectedIDs.contains($0.id) }
+    }
+
+    private var summaryText: String {
+        let total = filteredItems.count
+        let selected = currentSelection.count
+        return selected == 0
+            ? "\(total) \(selectedScope.title.lowercased()) shown"
+            : "\(selected) selected - \(total) \(selectedScope.title.lowercased()) shown"
+    }
+
+    private func selectionBinding(for item: CatalogManagementItem) -> Binding<Bool> {
+        switch selectedScope {
+        case .projects:
+            return Binding(
+                get: { selectedProjectIDs.contains(item.id) },
+                set: { isSelected in
+                    if isSelected {
+                        selectedProjectIDs.insert(item.id)
+                    } else {
+                        selectedProjectIDs.remove(item.id)
+                    }
+                }
+            )
+        case .branches:
+            return Binding(
+                get: { selectedBranchIDs.contains(item.id) },
+                set: { isSelected in
+                    if isSelected {
+                        selectedBranchIDs.insert(item.id)
+                    } else {
+                        selectedBranchIDs.remove(item.id)
+                    }
+                }
+            )
+        case .sessions:
+            return Binding(
+                get: { selectedSessionIDs.contains(item.id) },
+                set: { isSelected in
+                    if isSelected {
+                        selectedSessionIDs.insert(item.id)
+                    } else {
+                        selectedSessionIDs.remove(item.id)
+                    }
+                }
+            )
+        }
+    }
+
+    private func clearSelection(for scope: CatalogManagementScope) {
+        switch scope {
+        case .projects:
+            selectedProjectIDs.removeAll()
+        case .branches:
+            selectedBranchIDs.removeAll()
+        case .sessions:
+            selectedSessionIDs.removeAll()
+        }
+    }
+}
+
+private struct CatalogManagementRow: View {
+    let item: CatalogManagementItem
+    let isSelected: Bool
+    let onToggleSelected: (Bool) -> Void
+
+    var body: some View {
+        Button {
+            onToggleSelected(!isSelected)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(item.title)
+                            .font(.body.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Text(item.state.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(item.state == .excluded ? Color.orange : Color.accentColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                Capsule()
+                                    .fill(item.state == .excluded ? Color.orange.opacity(0.16) : Color.accentColor.opacity(0.14))
+                            )
+
+                        if let count = item.count {
+                            Text("\(count)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.12))
+                                )
+                        }
+                    }
+
+                    Text(item.subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.07))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.06))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SettingsCard<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            content
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.secondary.opacity(0.06))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06))
+        }
+    }
+}
+
+@MainActor
+private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    SettingsCard {
+        content()
     }
 }

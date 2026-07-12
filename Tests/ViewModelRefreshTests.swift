@@ -309,6 +309,193 @@ final class ViewModelRefreshTests: XCTestCase {
         }
     }
 
+    func testCatalogItemsMergeIndexedAndExcludedEntries() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let indexedProjectRecord = try makeRecord(
+            sessionID: "indexed-project",
+            title: "Indexed Project",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Indexed project transcript.",
+            projectName: "newton5",
+            branch: "main"
+        )
+        let indexedBranchRecord = try makeRecord(
+            sessionID: "indexed-branch",
+            title: "Indexed Branch",
+            fingerprint: "v2",
+            directory: directory,
+            transcriptText: "Indexed branch transcript.",
+            projectName: "newton6",
+            branch: "feature/indexes"
+        )
+
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: indexedProjectRecord.id,
+                    fingerprint: indexedProjectRecord.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: indexedProjectRecord.projectName,
+                        branch: indexedProjectRecord.branch
+                    ),
+                    loadRecord: { indexedProjectRecord }
+                ),
+                SessionScanCandidate(
+                    id: indexedBranchRecord.id,
+                    fingerprint: indexedBranchRecord.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: indexedBranchRecord.projectName,
+                        branch: indexedBranchRecord.branch
+                    ),
+                    loadRecord: { indexedBranchRecord }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        try catalog.addExclusion(.project(named: "newton7"))
+        try catalog.addExclusion(.branch("release/hidden", inProject: "newton8"))
+        try catalog.addExclusion(
+            SessionCatalogExclusion(
+                kind: .session,
+                source: .copilotCLI,
+                sourceSessionId: "excluded-session",
+                projectName: "newton9"
+            )
+        )
+
+        let viewModel = SessionBrowserViewModel(catalog: catalog)
+        await viewModel.loadInitialData()
+
+        XCTAssertTrue(
+            viewModel.catalogProjectItems.contains(
+                CatalogManagementItem(
+                    id: "newton7",
+                    kind: .project,
+                    state: .excluded,
+                    title: "newton7",
+                    subtitle: "No indexed sessions currently loaded",
+                    count: 0,
+                    projectName: "newton7",
+                    branch: nil,
+                    source: nil,
+                    sourceSessionId: nil
+                )
+            )
+        )
+        XCTAssertTrue(
+            viewModel.catalogBranchItems.contains(
+                where: {
+                    $0.id == "newton8::release/hidden"
+                        && $0.state == .excluded
+                        && $0.title == "release/hidden"
+                        && $0.projectName == "newton8"
+                        && $0.count == 0
+                }
+            )
+        )
+        XCTAssertTrue(
+            viewModel.catalogSessionItems.contains(
+                where: {
+                    $0.id == "copilot-cli::excluded-session"
+                        && $0.state == .excluded
+                        && $0.source == .copilotCLI
+                        && $0.sourceSessionId == "excluded-session"
+                }
+            )
+        )
+        XCTAssertTrue(
+            viewModel.catalogProjectItems.contains(
+                where: {
+                    $0.id == indexedProjectRecord.projectName
+                        && $0.state == .included
+                        && $0.count == 1
+                }
+            )
+        )
+        XCTAssertTrue(
+            viewModel.catalogBranchItems.contains(
+                where: {
+                    $0.id == "\(indexedBranchRecord.projectName)::\(indexedBranchRecord.branch ?? "")"
+                        && $0.state == .included
+                        && $0.count == 1
+                }
+            )
+        )
+        XCTAssertTrue(
+            viewModel.catalogSessionItems.contains(
+                where: {
+                    $0.id == indexedProjectRecord.id
+                        && $0.state == .included
+                        && $0.sourceSessionId == indexedProjectRecord.sourceSessionId
+                }
+            )
+        )
+    }
+
+    func testCatalogBulkExcludeAndIncludeProjectItemRefreshesCatalogState() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let record = try makeRecord(
+            sessionID: "bulk-project",
+            title: "Bulk Project",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Bulk project transcript.",
+            projectName: "newton5",
+            branch: "feature/bulk"
+        )
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: record.id,
+                    fingerprint: record.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: record.projectName,
+                        branch: record.branch
+                    ),
+                    loadRecord: { record }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        let viewModel = SessionBrowserViewModel(catalog: catalog)
+
+        await viewModel.loadInitialData()
+
+        guard let includedItem = viewModel.catalogProjectItems.first(where: { $0.id == record.projectName }) else {
+            return XCTFail("Expected an indexed project item.")
+        }
+
+        viewModel.excludeCatalogItems([includedItem])
+
+        await waitForCondition {
+            viewModel.exclusions.contains(where: { $0.id == SessionCatalogExclusion.project(named: record.projectName).id })
+                && viewModel.displayedSessions.isEmpty
+                && viewModel.catalogProjectItems.contains(where: { $0.id == record.projectName && $0.state == .excluded })
+        }
+
+        guard let excludedItem = viewModel.catalogProjectItems.first(where: { $0.id == record.projectName }) else {
+            return XCTFail("Expected an excluded project item.")
+        }
+
+        viewModel.includeCatalogItems([excludedItem])
+
+        await waitForCondition {
+            !viewModel.exclusions.contains(where: { $0.id == SessionCatalogExclusion.project(named: record.projectName).id })
+                && viewModel.displayedSessions.map(\.id) == [record.id]
+                && viewModel.catalogProjectItems.contains(where: { $0.id == record.projectName && $0.state == .included })
+        }
+    }
+
     func testScheduledRefreshFlushesAfterWindowLosesFocusEvenIfItRefocusesImmediately() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -465,7 +652,10 @@ final class ViewModelRefreshTests: XCTestCase {
         fingerprint: String,
         directory: URL,
         transcriptText: String,
-        relatedPlanPath: String? = nil
+        relatedPlanPath: String? = nil,
+        source: SessionSource = .copilotCLI,
+        projectName: String = "newton5",
+        branch: String? = "main"
     ) throws -> SessionRecord {
         let transcriptURL = directory.appendingPathComponent("\(sessionID).jsonl")
         try """
@@ -474,11 +664,11 @@ final class ViewModelRefreshTests: XCTestCase {
         """.write(to: transcriptURL, atomically: true, encoding: .utf8)
 
         return SessionRecord(
-            source: .copilotCLI,
+            source: source,
             sourceSessionId: sessionID,
-            workspacePath: "/Users/pisoni/repos/newton5",
-            projectName: "newton5",
-            branch: "main",
+            workspacePath: "/Users/pisoni/repos/\(projectName)",
+            projectName: projectName,
+            branch: branch,
             conversationModel: "gpt-5.4",
             startedAt: ISO8601DateCoding.parse("2026-05-07T06:18:14.516Z"),
             updatedAt: ISO8601DateCoding.parse("2026-05-07T06:30:14.516Z"),

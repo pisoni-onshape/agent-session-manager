@@ -1404,10 +1404,13 @@ private struct SearchableFilterChip: View {
 
     @State private var isPresented = false
     @State private var query = ""
+    @State private var highlightedItemID: String?
+    @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
         Button {
             query = ""
+            highlightedItemID = selectedItemID
             isPresented = true
         } label: {
             HStack(spacing: 8) {
@@ -1450,31 +1453,41 @@ private struct SearchableFilterChip: View {
         .pointingHandCursor()
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 12) {
-                TextField("Search \(title.lowercased())", text: $query)
-                    .textFieldStyle(.roundedBorder)
+                autocompleteField
 
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        if let defaultItem = items.first {
-                            optionButton(defaultItem)
-                            Divider()
-                                .padding(.vertical, 4)
-                        }
-
-                        let secondaryItems = filteredItems.dropFirst()
-                        if secondaryItems.isEmpty {
-                            Text("No matching \(title.lowercased())")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 16)
-                        } else {
-                            ForEach(Array(secondaryItems)) { item in
-                                optionButton(item)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            if filteredItems.isEmpty {
+                                Text("No matching \(title.lowercased())")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 16)
+                            } else {
+                                ForEach(filteredItems) { item in
+                                    optionButton(item)
+                                        .id(item.id)
+                                }
                             }
                         }
+                        .padding(.vertical, 2)
                     }
-                    .padding(.vertical, 2)
+                    .onAppear {
+                        resetHighlight()
+                        DispatchQueue.main.async {
+                            isSearchFieldFocused = true
+                        }
+                    }
+                    .onChange(of: query) { _, _ in
+                        resetHighlight()
+                    }
+                    .onChange(of: highlightedItemID) { _, newValue in
+                        guard let newValue else { return }
+                        withAnimation(.easeInOut(duration: 0.12)) {
+                            proxy.scrollTo(newValue, anchor: .center)
+                        }
+                    }
                 }
             }
             .padding(14)
@@ -1482,15 +1495,80 @@ private struct SearchableFilterChip: View {
         }
     }
 
+    private var autocompleteField: some View {
+        ZStack(alignment: .leading) {
+            if let suffix = autocompleteSuffix {
+                HStack(spacing: 0) {
+                    Text(query)
+                        .foregroundStyle(.clear)
+                    Text(suffix)
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.callout)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .allowsHitTesting(false)
+            }
+
+            TextField("Search \(title.lowercased())", text: $query)
+                .textFieldStyle(.plain)
+                .font(.callout)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .focused($isSearchFieldFocused)
+                .onSubmit(confirmSelection)
+                .onMoveCommand { direction in
+                    switch direction {
+                    case .down:
+                        moveHighlight(by: 1)
+                    case .up:
+                        moveHighlight(by: -1)
+                    default:
+                        break
+                    }
+                }
+                .onExitCommand {
+                    isPresented = false
+                }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(isSearchFieldFocused ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08))
+        }
+    }
+
     private var filteredItems: [SessionFilterOption] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else { return items }
-        guard let defaultItem = items.first else { return [] }
-
-        let matchingItems = items.dropFirst().filter {
+        return items.filter {
             $0.title.localizedCaseInsensitiveContains(normalizedQuery)
         }
-        return [defaultItem] + matchingItems
+    }
+
+    private var autocompleteSuffix: String? {
+        guard !query.isEmpty,
+              let predictedItem = predictedItem,
+              !isDefaultItem(predictedItem),
+              predictedItem.title.lowercased().hasPrefix(query.lowercased()),
+              predictedItem.title.count > query.count else {
+            return nil
+        }
+
+        return String(predictedItem.title.dropFirst(query.count))
+    }
+
+    private var predictedItem: SessionFilterOption? {
+        if let highlightedItemID,
+           let highlighted = filteredItems.first(where: { $0.id == highlightedItemID }),
+           !isDefaultItem(highlighted) {
+            return highlighted
+        }
+
+        return filteredItems.dropFirst().first
     }
 
     @ViewBuilder
@@ -1532,10 +1610,73 @@ private struct SearchableFilterChip: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(item.id == selectedItemID ? Color.accentColor.opacity(0.12) : Color.clear)
+                    .fill(
+                        item.id == highlightedItemID
+                            ? Color.accentColor.opacity(0.18)
+                            : item.id == selectedItemID
+                                ? Color.accentColor.opacity(0.12)
+                                : Color.clear
+                    )
             )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onHover { isHovering in
+            guard isHovering else { return }
+            highlightedItemID = item.id
+        }
+    }
+
+    private func moveHighlight(by offset: Int) {
+        let selectableItems = filteredItems
+        guard !selectableItems.isEmpty else { return }
+
+        let currentIndex = highlightedItemID.flatMap { currentID in
+            selectableItems.firstIndex(where: { $0.id == currentID })
+        } ?? defaultHighlightIndex(in: selectableItems)
+
+        let nextIndex = max(0, min(selectableItems.count - 1, currentIndex + offset))
+        highlightedItemID = selectableItems[nextIndex].id
+    }
+
+    private func confirmSelection() {
+        guard let item = highlightedSelection ?? predictedItem ?? filteredItems.first else {
+            return
+        }
+        onSelect(item.id)
+        query = ""
+        isPresented = false
+    }
+
+    private var highlightedSelection: SessionFilterOption? {
+        guard let highlightedItemID else { return nil }
+        return filteredItems.first(where: { $0.id == highlightedItemID })
+    }
+
+    private func resetHighlight() {
+        guard !filteredItems.isEmpty else {
+            highlightedItemID = nil
+            return
+        }
+
+        if filteredItems.contains(where: { $0.id == selectedItemID }) && query.isEmpty {
+            highlightedItemID = selectedItemID
+            return
+        }
+
+        highlightedItemID = filteredItems.first?.id
+    }
+
+    private func defaultHighlightIndex(in items: [SessionFilterOption]) -> Int {
+        if query.isEmpty, let selectedIndex = items.firstIndex(where: { $0.id == selectedItemID }) {
+            return selectedIndex
+        }
+        return 0
+    }
+
+    private func isDefaultItem(_ item: SessionFilterOption) -> Bool {
+        item.id == items.first?.id
     }
 
     private var valueFont: Font {
