@@ -260,6 +260,23 @@ private struct CatalogItemsManagementPage: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        toggleSelectAllVisibleItems()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: selectAllImageName)
+                            Text("Select All")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(currentVisibleSelectionCount == 0 ? Color.secondary : Color.accentColor)
+                    .disabled(visibleItems.isEmpty)
+
+                    TextField(searchPlaceholder, text: searchTextBinding)
+                        .textFieldStyle(.roundedBorder)
 
                     Menu {
                         Picker("Show", selection: $stateFilter) {
@@ -281,9 +298,6 @@ private struct CatalogItemsManagementPage: View {
                     .fixedSize()
                     .help("Filter by included or excluded state")
                 }
-
-                TextField(searchPlaceholder, text: searchTextBinding)
-                    .textFieldStyle(.roundedBorder)
 
                 Group {
                     if visibleItems.isEmpty {
@@ -392,6 +406,28 @@ private struct CatalogItemsManagementPage: View {
         return viewModel.catalogItems(for: selectedScope).filter { selectedIDs.contains($0.id) }
     }
 
+    private var currentVisibleSelectionCount: Int {
+        visibleItems.reduce(into: 0) { count, item in
+            if currentSelection.contains(item.id) {
+                count += 1
+            }
+        }
+    }
+
+    private var allVisibleItemsSelected: Bool {
+        !visibleItems.isEmpty && currentVisibleSelectionCount == visibleItems.count
+    }
+
+    private var selectAllImageName: String {
+        if allVisibleItemsSelected {
+            return "checkmark.square.fill"
+        }
+        if currentVisibleSelectionCount > 0 {
+            return "minus.square.fill"
+        }
+        return "square"
+    }
+
     private var summaryText: String {
         let total = visibleItems.count
         let selected = currentSelection.count
@@ -431,6 +467,13 @@ private struct CatalogItemsManagementPage: View {
             selectedBranchIDs.removeAll()
         case .sessions:
             selectedSessionIDs.removeAll()
+        }
+    }
+
+    private func toggleSelectAllVisibleItems() {
+        let shouldSelectAll = !allVisibleItemsSelected
+        for item in visibleItems {
+            setSelection(shouldSelectAll, for: item)
         }
     }
 }
