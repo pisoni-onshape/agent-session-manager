@@ -62,7 +62,7 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 920, height: 760)
+        .frame(width: 920, height: 600)
         .onAppear {
             settings.refreshLaunchAtLoginStatus()
         }
