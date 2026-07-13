@@ -252,19 +252,35 @@ private struct CatalogItemsManagementPage: View {
             }
 
             settingsCard {
-                Picker("Scope", selection: $selectedScope) {
-                    ForEach(CatalogManagementScope.allCases) { scope in
-                        Text(scope.title).tag(scope)
+                HStack(spacing: 12) {
+                    Picker("Scope", selection: $selectedScope) {
+                        ForEach(CatalogManagementScope.allCases) { scope in
+                            Text(scope.title).tag(scope)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
 
-                Picker("State", selection: $stateFilter) {
-                    ForEach(CatalogManagementStateFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
+                    Menu {
+                        Picker("Show", selection: $stateFilter) {
+                            ForEach(CatalogManagementStateFilter.allCases) { filter in
+                                Text(filter.title).tag(filter)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: stateFilter == .all
+                                ? "line.3.horizontal.decrease.circle"
+                                : "line.3.horizontal.decrease.circle.fill")
+                            Text(stateFilter.title)
+                        }
+                        .foregroundStyle(stateFilter == .all ? Color.secondary : Color.accentColor)
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Filter by included or excluded state")
                 }
-                .pickerStyle(.segmented)
 
                 TextField(searchPlaceholder, text: searchTextBinding)
                     .textFieldStyle(.roundedBorder)

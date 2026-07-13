@@ -1405,6 +1405,7 @@ private struct SearchableFilterChip: View {
     @State private var isPresented = false
     @State private var query = ""
     @State private var highlightedItemID: String?
+    @State private var highlightViaKeyboard = false
 
     var body: some View {
         Button {
@@ -1479,7 +1480,8 @@ private struct SearchableFilterChip: View {
                         resetHighlight()
                     }
                     .onChange(of: highlightedItemID) { _, newValue in
-                        guard let newValue else { return }
+                        guard highlightViaKeyboard, let newValue else { return }
+                        highlightViaKeyboard = false
                         withAnimation(.easeInOut(duration: 0.12)) {
                             proxy.scrollTo(newValue, anchor: .center)
                         }
@@ -1608,6 +1610,7 @@ private struct SearchableFilterChip: View {
         .contentShape(Rectangle())
         .onHover { isHovering in
             guard isHovering else { return }
+            highlightViaKeyboard = false
             highlightedItemID = item.id
         }
     }
@@ -1621,6 +1624,7 @@ private struct SearchableFilterChip: View {
         } ?? defaultHighlightIndex(in: selectableItems)
 
         let nextIndex = max(0, min(selectableItems.count - 1, currentIndex + offset))
+        highlightViaKeyboard = true
         highlightedItemID = selectableItems[nextIndex].id
     }
 
@@ -1644,6 +1648,7 @@ private struct SearchableFilterChip: View {
             return
         }
 
+        highlightViaKeyboard = true
         if filteredItems.contains(where: { $0.id == selectedItemID }) && query.isEmpty {
             highlightedItemID = selectedItemID
             return
