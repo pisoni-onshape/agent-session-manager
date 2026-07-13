@@ -3,9 +3,7 @@ import AgentSessionManagerCore
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
     case general
-    case sessionCatalog
-    case catalogItems
-    case autoRefresh
+    case indexes
 
     var id: String { rawValue }
 
@@ -13,12 +11,8 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             return "General"
-        case .sessionCatalog:
-            return "Session Catalog"
-        case .catalogItems:
+        case .indexes:
             return "Indexes"
-        case .autoRefresh:
-            return "Auto Refresh"
         }
     }
 
@@ -26,12 +20,8 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general:
             return "gearshape"
-        case .sessionCatalog:
-            return "externaldrive"
-        case .catalogItems:
+        case .indexes:
             return "square.stack.3d.up"
-        case .autoRefresh:
-            return "arrow.clockwise"
         }
     }
 }
@@ -94,12 +84,8 @@ struct SettingsView: View {
         switch selectedPage {
         case .general:
             generalPage
-        case .sessionCatalog:
-            sessionCatalogPage
-        case .catalogItems:
+        case .indexes:
             CatalogItemsManagementPage(viewModel: viewModel)
-        case .autoRefresh:
-            autoRefreshPage
         }
     }
 
@@ -107,7 +93,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             pageHeader(
                 title: "General",
-                subtitle: "Configure app-wide behavior for launch and startup."
+                subtitle: "Configure app-wide behavior, catalog interpretation, and refresh scheduling."
             )
 
             settingsCard {
@@ -131,57 +117,55 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
             }
+
+            sessionCatalogCard
+
+            autoRefreshCard
         }
     }
 
-    private var sessionCatalogPage: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            pageHeader(
-                title: "Session Catalog",
-                subtitle: "Adjust how Newton workspace metadata is interpreted for cataloging."
-            )
+    private var sessionCatalogCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Session Catalog")
+                    .font(.headline)
 
-            settingsCard {
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Newton repos path") {
-                        TextField(
-                            "",
-                            text: $newtonReposRootPathDraft,
-                            prompt: Text("/Users/you/repos")
-                                .foregroundStyle(.secondary)
-                        )
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(0.22))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.18))
-                        )
-                        .focused($focusedField, equals: .newtonReposRootPath)
-                        .onSubmit(commitNewtonReposRootPath)
-                        .frame(minWidth: 420)
-                    }
-
-                    Text("Only repos directly under this root whose names start with `newton` are included by the Newton-only filter.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                LabeledContent("Newton repos path") {
+                    TextField(
+                        "",
+                        text: $newtonReposRootPathDraft,
+                        prompt: Text("/Users/you/repos")
+                            .foregroundStyle(.secondary)
+                    )
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.white.opacity(0.22))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.18))
+                    )
+                    .focused($focusedField, equals: .newtonReposRootPath)
+                    .onSubmit(commitNewtonReposRootPath)
+                    .frame(minWidth: 420)
                 }
+
+                Text("Only repos directly under this root whose names start with `newton` are included by the Newton-only filter.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var autoRefreshPage: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            pageHeader(
-                title: "Auto Refresh",
-                subtitle: "Control when the catalog refreshes while the app is open."
-            )
+    private var autoRefreshCard: some View {
+        settingsCard {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Auto Refresh")
+                    .font(.headline)
 
-            settingsCard {
                 Picker(
                     "Refresh on a timer",
                     selection: Binding(
@@ -248,12 +232,14 @@ private struct CatalogItemsManagementPage: View {
     @ObservedObject var viewModel: SessionBrowserViewModel
 
     @State private var selectedScope: CatalogManagementScope = .projects
+    @State private var stateFilter: CatalogManagementStateFilter = .all
     @State private var projectSearchText = ""
     @State private var branchSearchText = ""
     @State private var sessionSearchText = ""
     @State private var selectedProjectIDs: Set<String> = []
     @State private var selectedBranchIDs: Set<String> = []
     @State private var selectedSessionIDs: Set<String> = []
+    @State private var visibleItems: [CatalogManagementItem] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -273,31 +259,40 @@ private struct CatalogItemsManagementPage: View {
                 }
                 .pickerStyle(.segmented)
 
+                Picker("State", selection: $stateFilter) {
+                    ForEach(CatalogManagementStateFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+
                 TextField(searchPlaceholder, text: searchTextBinding)
                     .textFieldStyle(.roundedBorder)
 
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        if filteredItems.isEmpty {
-                            Text("No matching \(selectedScope.title.lowercased()).")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 24)
-                        } else {
-                            ForEach(filteredItems) { item in
-                                CatalogManagementRow(
-                                    item: item,
-                                    isSelected: selectionBinding(for: item).wrappedValue,
-                                    onToggleSelected: { isSelected in
-                                        selectionBinding(for: item).wrappedValue = isSelected
-                                    }
-                                )
-                            }
+                Group {
+                    if visibleItems.isEmpty {
+                        Text("No matching \(selectedScope.title.lowercased()).")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 360, alignment: .center)
+                    } else {
+                        List(visibleItems) { item in
+                            CatalogManagementRow(
+                                item: item,
+                                isSelected: currentSelection.contains(item.id),
+                                onToggleSelected: { isSelected in
+                                    setSelection(isSelected, for: item)
+                                }
+                            )
+                            .listRowInsets(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                         }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 360)
                     }
                 }
-                .frame(minHeight: 360)
 
                 HStack {
                     Text(summaryText)
@@ -328,6 +323,22 @@ private struct CatalogItemsManagementPage: View {
                 }
             }
         }
+        .onAppear(perform: recomputeVisibleItems)
+        .onChange(of: selectedScope) { _, _ in recomputeVisibleItems() }
+        .onChange(of: stateFilter) { _, _ in recomputeVisibleItems() }
+        .onChange(of: projectSearchText) { _, _ in recomputeVisibleItems() }
+        .onChange(of: branchSearchText) { _, _ in recomputeVisibleItems() }
+        .onChange(of: sessionSearchText) { _, _ in recomputeVisibleItems() }
+        .onChange(of: viewModel.exclusions) { _, _ in recomputeVisibleItems() }
+        .onChange(of: viewModel.allSessions.count) { _, _ in recomputeVisibleItems() }
+    }
+
+    private func recomputeVisibleItems() {
+        visibleItems = viewModel.filteredCatalogItems(
+            for: selectedScope,
+            state: stateFilter,
+            searchText: currentSearchText
+        )
     }
 
     private var searchPlaceholder: String {
@@ -360,66 +371,39 @@ private struct CatalogItemsManagementPage: View {
         }
     }
 
-    private var filteredItems: [CatalogManagementItem] {
-        let query = currentSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let items = viewModel.catalogItems(for: selectedScope)
-        guard !query.isEmpty else { return items }
-
-        return items.filter { item in
-            item.title.localizedCaseInsensitiveContains(query)
-                || item.subtitle.localizedCaseInsensitiveContains(query)
-                || item.state.title.localizedCaseInsensitiveContains(query)
-        }
-    }
-
     private var selectedItems: [CatalogManagementItem] {
         let selectedIDs = currentSelection
         return viewModel.catalogItems(for: selectedScope).filter { selectedIDs.contains($0.id) }
     }
 
     private var summaryText: String {
-        let total = filteredItems.count
+        let total = visibleItems.count
         let selected = currentSelection.count
         return selected == 0
             ? "\(total) \(selectedScope.title.lowercased()) shown"
             : "\(selected) selected - \(total) \(selectedScope.title.lowercased()) shown"
     }
 
-    private func selectionBinding(for item: CatalogManagementItem) -> Binding<Bool> {
+    private func setSelection(_ isSelected: Bool, for item: CatalogManagementItem) {
         switch selectedScope {
         case .projects:
-            return Binding(
-                get: { selectedProjectIDs.contains(item.id) },
-                set: { isSelected in
-                    if isSelected {
-                        selectedProjectIDs.insert(item.id)
-                    } else {
-                        selectedProjectIDs.remove(item.id)
-                    }
-                }
-            )
+            if isSelected {
+                selectedProjectIDs.insert(item.id)
+            } else {
+                selectedProjectIDs.remove(item.id)
+            }
         case .branches:
-            return Binding(
-                get: { selectedBranchIDs.contains(item.id) },
-                set: { isSelected in
-                    if isSelected {
-                        selectedBranchIDs.insert(item.id)
-                    } else {
-                        selectedBranchIDs.remove(item.id)
-                    }
-                }
-            )
+            if isSelected {
+                selectedBranchIDs.insert(item.id)
+            } else {
+                selectedBranchIDs.remove(item.id)
+            }
         case .sessions:
-            return Binding(
-                get: { selectedSessionIDs.contains(item.id) },
-                set: { isSelected in
-                    if isSelected {
-                        selectedSessionIDs.insert(item.id)
-                    } else {
-                        selectedSessionIDs.remove(item.id)
-                    }
-                }
-            )
+            if isSelected {
+                selectedSessionIDs.insert(item.id)
+            } else {
+                selectedSessionIDs.remove(item.id)
+            }
         }
     }
 

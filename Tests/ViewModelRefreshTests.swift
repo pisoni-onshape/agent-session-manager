@@ -438,6 +438,61 @@ final class ViewModelRefreshTests: XCTestCase {
         )
     }
 
+    func testFilteredCatalogItemsAppliesStateAndSearchFilters() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let databaseURL = directory.appendingPathComponent("catalog.sqlite3")
+
+        let includedRecord = try makeRecord(
+            sessionID: "included-project",
+            title: "Included Project",
+            fingerprint: "v1",
+            directory: directory,
+            transcriptText: "Included project transcript.",
+            projectName: "newton-included",
+            branch: "main"
+        )
+        let adapter = BlockingSessionAdapter(
+            candidates: [
+                SessionScanCandidate(
+                    id: includedRecord.id,
+                    fingerprint: includedRecord.fingerprint,
+                    isInProgress: false,
+                    exclusionMetadata: SessionScanCandidateExclusionMetadata(
+                        projectName: includedRecord.projectName,
+                        branch: includedRecord.branch
+                    ),
+                    loadRecord: { includedRecord }
+                )
+            ]
+        )
+        let catalog = try SessionCatalog(storeURL: databaseURL, adaptersOverride: [adapter])
+        try catalog.addExclusion(.project(named: "newton-excluded"))
+
+        let viewModel = SessionBrowserViewModel(catalog: catalog)
+        await viewModel.loadInitialData()
+
+        let allItems = viewModel.filteredCatalogItems(for: .projects, state: .all, searchText: "")
+        XCTAssertTrue(allItems.contains(where: { $0.id == "newton-included" && $0.state == .included }))
+        XCTAssertTrue(allItems.contains(where: { $0.id == "newton-excluded" && $0.state == .excluded }))
+
+        let excludedOnly = viewModel.filteredCatalogItems(for: .projects, state: .excluded, searchText: "")
+        XCTAssertEqual(excludedOnly.map(\.id), ["newton-excluded"])
+
+        let includedOnly = viewModel.filteredCatalogItems(for: .projects, state: .included, searchText: "")
+        XCTAssertEqual(includedOnly.map(\.id), ["newton-included"])
+
+        let searchedIncluded = viewModel.filteredCatalogItems(for: .projects, state: .all, searchText: "included")
+        XCTAssertEqual(searchedIncluded.map(\.id), ["newton-included"])
+
+        let searchedExcludedButIncludedState = viewModel.filteredCatalogItems(
+            for: .projects,
+            state: .included,
+            searchText: "excluded"
+        )
+        XCTAssertTrue(searchedExcludedButIncludedState.isEmpty)
+    }
+
     func testCatalogBulkExcludeAndIncludeProjectItemRefreshesCatalogState() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

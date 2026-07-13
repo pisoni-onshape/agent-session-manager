@@ -138,6 +138,36 @@ enum CatalogManagementItemState: String, Equatable {
     }
 }
 
+enum CatalogManagementStateFilter: String, CaseIterable, Identifiable, Equatable {
+    case all
+    case included
+    case excluded
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all:
+            return "All"
+        case .included:
+            return "Included"
+        case .excluded:
+            return "Excluded"
+        }
+    }
+
+    func matches(_ item: CatalogManagementItem) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .included:
+            return item.state == .included
+        case .excluded:
+            return item.state == .excluded
+        }
+    }
+}
+
 enum CatalogManagementItemKind: Equatable {
     case project
     case branch
@@ -777,6 +807,21 @@ final class SessionBrowserViewModel: ObservableObject {
             return catalogBranchItems
         case .sessions:
             return catalogSessionItems
+        }
+    }
+
+    func filteredCatalogItems(
+        for scope: CatalogManagementScope,
+        state: CatalogManagementStateFilter,
+        searchText: String
+    ) -> [CatalogManagementItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return catalogItems(for: scope).filter { item in
+            guard state.matches(item) else { return false }
+            guard !query.isEmpty else { return true }
+            return item.title.localizedCaseInsensitiveContains(query)
+                || item.subtitle.localizedCaseInsensitiveContains(query)
+                || item.state.title.localizedCaseInsensitiveContains(query)
         }
     }
 

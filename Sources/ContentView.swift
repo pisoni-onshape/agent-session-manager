@@ -1405,7 +1405,6 @@ private struct SearchableFilterChip: View {
     @State private var isPresented = false
     @State private var query = ""
     @State private var highlightedItemID: String?
-    @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
         Button {
@@ -1475,9 +1474,6 @@ private struct SearchableFilterChip: View {
                     }
                     .onAppear {
                         resetHighlight()
-                        DispatchQueue.main.async {
-                            isSearchFieldFocused = true
-                        }
                     }
                     .onChange(of: query) { _, _ in
                         resetHighlight()
@@ -1505,31 +1501,23 @@ private struct SearchableFilterChip: View {
                         .foregroundStyle(.tertiary)
                 }
                 .font(.callout)
+                .lineLimit(1)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .allowsHitTesting(false)
             }
 
-            TextField("Search \(title.lowercased())", text: $query)
-                .textFieldStyle(.plain)
-                .font(.callout)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .focused($isSearchFieldFocused)
-                .onSubmit(confirmSelection)
-                .onMoveCommand { direction in
-                    switch direction {
-                    case .down:
-                        moveHighlight(by: 1)
-                    case .up:
-                        moveHighlight(by: -1)
-                    default:
-                        break
-                    }
-                }
-                .onExitCommand {
-                    isPresented = false
-                }
+            AutocompleteSearchField(
+                text: $query,
+                placeholder: "Search \(title.lowercased())",
+                onMoveUp: { moveHighlight(by: -1) },
+                onMoveDown: { moveHighlight(by: 1) },
+                onConfirm: confirmSelection,
+                onCancel: { isPresented = false }
+            )
+            .frame(height: 20)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
         }
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -1537,22 +1525,24 @@ private struct SearchableFilterChip: View {
         )
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(isSearchFieldFocused ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08))
+                .strokeBorder(Color.accentColor.opacity(0.55))
         }
     }
 
     private var filteredItems: [SessionFilterOption] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else { return items }
-        return items.filter {
-            $0.title.localizedCaseInsensitiveContains(normalizedQuery)
-        }
+
+        let lowerQuery = normalizedQuery.lowercased()
+        let matches = items.filter { $0.title.localizedCaseInsensitiveContains(normalizedQuery) }
+        let prefixMatches = matches.filter { $0.title.lowercased().hasPrefix(lowerQuery) }
+        let otherMatches = matches.filter { !$0.title.lowercased().hasPrefix(lowerQuery) }
+        return prefixMatches + otherMatches
     }
 
     private var autocompleteSuffix: String? {
         guard !query.isEmpty,
-              let predictedItem = predictedItem,
-              !isDefaultItem(predictedItem),
+              let predictedItem,
               predictedItem.title.lowercased().hasPrefix(query.lowercased()),
               predictedItem.title.count > query.count else {
             return nil
@@ -1562,13 +1552,7 @@ private struct SearchableFilterChip: View {
     }
 
     private var predictedItem: SessionFilterOption? {
-        if let highlightedItemID,
-           let highlighted = filteredItems.first(where: { $0.id == highlightedItemID }),
-           !isDefaultItem(highlighted) {
-            return highlighted
-        }
-
-        return filteredItems.dropFirst().first
+        highlightedSelection ?? filteredItems.first
     }
 
     @ViewBuilder
@@ -1675,10 +1659,6 @@ private struct SearchableFilterChip: View {
         return 0
     }
 
-    private func isDefaultItem(_ item: SessionFilterOption) -> Bool {
-        item.id == items.first?.id
-    }
-
     private var valueFont: Font {
         switch prominence {
         case .compact:
@@ -1703,6 +1683,85 @@ private struct SearchableFilterChip: View {
             return 8
         case .expanded:
             return 10
+        }
+    }
+}
+
+/// An AppKit-backed single-line text field used inside the searchable filter popovers.
+/// Unlike a plain SwiftUI `TextField`, it auto-focuses when shown and intercepts the
+/// arrow keys, Return, and Escape so the popover can drive keyboard navigation,
+/// autocomplete confirmation, and dismissal.
+private struct AutocompleteSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.delegate = context.coordinator
+        field.stringValue = text
+        field.placeholderString = placeholder
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .preferredFont(forTextStyle: .callout)
+        field.lineBreakMode = .byTruncatingTail
+        field.cell?.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        DispatchQueue.main.async {
+            field.window?.makeFirstResponder(field)
+        }
+
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        nsView.placeholderString = placeholder
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: AutocompleteSearchField
+
+        init(_ parent: AutocompleteSearchField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.moveUp(_:)):
+                parent.onMoveUp()
+                return true
+            case #selector(NSResponder.moveDown(_:)):
+                parent.onMoveDown()
+                return true
+            case #selector(NSResponder.insertNewline(_:)):
+                parent.onConfirm()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                parent.onCancel()
+                return true
+            default:
+                return false
+            }
         }
     }
 }
