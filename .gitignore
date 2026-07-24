@@ -5,3 +5,6 @@ DerivedData/
 AgentSessionManager.xcodeproj/project.xcworkspace/xcuserdata/
 AgentSessionManager.xcodeproj/xcuserdata/
 *.profraw
+
+# Internal screenshot capture notes - kept locally, not published
+docs/screenshots/CAPTURE_GUIDE.md

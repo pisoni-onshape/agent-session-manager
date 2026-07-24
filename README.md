@@ -26,21 +26,15 @@ Agent Session Manager fixes this. It indexes every source into one local catalog
 
 <!-- SCREENSHOT: 02-search-matches.png -->
 <p align="center">
-  <img src="docs/screenshots/02-search-matches.png" alt="Toolbar search with a transcript: query typed, cards showing transcript and plan match-count pills with snippets" width="900">
+  <img src="docs/screenshots/02-search-matches.png" alt="Search results: a session card showing transcript and plan match-count pills with snippets, next to the detail pane" width="900">
 </p>
-<p align="center"><em>Deep search: type <code>transcript:"memory leak"</code> and cards surface match-count pills plus the exact snippet. Click a pill to jump straight to it.</em></p>
+<p align="center"><em>Deep search: a single query matches inside transcripts <em>and</em> plans at once - cards surface <strong>"N transcript matches"</strong> and <strong>"N plan matches"</strong> pills with the exact snippet. Click a pill to jump straight to that match.</em></p>
 
 <!-- SCREENSHOT: 06-transcript-viewer.png -->
 <p align="center">
-  <img src="docs/screenshots/06-transcript-viewer.png" alt="Transcript viewer window with the Find bar active, matches highlighted in place, and a Message N of M indicator" width="820">
+  <img src="docs/screenshots/06-transcript-viewer.png" alt="Transcript viewer window showing user and assistant turns with rich markdown rendering" width="820">
 </p>
-<p align="center"><em>Built-in transcript viewer with browser-style Find - highlights every match in place, steps through with Cmd-G, and collapses internal tool calls for readability.</em></p>
-
-<!-- SCREENSHOT: 07-plan-viewer.png -->
-<p align="center">
-  <img src="docs/screenshots/07-plan-viewer.png" alt="Plan viewer window rendering a plan.md as markdown with the Find bar and a Section N of M indicator" width="820">
-</p>
-<p align="center"><em>Plan viewer renders <code>plan.md</code> as clean markdown, with the same find-as-you-go navigation across sections.</em></p>
+<p align="center"><em>Built-in transcript viewer: clean user and assistant turns with full markdown - headings, lists, tables, and code. Press Cmd-F for browser-style Find that highlights matches in place with a "Message N of M" indicator, and collapse internal tool calls to stay focused.</em></p>
 
 ---
 
@@ -85,7 +79,7 @@ Agent Session Manager fixes this. It indexes every source into one local catalog
 
 <!-- SCREENSHOT: 03-filters.png -->
 <p align="center">
-  <img src="docs/screenshots/03-filters.png" alt="The left-hand filter bar with the project autocomplete popover open, showing per-project session counts" width="560">
+  <img src="docs/screenshots/03-filters.png" alt="The left-hand filter bar with the project autocomplete popover open, showing per-project session counts" width="640">
 </p>
 <p align="center"><em>Source, project, branch, starred, in-progress, Newton-only, and sort - all in the filter bar. Project and branch open autocomplete popovers with live session counts.</em></p>
 
@@ -93,17 +87,17 @@ Agent Session Manager fixes this. It indexes every source into one local catalog
 
 <!-- SCREENSHOT: 04-labels-menu.png -->
 <p align="center">
-  <img src="docs/screenshots/04-labels-menu.png" alt="The Labels dropdown menu open next to the search field, listing field labels and example queries" width="560">
+  <img src="docs/screenshots/04-labels-menu.png" alt="The Labels dropdown menu open next to the search field, listing field labels and example queries" width="440">
 </p>
 <p align="center"><em>The <strong>Labels</strong> menu lists every field label with a hint, plus ready-to-click example queries.</em></p>
 
-#### Everything about a session, one pane away
+#### Star what matters, rename anything
 
-<!-- SCREENSHOT: 05-detail-pane.png -->
+<!-- SCREENSHOT: 05-star-rename.png -->
 <p align="center">
-  <img src="docs/screenshots/05-detail-pane.png" alt="The detail pane showing metadata rows, first-message previews, and the action buttons" width="620">
+  <img src="docs/screenshots/05-star-rename.png" alt="The Starred filter active with starred sessions in the list, and a session title being renamed in place in the detail pane" width="880">
 </p>
-<p align="center"><em>The detail pane: resume/open actions, New Chat, Transcript and Open Plan buttons, full metadata with copy and quick-exclude, and first-message previews.</em></p>
+<p align="center"><em>Star sessions so they float to the top (filter to just your starred set), and rename any Copilot CLI or Claude Code session in place - a proper title instead of an auto-generated one.</em></p>
 
 ### Companion CLI
 
@@ -205,12 +199,6 @@ Click the pencil icon next to a session's title in the detail pane to rename it 
 
 Copilot CLI and Claude Code CLI sessions that are actively running show an "In Progress" indicator on the card and detail pane. Resuming one of these prompts for confirmation before reconnecting, since another terminal may already be attached.
 
-<!-- SCREENSHOT: 08-in-progress.png -->
-<p align="center">
-  <img src="docs/screenshots/08-in-progress.png" alt="A session card with an orange In Progress pill, and the Session Currently Active confirmation dialog" width="820">
-</p>
-<p align="center"><em>Live "In Progress" sessions are flagged, and resuming one asks for confirmation so you don't collide with a terminal that's already attached.</em></p>
-
 ### Resuming Sessions
 
 Each session's detail pane shows a primary action button:
@@ -231,12 +219,6 @@ Click **Open Plan** in the detail pane to open a session's plan.md in the built-
 ### Managing the Index
 
 Open **Settings → Indexes** (⌘,) to include or exclude specific projects, branches, or sessions from the catalog. Switch scope with the segmented control, search within the current scope, filter by All/Included/Excluded, use Select All to toggle everything currently visible, then apply with "Include Selected" or "Exclude Selected". Excluded items are hidden from search and the session list but their source files are left untouched.
-
-<!-- SCREENSHOT: 09-settings-indexes.png -->
-<p align="center">
-  <img src="docs/screenshots/09-settings-indexes.png" alt="Settings Indexes page with the Projects/Branches/Sessions scope switcher, search, All/Included/Excluded filter, and a list of items" width="820">
-</p>
-<p align="center"><em>Fine-grained index control - include or exclude any project, branch, or session; source files are never modified.</em></p>
 
 ### Settings
 
@@ -345,9 +327,3 @@ That tag push creates or updates the GitHub Release for `v1.2.3` and uploads the
 | `Sources/TranscriptDocumentCache.swift` | Caches parsed transcript documents by fingerprint |
 | `build.sh` | Build, version-stamp, and install script |
 | `project.yml` | XcodeGen project definition |
-
----
-
-## Screenshots
-
-The images referenced throughout this README live in [`docs/screenshots/`](docs/screenshots/). See [`docs/screenshots/CAPTURE_GUIDE.md`](docs/screenshots/CAPTURE_GUIDE.md) for the exact shot list, the UI state to set up for each, and cropping guidance.
