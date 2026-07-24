@@ -877,6 +877,21 @@ private struct SessionDetailView: View {
     @State private var pendingExclusion: PendingExclusionAction?
     @FocusState private var titleFieldFocused: Bool
 
+    /// Font size for the editable title field. Shared with `titleEditLineHeight` so the height
+    /// floor always tracks the applied font.
+    private var titleEditFontSize: CGFloat {
+        NSFont.preferredFont(forTextStyle: .largeTitle).pointSize
+    }
+
+    /// Canonical single-line height for the title edit font. Used as a `minHeight` floor on the
+    /// plain `TextField`: the plain field's intrinsic height is occasionally measured from the
+    /// default font before the largeTitle font propagates to the backing `NSTextField`, which
+    /// vertically clips the text. The floor lifts only that rare short measurement; when the field
+    /// measures correctly it already equals this height, so the floor is a no-op in the good case.
+    private var titleEditLineHeight: CGFloat {
+        NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: titleEditFontSize, weight: .semibold))
+    }
+
     /// True when resuming this session would spawn a fresh terminal-based resume that could conflict
     /// with a still-live session. Applies to Copilot Connect and Claude CLI resumes; drives the orange
     /// primary-button tint and the "Session Currently Active" confirmation.
@@ -921,7 +936,8 @@ private struct SessionDetailView: View {
                         if isEditingTitle {
                             TextField("Session title", text: $editedTitle, onCommit: commitRename)
                                 .textFieldStyle(.plain)
-                                .font(.system(size: NSFont.preferredFont(forTextStyle: .largeTitle).pointSize, weight: .semibold))
+                                .font(.system(size: titleEditFontSize, weight: .semibold))
+                                .frame(minHeight: titleEditLineHeight, alignment: .leading)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 8)
                                 .background(Color(nsColor: .textBackgroundColor))
