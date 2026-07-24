@@ -739,6 +739,24 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertNotEqual(normal, current)
     }
 
+    func testBlockMatchDetectionMirrorsRenderedRuns() {
+        let heading = MarkdownBlock.heading(level: 1, text: "**Viewer** overview")
+        let paragraph = MarkdownBlock.paragraph(text: "Nothing relevant here.")
+        let list = MarkdownBlock.bulletList(items: ["alpha", "the viewer item"])
+        let code = MarkdownBlock.codeBlock(text: "let viewer = true")
+
+        // runStrings strips inline markdown for inline blocks but keeps code raw.
+        XCTAssertEqual(MarkdownRendering.runStrings(for: heading), ["Viewer overview"])
+        XCTAssertEqual(MarkdownRendering.runStrings(for: list), ["alpha", "the viewer item"])
+        XCTAssertEqual(MarkdownRendering.runStrings(for: code), ["let viewer = true"])
+
+        XCTAssertTrue(MarkdownRendering.blockContainsMatch(heading, query: "viewer"))
+        XCTAssertFalse(MarkdownRendering.blockContainsMatch(paragraph, query: "viewer"))
+        XCTAssertTrue(MarkdownRendering.blockContainsMatch(list, query: "viewer"))
+        XCTAssertTrue(MarkdownRendering.blockContainsMatch(code, query: "viewer"))
+        XCTAssertFalse(MarkdownRendering.blockContainsMatch(heading, query: nil))
+    }
+
     func testSearchableTranscriptEntriesIgnoreToolResultContent() throws {
         let longContent = String(repeating: "prefix ", count: 40) + "pickDefaultInferenceId" + String(repeating: " suffix", count: 40)
         let url = try temporaryFile(

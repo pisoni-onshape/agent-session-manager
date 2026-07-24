@@ -2275,6 +2275,10 @@ struct PlanViewerView: View {
     let initialSearchText: String
     @Environment(\.dismiss) private var dismiss
     @State private var searchText: String
+    @State private var currentMatchIndex = 0
+    @FocusState private var searchFocused: Bool
+
+    private static let blockIDPrefix = "planblock"
 
     init(plan: PlanDocument, initialSearchText: String = "") {
         self.plan = plan
@@ -2286,30 +2290,51 @@ struct PlanViewerView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if plan.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        ContentUnavailableView(
-                            "Plan Unavailable",
-                            systemImage: "doc.text",
-                            description: Text("No readable plan text was found in this file.")
-                        )
-                    } else if searchResult.isActive, searchResult.totalMatchCount == 0 {
-                        ContentUnavailableView(
-                            "No Matching Plan Text",
-                            systemImage: "magnifyingglass",
-                            description: Text("Try a different search term.")
-                        )
-                    } else {
-                        MarkdownTextBlock(text: plan.text, highlightQuery: searchResult.highlightQuery)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        if plan.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            ContentUnavailableView(
+                                "Plan Unavailable",
+                                systemImage: "doc.text",
+                                description: Text("No readable plan text was found in this file.")
+                            )
+                        } else {
+                            MarkdownTextBlock(
+                                text: plan.text,
+                                highlightQuery: searchResult.highlightQuery,
+                                blockIDPrefix: Self.blockIDPrefix,
+                                currentMatchBlockIndex: currentBlockIndex
+                            )
                             .padding(20)
                             .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                    }
+                    .padding(24)
+                }
+                .onAppear {
+                    guard currentBlockIndex != nil else { return }
+                    DispatchQueue.main.async {
+                        scrollToCurrentMatch(using: proxy)
                     }
                 }
-                .padding(24)
+                .onChange(of: searchText) { _, _ in
+                    currentMatchIndex = 0
+                    scrollToCurrentMatch(using: proxy)
+                }
+                .onChange(of: currentMatchIndex) { _, _ in
+                    scrollToCurrentMatch(using: proxy)
+                }
             }
         }
         .frame(minWidth: 920, minHeight: 720)
+    }
+
+    private func scrollToCurrentMatch(using proxy: ScrollViewProxy) {
+        guard let index = currentBlockIndex else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            proxy.scrollTo("\(Self.blockIDPrefix)#\(index)", anchor: .center)
+        }
     }
 
     private var header: some View {
@@ -2342,13 +2367,43 @@ struct PlanViewerView: View {
                 HStack(spacing: 10) {
                     TextField("Search plan text", text: $searchText)
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 280)
+                        .frame(width: 220)
+                        .focused($searchFocused)
+                        .onSubmit { goToNextMatch() }
 
-                    if !searchText.isEmpty {
-                        Button("Clear") {
-                            searchText = ""
-                        }
+                    if let positionLabel {
+                        Text(positionLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 90, alignment: .trailing)
                     }
+
+                    Button {
+                        goToPreviousMatch()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .disabled(matchingBlockIndices.isEmpty)
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .help("Previous match")
+
+                    Button {
+                        goToNextMatch()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .disabled(matchingBlockIndices.isEmpty)
+                    .keyboardShortcut("g", modifiers: .command)
+                    .help("Next match")
+
+                    Button {
+                        searchText = ""
+                        searchFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                    }
+                    .disabled(searchText.isEmpty)
+                    .help("Clear search")
                 }
 
                 HStack(spacing: 10) {
@@ -2368,16 +2423,81 @@ struct PlanViewerView: View {
             }
         }
         .padding(20)
+        .background(
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        )
     }
 
     private var searchResult: PlanViewerSearchResult {
         plan.viewerSearchResult(for: searchText)
     }
 
+    private var planBlocks: [MarkdownBlock] {
+        MarkdownRendering.blocks(from: plan.text)
+    }
+
+    /// Indices of the blocks that contain a match, and the total number of match
+    /// occurrences, computed in a single pass over the rendered blocks so both the
+    /// navigation and the summary agree with what is highlighted.
+    private var planMatchInfo: (matchingBlockIndices: [Int], totalOccurrences: Int) {
+        guard let query = searchResult.highlightQuery else { return ([], 0) }
+        let blocks = planBlocks
+        if blocks.isEmpty {
+            let count = SearchTextMatcher.matchRanges(in: plan.text, query: query).count
+            return (count > 0 ? [0] : [], count)
+        }
+        var indices: [Int] = []
+        var total = 0
+        for (index, block) in blocks.enumerated() {
+            let count = MarkdownRendering.runStrings(for: block)
+                .reduce(0) { $0 + SearchTextMatcher.matchRanges(in: $1, query: query).count }
+            if count > 0 {
+                indices.append(index)
+                total += count
+            }
+        }
+        return (indices, total)
+    }
+
+    private var matchingBlockIndices: [Int] {
+        planMatchInfo.matchingBlockIndices
+    }
+
+    private var currentBlockIndex: Int? {
+        let indices = matchingBlockIndices
+        guard indices.indices.contains(currentMatchIndex) else { return nil }
+        return indices[currentMatchIndex]
+    }
+
+    private var positionLabel: String? {
+        guard searchResult.isActive else { return nil }
+        let count = matchingBlockIndices.count
+        guard count > 0 else { return "No results" }
+        let position = min(currentMatchIndex, count - 1) + 1
+        return "Section \(position) of \(count)"
+    }
+
+    private func goToNextMatch() {
+        let count = matchingBlockIndices.count
+        guard count > 0 else { return }
+        currentMatchIndex = (currentMatchIndex + 1) % count
+    }
+
+    private func goToPreviousMatch() {
+        let count = matchingBlockIndices.count
+        guard count > 0 else { return }
+        currentMatchIndex = (currentMatchIndex - 1 + count) % count
+    }
+
     private var itemSummary: String {
         if searchResult.isActive {
-            let matchNoun = searchResult.totalMatchCount == 1 ? "match" : "matches"
-            return "\(searchResult.totalMatchCount) \(matchNoun)"
+            let info = planMatchInfo
+            let matchNoun = info.totalOccurrences == 1 ? "match" : "matches"
+            let sectionCount = info.matchingBlockIndices.count
+            let sectionNoun = sectionCount == 1 ? "section" : "sections"
+            return "\(info.totalOccurrences) \(matchNoun) in \(sectionCount) \(sectionNoun)"
         }
 
         let lineCount = plan.text.split(separator: "\n", omittingEmptySubsequences: false).count
@@ -2597,12 +2717,22 @@ private struct CollapsedTranscriptEventsView: View {
 private struct MarkdownTextBlock: View {
     let highlightQuery: String?
     let isCurrentMatch: Bool
+    let blockIDPrefix: String?
+    let currentMatchBlockIndex: Int?
     private let rawText: String
     private let blocks: [MarkdownBlock]
 
-    init(text: String, highlightQuery: String?, isCurrentMatch: Bool = false) {
+    init(
+        text: String,
+        highlightQuery: String?,
+        isCurrentMatch: Bool = false,
+        blockIDPrefix: String? = nil,
+        currentMatchBlockIndex: Int? = nil
+    ) {
         self.highlightQuery = highlightQuery
         self.isCurrentMatch = isCurrentMatch
+        self.blockIDPrefix = blockIDPrefix
+        self.currentMatchBlockIndex = currentMatchBlockIndex
         rawText = text
         blocks = MarkdownRendering.blocks(from: text)
     }
@@ -2610,10 +2740,10 @@ private struct MarkdownTextBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if blocks.isEmpty {
-                Text(MarkdownRendering.plainTextAttributedString(from: rawText, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
+                blockID(for: 0, content: Text(MarkdownRendering.plainTextAttributedString(from: rawText, highlightQuery: highlightQuery, isCurrent: isCurrent(at: 0))))
             } else {
-                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                    MarkdownBlockView(block: block, highlightQuery: highlightQuery, isCurrentMatch: isCurrentMatch)
+                ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                    blockID(for: index, content: MarkdownBlockView(block: block, highlightQuery: highlightQuery, isCurrentMatch: isCurrent(at: index)))
                 }
             }
         }
@@ -2621,6 +2751,21 @@ private struct MarkdownTextBlock: View {
         .fixedSize(horizontal: false, vertical: true)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func isCurrent(at index: Int) -> Bool {
+        isCurrentMatch || currentMatchBlockIndex == index
+    }
+
+    @ViewBuilder
+    private func blockID(for index: Int, content: some View) -> some View {
+        if let blockIDPrefix {
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id("\(blockIDPrefix)#\(index)")
+        } else {
+            content
+        }
     }
 }
 

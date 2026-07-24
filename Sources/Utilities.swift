@@ -175,6 +175,41 @@ public enum MarkdownRendering {
         return rawText
     }
 
+    /// The visible strings that a block renders and highlights over, in render order
+    /// (one per inline block, one per list item, one for plain code/table blocks).
+    /// Mirrors how `MarkdownBlockView` renders so block-level match detection agrees
+    /// with the highlighting.
+    public static func runStrings(for block: MarkdownBlock) -> [String] {
+        switch block {
+        case let .heading(_, text):
+            return [inlineVisibleText(text)]
+        case let .paragraph(text):
+            return [inlineVisibleText(text)]
+        case let .bulletList(items):
+            return items.map(inlineVisibleText)
+        case let .numberedList(items):
+            return items.map(inlineVisibleText)
+        case let .blockquote(text):
+            return [inlineVisibleText(text)]
+        case let .codeBlock(text):
+            return [text]
+        case let .table(rows):
+            return [rows.joined(separator: "\n")]
+        case .thematicBreak:
+            return []
+        }
+    }
+
+    /// Whether a block contains at least one match for the query.
+    public static func blockContainsMatch(_ block: MarkdownBlock, query rawQuery: String?) -> Bool {
+        guard let query = SearchTextMatcher.normalizedQuery(rawQuery) else { return false }
+        return runStrings(for: block).contains { !SearchTextMatcher.matchRanges(in: $0, query: query).isEmpty }
+    }
+
+    private static func inlineVisibleText(_ text: String) -> String {
+        String((parseInlineMarkdown(text) ?? AttributedString(text)).characters)
+    }
+
     public static func blocks(from rawText: String) -> [MarkdownBlock] {
         let normalizedText = rawText
             .replacingOccurrences(of: "\r\n", with: "\n")
