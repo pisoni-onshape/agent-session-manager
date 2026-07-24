@@ -2053,6 +2053,8 @@ struct TranscriptViewerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var searchText: String
     @State private var showInternalEvents = false
+    @State private var currentMatchIndex = 0
+    @FocusState private var searchFocused: Bool
 
     init(transcript: TranscriptDocument, initialSearchText: String = "") {
         self.transcript = transcript
@@ -2064,46 +2066,63 @@ struct TranscriptViewerView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let timestampNotice = transcript.timestampNotice {
-                        Label(timestampNotice, systemImage: "clock.badge.exclamationmark")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        if let timestampNotice = transcript.timestampNotice {
+                            Label(timestampNotice, systemImage: "clock.badge.exclamationmark")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
 
-                    if transcript.entries.isEmpty {
-                        ContentUnavailableView(
-                            "Transcript Unavailable",
-                            systemImage: "text.bubble",
-                            description: Text("No readable conversation entries were found in this transcript.")
-                        )
-                    } else if searchResult.isActive, searchResult.displayItems.isEmpty {
-                        ContentUnavailableView(
-                            "No Matching Messages",
-                            systemImage: "text.magnifyingglass",
-                            description: Text("Only user and assistant messages are searched in this view.")
-                        )
-                    } else if displayedItems.isEmpty {
-                        ContentUnavailableView(
-                            "No Chat Messages",
-                            systemImage: "text.bubble",
-                            description: Text("Turn on Show internal events to inspect non-chat transcript items.")
-                        )
-                    } else {
-                        TranscriptTimelineView(
-                            items: displayedItems,
-                            highlightQuery: searchResult.highlightQuery
-                        )
+                        if transcript.entries.isEmpty {
+                            ContentUnavailableView(
+                                "Transcript Unavailable",
+                                systemImage: "text.bubble",
+                                description: Text("No readable conversation entries were found in this transcript.")
+                            )
+                        } else if displayedItems.isEmpty {
+                            ContentUnavailableView(
+                                "No Chat Messages",
+                                systemImage: "text.bubble",
+                                description: Text("Turn on Show internal events to inspect non-chat transcript items.")
+                            )
+                        } else {
+                            TranscriptTimelineView(
+                                items: displayedItems,
+                                highlightQuery: searchResult.highlightQuery,
+                                currentMatchEntryID: currentMatchEntryID
+                            )
+                        }
+                    }
+                    .padding(24)
+                }
+                .onAppear {
+                    guard !matchingEntryIDs.isEmpty else { return }
+                    DispatchQueue.main.async {
+                        scrollToCurrentMatch(using: proxy)
                     }
                 }
-                .padding(24)
+                .onChange(of: searchText) { _, _ in
+                    currentMatchIndex = 0
+                    scrollToCurrentMatch(using: proxy)
+                }
+                .onChange(of: currentMatchIndex) { _, _ in
+                    scrollToCurrentMatch(using: proxy)
+                }
             }
         }
         .frame(minWidth: 920, minHeight: 720)
+    }
+
+    private func scrollToCurrentMatch(using proxy: ScrollViewProxy) {
+        guard let id = currentMatchEntryID else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            proxy.scrollTo(id, anchor: .center)
+        }
     }
 
     private var header: some View {
@@ -2136,18 +2155,47 @@ struct TranscriptViewerView: View {
                 HStack(spacing: 10) {
                     TextField("Search chat messages", text: $searchText)
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 280)
+                        .frame(width: 220)
+                        .focused($searchFocused)
+                        .onSubmit { goToNextMatch() }
 
-                    if !searchText.isEmpty {
-                        Button("Clear") {
-                            searchText = ""
-                        }
+                    if let positionLabel {
+                        Text(positionLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 96, alignment: .trailing)
                     }
+
+                    Button {
+                        goToPreviousMatch()
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .disabled(matchingEntryIDs.isEmpty)
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                    .help("Previous match")
+
+                    Button {
+                        goToNextMatch()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .disabled(matchingEntryIDs.isEmpty)
+                    .keyboardShortcut("g", modifiers: .command)
+                    .help("Next match")
+
+                    Button {
+                        searchText = ""
+                        searchFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle")
+                    }
+                    .disabled(searchText.isEmpty)
+                    .help("Clear search")
                 }
 
                 Toggle("Show internal events", isOn: $showInternalEvents)
                     .toggleStyle(.checkbox)
-                    .disabled(searchResult.isActive)
 
                 HStack(spacing: 10) {
                     Button("Reveal Raw File") {
@@ -2162,6 +2210,11 @@ struct TranscriptViewerView: View {
             }
         }
         .padding(20)
+        .background(
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        )
     }
 
     private var searchResult: TranscriptViewerSearchResult {
@@ -2169,10 +2222,37 @@ struct TranscriptViewerView: View {
     }
 
     private var displayedItems: [TranscriptDisplayItem] {
-        if searchResult.isActive {
-            return searchResult.displayItems
-        }
-        return showInternalEvents ? transcript.displayItems : transcript.chatDisplayItems
+        showInternalEvents ? transcript.displayItems : transcript.chatDisplayItems
+    }
+
+    private var matchingEntryIDs: [String] {
+        searchResult.displayItems.map(\.id)
+    }
+
+    private var currentMatchEntryID: String? {
+        let ids = matchingEntryIDs
+        guard ids.indices.contains(currentMatchIndex) else { return nil }
+        return ids[currentMatchIndex]
+    }
+
+    private var positionLabel: String? {
+        guard searchResult.isActive else { return nil }
+        let count = matchingEntryIDs.count
+        guard count > 0 else { return "No results" }
+        let position = min(currentMatchIndex, count - 1) + 1
+        return "Message \(position) of \(count)"
+    }
+
+    private func goToNextMatch() {
+        let count = matchingEntryIDs.count
+        guard count > 0 else { return }
+        currentMatchIndex = (currentMatchIndex + 1) % count
+    }
+
+    private func goToPreviousMatch() {
+        let count = matchingEntryIDs.count
+        guard count > 0 else { return }
+        currentMatchIndex = (currentMatchIndex - 1 + count) % count
     }
 
     private var itemSummary: String {
@@ -2309,6 +2389,7 @@ struct PlanViewerView: View {
 private struct TranscriptTimelineView: View {
     let items: [TranscriptDisplayItem]
     let highlightQuery: String?
+    let currentMatchEntryID: String?
     private let calendar = Calendar.current
 
     var body: some View {
@@ -2317,7 +2398,12 @@ private struct TranscriptTimelineView: View {
                 if shouldShowDateHeader(at: index) {
                     TranscriptDateHeader(date: item.timestamp!)
                 }
-                TranscriptTimelineItemView(item: item, highlightQuery: highlightQuery)
+                TranscriptTimelineItemView(
+                    item: item,
+                    highlightQuery: highlightQuery,
+                    currentMatchEntryID: currentMatchEntryID
+                )
+                .id(item.id)
             }
         }
     }
@@ -2350,6 +2436,7 @@ private struct TranscriptDateHeader: View {
 private struct TranscriptEntryView: View {
     let entry: TranscriptEntry
     let highlightQuery: String?
+    var isCurrentMatch: Bool = false
 
     var body: some View {
         switch entry.role {
@@ -2385,7 +2472,7 @@ private struct TranscriptEntryView: View {
             }
 
             if let body = entry.body {
-                MarkdownTextBlock(text: body, highlightQuery: highlightQuery)
+                MarkdownTextBlock(text: body, highlightQuery: highlightQuery, isCurrentMatch: isCurrentMatch)
             }
         }
         .padding(16)
@@ -2406,7 +2493,7 @@ private struct TranscriptEntryView: View {
             }
 
             if let body = entry.body {
-                MarkdownTextBlock(text: body, highlightQuery: highlightQuery)
+                MarkdownTextBlock(text: body, highlightQuery: highlightQuery, isCurrentMatch: isCurrentMatch)
             }
         }
         .padding(14)
@@ -2429,11 +2516,16 @@ private struct TranscriptEntryView: View {
 private struct TranscriptTimelineItemView: View {
     let item: TranscriptDisplayItem
     let highlightQuery: String?
+    let currentMatchEntryID: String?
 
     var body: some View {
         switch item {
         case let .entry(entry):
-            TranscriptEntryView(entry: entry, highlightQuery: highlightQuery)
+            TranscriptEntryView(
+                entry: entry,
+                highlightQuery: highlightQuery,
+                isCurrentMatch: entry.id == currentMatchEntryID
+            )
         case let .collapsedEvents(_, entries):
             CollapsedTranscriptEventsView(entries: entries)
         }
@@ -2504,11 +2596,13 @@ private struct CollapsedTranscriptEventsView: View {
 
 private struct MarkdownTextBlock: View {
     let highlightQuery: String?
+    let isCurrentMatch: Bool
     private let rawText: String
     private let blocks: [MarkdownBlock]
 
-    init(text: String, highlightQuery: String?) {
+    init(text: String, highlightQuery: String?, isCurrentMatch: Bool = false) {
         self.highlightQuery = highlightQuery
+        self.isCurrentMatch = isCurrentMatch
         rawText = text
         blocks = MarkdownRendering.blocks(from: text)
     }
@@ -2516,10 +2610,10 @@ private struct MarkdownTextBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if blocks.isEmpty {
-                Text(MarkdownRendering.plainTextAttributedString(from: rawText, highlightQuery: highlightQuery))
+                Text(MarkdownRendering.plainTextAttributedString(from: rawText, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
             } else {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                    MarkdownBlockView(block: block, highlightQuery: highlightQuery)
+                    MarkdownBlockView(block: block, highlightQuery: highlightQuery, isCurrentMatch: isCurrentMatch)
                 }
             }
         }
@@ -2533,15 +2627,16 @@ private struct MarkdownTextBlock: View {
 private struct MarkdownBlockView: View {
     let block: MarkdownBlock
     let highlightQuery: String?
+    var isCurrentMatch: Bool = false
 
     var body: some View {
         switch block {
         case let .heading(level, text):
-            Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery))
+            Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
                 .font(headingFont(for: level))
                 .fontWeight(.semibold)
         case let .paragraph(text):
-            Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery))
+            Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
                 .font(.body)
         case let .bulletList(items):
             VStack(alignment: .leading, spacing: 8) {
@@ -2549,7 +2644,7 @@ private struct MarkdownBlockView: View {
                     HStack(alignment: .top, spacing: 8) {
                         Text("\u{2022}")
                             .font(.body.weight(.semibold))
-                        Text(MarkdownRendering.inlineAttributedString(from: item, highlightQuery: highlightQuery))
+                        Text(MarkdownRendering.inlineAttributedString(from: item, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
                             .font(.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -2561,7 +2656,7 @@ private struct MarkdownBlockView: View {
                     HStack(alignment: .top, spacing: 8) {
                         Text("\(index + 1).")
                             .font(.body.weight(.semibold))
-                        Text(MarkdownRendering.inlineAttributedString(from: item, highlightQuery: highlightQuery))
+                        Text(MarkdownRendering.inlineAttributedString(from: item, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
                             .font(.body)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -2572,7 +2667,7 @@ private struct MarkdownBlockView: View {
                 RoundedRectangle(cornerRadius: 999)
                     .fill(Color.secondary.opacity(0.35))
                     .frame(width: 4)
-                Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery))
+                Text(MarkdownRendering.inlineAttributedString(from: text, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2580,7 +2675,7 @@ private struct MarkdownBlockView: View {
             .padding(.vertical, 2)
         case let .codeBlock(text):
             ScrollView(.horizontal) {
-                Text(MarkdownRendering.plainTextAttributedString(from: text, highlightQuery: highlightQuery))
+                Text(MarkdownRendering.plainTextAttributedString(from: text, highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
                     .font(.system(.body, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -2588,7 +2683,7 @@ private struct MarkdownBlockView: View {
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         case let .table(rows):
             ScrollView(.horizontal) {
-                Text(MarkdownRendering.plainTextAttributedString(from: rows.joined(separator: "\n"), highlightQuery: highlightQuery))
+                Text(MarkdownRendering.plainTextAttributedString(from: rows.joined(separator: "\n"), highlightQuery: highlightQuery, isCurrent: isCurrentMatch))
                     .font(.system(.body, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)

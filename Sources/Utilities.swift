@@ -159,13 +159,13 @@ public enum MarkdownBlock: Equatable, Sendable {
 }
 
 public enum MarkdownRendering {
-    public static func inlineAttributedString(from rawText: String, highlightQuery rawQuery: String? = nil) -> AttributedString {
+    public static func inlineAttributedString(from rawText: String, highlightQuery rawQuery: String? = nil, isCurrent: Bool = false) -> AttributedString {
         let attributed = parseInlineMarkdown(rawText) ?? AttributedString(rawText)
-        return highlightedAttributedString(from: attributed, query: rawQuery)
+        return highlightedAttributedString(from: attributed, query: rawQuery, isCurrent: isCurrent)
     }
 
-    public static func plainTextAttributedString(from rawText: String, highlightQuery rawQuery: String? = nil) -> AttributedString {
-        highlightedAttributedString(from: AttributedString(rawText), query: rawQuery)
+    public static func plainTextAttributedString(from rawText: String, highlightQuery rawQuery: String? = nil, isCurrent: Bool = false) -> AttributedString {
+        highlightedAttributedString(from: AttributedString(rawText), query: rawQuery, isCurrent: isCurrent)
     }
 
     public static func visibleText(from rawText: String) -> String {
@@ -311,12 +311,16 @@ public enum MarkdownRendering {
         return try? AttributedString(markdown: rawText, options: options)
     }
 
-    private static func highlightedAttributedString(from attributed: AttributedString, query rawQuery: String?) -> AttributedString {
+    private static func highlightedAttributedString(from attributed: AttributedString, query rawQuery: String?, isCurrent: Bool = false) -> AttributedString {
         var highlighted = attributed
 
         guard let query = SearchTextMatcher.normalizedQuery(rawQuery) else {
             return highlighted
         }
+
+        let highlightColor = isCurrent
+            ? NSColor.systemOrange.withAlphaComponent(0.5)
+            : NSColor.systemYellow.withAlphaComponent(0.35)
 
         let visible = String(highlighted.characters)
         for range in SearchTextMatcher.matchRanges(in: visible, query: query) {
@@ -324,7 +328,7 @@ public enum MarkdownRendering {
                   let upperBound = AttributedString.Index(range.upperBound, within: highlighted) else {
                 continue
             }
-            highlighted[lowerBound..<upperBound].backgroundColor = NSColor.systemYellow.withAlphaComponent(0.35)
+            highlighted[lowerBound..<upperBound].backgroundColor = highlightColor
         }
 
         return highlighted

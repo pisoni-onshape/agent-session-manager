@@ -721,6 +721,24 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertTrue(rendered.runs.contains(where: { $0.link?.absoluteString == "https://example.com/viewer" }))
     }
 
+    func testCurrentMatchUsesDistinctHighlightColor() {
+        let text = "Open the viewer."
+        let query = "viewer"
+
+        let plain = MarkdownRendering.inlineAttributedString(from: text, highlightQuery: nil)
+        let normal = MarkdownRendering.inlineAttributedString(from: text, highlightQuery: query, isCurrent: false)
+        let current = MarkdownRendering.inlineAttributedString(from: text, highlightQuery: query, isCurrent: true)
+
+        // Same visible text throughout.
+        XCTAssertEqual(String(normal.characters), text)
+        XCTAssertEqual(String(current.characters), text)
+
+        // Highlighting adds a background attribute, and the current match differs from a normal match.
+        XCTAssertNotEqual(plain, normal)
+        XCTAssertNotEqual(plain, current)
+        XCTAssertNotEqual(normal, current)
+    }
+
     func testSearchableTranscriptEntriesIgnoreToolResultContent() throws {
         let longContent = String(repeating: "prefix ", count: 40) + "pickDefaultInferenceId" + String(repeating: " suffix", count: 40)
         let url = try temporaryFile(
