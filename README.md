@@ -198,7 +198,7 @@ See [RELEASE.md](RELEASE.md) for details on building distributable packages.
 
 ### First Launch
 
-On first launch the app performs an initial scan of all supported session stores and builds the SQLite catalog. This takes a few seconds depending on how many sessions you have. Subsequent launches use incremental refresh - only changed sessions are re-indexed.
+On first launch the app performs an initial scan of all supported session stores and builds the SQLite catalog. This takes a few seconds to a few minutes depending on how many sessions you have. Subsequent launches use incremental refresh - only changed sessions are re-indexed.
 
 ### Searching
 
