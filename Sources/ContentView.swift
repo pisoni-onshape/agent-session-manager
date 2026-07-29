@@ -2513,7 +2513,7 @@ private struct TranscriptTimelineView: View {
     private let calendar = Calendar.current
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        LazyVStack(alignment: .leading, spacing: 14) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 if shouldShowDateHeader(at: index) {
                     TranscriptDateHeader(date: item.timestamp!)
