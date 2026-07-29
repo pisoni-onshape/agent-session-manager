@@ -2067,43 +2067,45 @@ struct TranscriptViewerView: View {
             header
             Divider()
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        if let timestampNotice = transcript.timestampNotice {
-                            Label(timestampNotice, systemImage: "clock.badge.exclamationmark")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .padding(14)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-
-                        if transcript.entries.isEmpty {
-                            ContentUnavailableView(
-                                "Transcript Unavailable",
-                                systemImage: "text.bubble",
-                                description: Text("No readable conversation entries were found in this transcript.")
-                            )
-                        } else if displayedItems.isEmpty {
-                            ContentUnavailableView(
-                                "No Chat Messages",
-                                systemImage: "text.bubble",
-                                description: Text("Turn on Show internal events to inspect non-chat transcript items.")
-                            )
-                        } else {
-                            TranscriptTimelineView(
-                                items: displayedItems,
-                                highlightQuery: searchResult.highlightQuery,
-                                currentMatchEntryID: currentMatchEntryID
-                            )
-                        }
+                List {
+                    if let timestampNotice = transcript.timestampNotice {
+                        Label(timestampNotice, systemImage: "clock.badge.exclamationmark")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .transcriptTimelineRow()
                     }
-                    .padding(24)
+
+                    if transcript.entries.isEmpty {
+                        ContentUnavailableView(
+                            "Transcript Unavailable",
+                            systemImage: "text.bubble",
+                            description: Text("No readable conversation entries were found in this transcript.")
+                        )
+                        .transcriptTimelineRow()
+                    } else if displayedItems.isEmpty {
+                        ContentUnavailableView(
+                            "No Chat Messages",
+                            systemImage: "text.bubble",
+                            description: Text("Turn on Show internal events to inspect non-chat transcript items.")
+                        )
+                        .transcriptTimelineRow()
+                    } else {
+                        TranscriptTimelineRows(
+                            items: displayedItems,
+                            highlightQuery: searchResult.highlightQuery,
+                            currentMatchEntryID: currentMatchEntryID
+                        )
+                    }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
                 .onAppear {
                     guard !matchingEntryIDs.isEmpty else { return }
                     DispatchQueue.main.async {
-                        scrollToCurrentMatch(using: proxy)
+                        scrollToCurrentMatch(using: proxy, animated: false)
                     }
                 }
                 .onChange(of: searchText) { _, _ in
@@ -2118,9 +2120,13 @@ struct TranscriptViewerView: View {
         .frame(minWidth: 920, minHeight: 720)
     }
 
-    private func scrollToCurrentMatch(using proxy: ScrollViewProxy) {
+    private func scrollToCurrentMatch(using proxy: ScrollViewProxy, animated: Bool = true) {
         guard let id = currentMatchEntryID else { return }
-        withAnimation(.easeInOut(duration: 0.15)) {
+        if animated {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                proxy.scrollTo(id, anchor: .center)
+            }
+        } else {
             proxy.scrollTo(id, anchor: .center)
         }
     }
@@ -2506,15 +2512,25 @@ struct PlanViewerView: View {
     }
 }
 
-private struct TranscriptTimelineView: View {
+private extension View {
+    /// Shared list-row styling for the transcript timeline so rows render as clear,
+    /// separator-less cards with consistent horizontal insets.
+    func transcriptTimelineRow() -> some View {
+        listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 7, leading: 24, bottom: 7, trailing: 24))
+    }
+}
+
+private struct TranscriptTimelineRows: View {
     let items: [TranscriptDisplayItem]
     let highlightQuery: String?
     let currentMatchEntryID: String?
     private let calendar = Calendar.current
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            VStack(alignment: .leading, spacing: 14) {
                 if shouldShowDateHeader(at: index) {
                     TranscriptDateHeader(date: item.timestamp!)
                 }
@@ -2523,8 +2539,10 @@ private struct TranscriptTimelineView: View {
                     highlightQuery: highlightQuery,
                     currentMatchEntryID: currentMatchEntryID
                 )
-                .id(item.id)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .id(item.id)
+            .transcriptTimelineRow()
         }
     }
 
