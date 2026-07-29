@@ -335,6 +335,81 @@ final class TranscriptParsingTests: XCTestCase {
         XCTAssertTrue(transcript.timestampsAreComplete)
     }
 
+    func testClaudeTranscriptReclassifiesHarnessInjectedUserTurns() throws {
+        let resultText = "Master head at time of check: b8af434b. Nothing insertable-related has landed since."
+        let url = try temporaryFile(
+            named: "claude-harness.jsonl",
+            contents: """
+            {"type":"user","message":{"role":"user","content":"Investigate the insertable regression."},"timestamp":"2026-07-01T10:00:00.000Z","uuid":"u1"}
+            {"type":"user","message":{"role":"user","content":"<task-notification>\\n<task-id>blyamb27n</task-id>\\n<status>completed</status>\\n<summary>Background command \\"Brief pause\\" completed (exit code 0)</summary>\\n</task-notification>"},"timestamp":"2026-07-01T10:00:01.000Z","uuid":"u2"}
+            {"type":"user","message":{"role":"user","content":"<task-notification>\\n<task-id>a6ed3739</task-id>\\n<summary>Agent finished</summary>\\n<result>\(resultText)</result>\\n</task-notification>"},"timestamp":"2026-07-01T10:00:02.000Z","uuid":"u3"}
+            {"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"},"timestamp":"2026-07-01T10:00:03.000Z","uuid":"u4"}
+            {"type":"user","message":{"role":"user","content":"Some injected context."},"isMeta":true,"timestamp":"2026-07-01T10:00:04.000Z","uuid":"u5"}
+            {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"On it."}]},"timestamp":"2026-07-01T10:00:05.000Z","uuid":"a1"}
+            """
+        )
+
+        let record = makeClaudeRecord(sessionID: "cc-harness", transcriptPath: url.path)
+        let transcript = try TranscriptPreviewExtractor.loadTranscript(for: record)
+
+        // Genuine human prompt stays a chat message.
+        XCTAssertEqual(transcript.entries.first?.role, .user)
+        XCTAssertEqual(transcript.entries.first?.body, "Investigate the insertable regression.")
+
+        // Pure task-notification -> single internal system event (hidden by default).
+        let pureNotification = try XCTUnwrap(transcript.entries.first { $0.id == "u2" })
+        XCTAssertEqual(pureNotification.role, .system)
+        XCTAssertFalse(pureNotification.isChatMessage)
+
+        // Task-notification with a <result> -> hidden system wrapper + visible assistant message.
+        let wrapper = try XCTUnwrap(transcript.entries.first { $0.id == "u3-0" })
+        XCTAssertEqual(wrapper.role, .system)
+        XCTAssertFalse((wrapper.body ?? "").contains(resultText), "Result payload should not be duplicated in the wrapper body.")
+        let surfacedResult = try XCTUnwrap(transcript.entries.first { $0.id == "u3-1" })
+        XCTAssertEqual(surfacedResult.role, .assistant)
+        XCTAssertEqual(surfacedResult.body, resultText)
+
+        // Slash-command scaffolding and isMeta wrappers become internal events too.
+        XCTAssertEqual(transcript.entries.first { $0.id == "u4" }?.role, .system)
+        XCTAssertEqual(transcript.entries.first { $0.id == "u5" }?.role, .system)
+
+        // Default (chat-only) view shows the human prompt, the surfaced result, and the assistant reply.
+        let chatItems = transcript.chatDisplayItems
+        let chatIDs = chatItems.map(\.id)
+        XCTAssertEqual(chatIDs, ["u1", "u3-1", "a1"])
+
+        // Search index excludes the wrappers but keeps the surfaced result content.
+        let searchable = try TranscriptPreviewExtractor.searchableEntries(for: record)
+        let searchableText = searchable.map(\.text).joined(separator: "\n")
+        XCTAssertTrue(searchableText.contains("insertable-related"), "Surfaced result should remain searchable.")
+        XCTAssertFalse(searchableText.contains("Brief pause"), "Notification wrapper text should not be indexed.")
+        XCTAssertFalse(searchableText.contains("/clear"), "Slash-command scaffolding should not be indexed.")
+    }
+
+    private func makeClaudeRecord(sessionID: String, transcriptPath: String) -> SessionRecord {
+        SessionRecord(
+            source: .claudeCodeCLI,
+            sourceSessionId: sessionID,
+            workspacePath: "/Users/pisoni/repos/newton3",
+            projectName: "newton3",
+            branch: "main",
+            conversationModel: "claude-opus-4-8",
+            startedAt: nil,
+            updatedAt: nil,
+            title: sessionID,
+            summary: nil,
+            firstUserPreview: nil,
+            firstAssistantPreview: nil,
+            rawTranscriptPath: transcriptPath,
+            rawMetadataPath: nil,
+            relatedPlanPath: nil,
+            fingerprint: "fingerprint-\(sessionID)",
+            resumeKind: .claudeResume,
+            resumePayload: sessionID,
+            isNewtonProject: false
+        )
+    }
+
     func testTranscriptLoaderPreservesBasicMessageFormatting() throws {
         let url = try temporaryFile(
             named: "event-multiline.jsonl",

@@ -1713,8 +1713,13 @@ public enum TranscriptPreviewExtractor {
             let timestamp = ISO8601DateCoding.parse(object["timestamp"] as? String)
             let baseId = (object["uuid"] as? String) ?? "\(sessionId)-\(index)"
             let content = (object["message"] as? [String: Any])?["content"]
-            let defaultRole: TranscriptEntryRole = type == "user" ? .user : .assistant
-            let blocks = claudeContentBlocks(content, defaultRole: defaultRole)
+            let blocks: [ClaudeContentBlock]
+            if type == "user" {
+                let isMeta = object["isMeta"] as? Bool ?? false
+                blocks = claudeUserContentBlocks(content, isMeta: isMeta)
+            } else {
+                blocks = claudeContentBlocks(content, defaultRole: .assistant)
+            }
 
             for (subIndex, block) in blocks.enumerated() {
                 entries.append(
@@ -1772,6 +1777,108 @@ public enum TranscriptPreviewExtractor {
             }
         }
         return blocks
+    }
+
+    /// Normalizes a Claude `type: user` message into transcript blocks, reclassifying
+    /// harness-injected turns (task notifications, slash-command scaffolding, IDE context,
+    /// hooks, and other `isMeta` wrappers) as internal `.system` events so they stay hidden
+    /// unless "Show internal events" is on. Genuine human prompts remain `.user`, and a
+    /// task notification's inner `<result>` payload is surfaced as a visible `.assistant`
+    /// message so useful subagent output is not lost.
+    private static func claudeUserContentBlocks(_ content: Any?, isMeta: Bool) -> [ClaudeContentBlock] {
+        if let text = content as? String {
+            return claudeUserTextBlocks(text, isMeta: isMeta)
+        }
+
+        guard let array = content as? [[String: Any]] else { return [] }
+
+        var blocks: [ClaudeContentBlock] = []
+        for item in array {
+            switch item["type"] as? String {
+            case "text":
+                if let text = item["text"] as? String {
+                    blocks.append(contentsOf: claudeUserTextBlocks(text, isMeta: isMeta))
+                }
+            case "tool_use":
+                let name = item["name"] as? String ?? "tool"
+                blocks.append(ClaudeContentBlock(role: .tool, title: "Tool: \(name)", body: toolArgumentsSummary(item["input"])))
+            case "tool_result":
+                blocks.append(ClaudeContentBlock(role: .tool, title: "Tool Result", body: claudeToolResultText(item["content"])))
+            default:
+                continue
+            }
+        }
+        return blocks
+    }
+
+    /// Classifies a single user text block into transcript blocks. Runs only on `user`
+    /// lines and does cheap prefix checks; the `<result>` extraction path executes only for
+    /// `<task-notification>` payloads.
+    private static func claudeUserTextBlocks(_ rawText: String, isMeta: Bool) -> [ClaudeContentBlock] {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed.hasPrefix("<task-notification>") {
+            var blocks: [ClaudeContentBlock] = []
+            let title = claudeTaggedValue("summary", in: rawText)
+                .map { "Task notification: \($0)" } ?? "Task notification"
+            let wrapperSource = claudeRemovingResultBlock(rawText)
+            if let wrapperBody = TextSanitizer.summarize(wrapperSource, limit: 400) {
+                blocks.append(ClaudeContentBlock(role: .system, title: title, body: wrapperBody))
+            } else {
+                blocks.append(ClaudeContentBlock(role: .system, title: title, body: nil))
+            }
+            if let result = claudeTaggedValue("result", in: rawText),
+               let cleanedResult = TextSanitizer.clean(result) {
+                blocks.append(ClaudeContentBlock(role: .assistant, title: "Assistant", body: cleanedResult))
+            }
+            return blocks
+        }
+
+        if isMeta || claudeTextIsHarnessWrapper(trimmed) {
+            guard let cleaned = TextSanitizer.summarize(rawText, limit: 400) else { return [] }
+            return [ClaudeContentBlock(role: .system, title: claudeHarnessWrapperTitle(trimmed), body: cleaned)]
+        }
+
+        guard let cleaned = TextSanitizer.clean(rawText) else { return [] }
+        return [ClaudeContentBlock(role: .user, title: "User", body: cleaned)]
+    }
+
+    /// Returns the text between the first `<tag>` and its matching `</tag>`, or nil.
+    private static func claudeTaggedValue(_ tag: String, in text: String) -> String? {
+        guard let openRange = text.range(of: "<\(tag)>"),
+              let closeRange = text.range(of: "</\(tag)>", range: openRange.upperBound..<text.endIndex) else {
+            return nil
+        }
+        let inner = text[openRange.upperBound..<closeRange.lowerBound]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return inner.isEmpty ? nil : inner
+    }
+
+    /// Strips the `<result>...</result>` block (which can be large) from a notification so
+    /// the internal wrapper entry keeps only its metadata and does not duplicate the payload.
+    private static func claudeRemovingResultBlock(_ text: String) -> String {
+        guard let openRange = text.range(of: "<result>"),
+              let closeRange = text.range(of: "</result>", range: openRange.upperBound..<text.endIndex) else {
+            return text
+        }
+        var stripped = text
+        stripped.replaceSubrange(openRange.lowerBound..<closeRange.upperBound, with: "")
+        return stripped
+    }
+
+    private static func claudeTextIsHarnessWrapper(_ trimmed: String) -> Bool {
+        claudeMetaPromptPrefixes.contains { trimmed.hasPrefix($0) }
+    }
+
+    /// A friendly label for a harness-injected internal event, based on its leading tag.
+    private static func claudeHarnessWrapperTitle(_ trimmed: String) -> String {
+        if trimmed.hasPrefix("<command-") { return "Slash command" }
+        if trimmed.hasPrefix("<local-command-") || trimmed.hasPrefix("<bash-") { return "Command output" }
+        if trimmed.hasPrefix("<ide_") { return "IDE context" }
+        if trimmed.hasPrefix("<user-prompt-submit-hook") || trimmed.hasPrefix("<session-start-hook") { return "Hook" }
+        if trimmed.hasPrefix("<user-memory-input") { return "Memory" }
+        if trimmed.hasPrefix("Caveat:") { return "Caveat" }
+        return "Internal event"
     }
 
     private static func claudeToolResultText(_ content: Any?) -> String? {
@@ -1849,7 +1956,9 @@ public enum TranscriptPreviewExtractor {
 
     /// Wrapper prefixes Claude Code injects into a user turn (slash-command scaffolding, IDE
     /// context, hooks) that should not be treated as the human's prompt for titling/preview.
+    /// Also reused by the transcript parser to reclassify these turns as internal events.
     private static let claudeMetaPromptPrefixes = [
+        "<task-notification>",
         "<local-command-caveat", "<command-name", "<command-message", "<command-args",
         "<command-contents", "<local-command-stdout", "<local-command-stderr",
         "<bash-input", "<bash-stdout", "<bash-stderr",
