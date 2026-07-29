@@ -21,6 +21,9 @@ public actor TranscriptDocumentCache {
             fingerprint: record.fingerprint,
             document: document
         )
+        // Warm the Markdown parse caches for the chat messages shown by default so the
+        // transcript viewer renders and scrolls without parsing rows on the main thread.
+        MarkdownRendering.warmCaches(for: document.entries.compactMap { $0.isChatMessage ? $0.body : nil })
         return document
     }
 

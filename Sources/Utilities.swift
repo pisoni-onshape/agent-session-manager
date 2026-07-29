@@ -159,6 +159,39 @@ public enum MarkdownBlock: Equatable, Sendable {
 }
 
 public enum MarkdownRendering {
+    // Parsing Markdown (block splitting and `AttributedString(markdown:)`) is the dominant
+    // cost when rendering a transcript, and SwiftUI re-inits row views on every scroll and
+    // every highlight change. Cache the parsed results keyed by the raw text so the work
+    // happens once per unique string; re-renders then only re-apply the cheap highlight
+    // overlay. This keeps both initial open and incremental search navigation fast.
+    private final class BlocksBox {
+        let blocks: [MarkdownBlock]
+        init(_ blocks: [MarkdownBlock]) { self.blocks = blocks }
+    }
+
+    private final class AttributedStringBox {
+        let value: AttributedString
+        init(_ value: AttributedString) { self.value = value }
+    }
+
+    private static nonisolated(unsafe) let blocksCache: NSCache<NSString, BlocksBox> = {
+        let cache = NSCache<NSString, BlocksBox>()
+        cache.countLimit = 4000
+        return cache
+    }()
+
+    private static nonisolated(unsafe) let inlineAttributedCache: NSCache<NSString, AttributedStringBox> = {
+        let cache = NSCache<NSString, AttributedStringBox>()
+        cache.countLimit = 8000
+        return cache
+    }()
+
+    private static nonisolated(unsafe) let fullAttributedCache: NSCache<NSString, AttributedStringBox> = {
+        let cache = NSCache<NSString, AttributedStringBox>()
+        cache.countLimit = 2000
+        return cache
+    }()
+
     public static func inlineAttributedString(from rawText: String, highlightQuery rawQuery: String? = nil, isCurrent: Bool = false) -> AttributedString {
         let attributed = parseInlineMarkdown(rawText) ?? AttributedString(rawText)
         return highlightedAttributedString(from: attributed, query: rawQuery, isCurrent: isCurrent)
@@ -211,6 +244,27 @@ public enum MarkdownRendering {
     }
 
     public static func blocks(from rawText: String) -> [MarkdownBlock] {
+        let key = rawText as NSString
+        if let cached = blocksCache.object(forKey: key) {
+            return cached.blocks
+        }
+        let result = computeBlocks(from: rawText)
+        blocksCache.setObject(BlocksBox(result), forKey: key)
+        return result
+    }
+
+    /// Pre-populates the block and inline parse caches for the given texts. Intended to be
+    /// called off the main thread while a transcript is loading, so the row views hit warm
+    /// caches (no synchronous Markdown parsing) when they first scroll into view.
+    public static func warmCaches(for texts: [String]) {
+        for text in texts where !text.isEmpty {
+            for block in blocks(from: text) {
+                _ = runStrings(for: block)
+            }
+        }
+    }
+
+    private static func computeBlocks(from rawText: String) -> [MarkdownBlock] {
         let normalizedText = rawText
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
@@ -331,19 +385,35 @@ public enum MarkdownRendering {
     }
 
     private static func parseInlineMarkdown(_ rawText: String) -> AttributedString? {
+        let key = rawText as NSString
+        if let cached = inlineAttributedCache.object(forKey: key) {
+            return cached.value
+        }
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
-        return try? AttributedString(markdown: rawText, options: options)
+        guard let parsed = try? AttributedString(markdown: rawText, options: options) else {
+            return nil
+        }
+        inlineAttributedCache.setObject(AttributedStringBox(parsed), forKey: key)
+        return parsed
     }
 
     private static func parseFullMarkdown(_ rawText: String) -> AttributedString? {
+        let key = rawText as NSString
+        if let cached = fullAttributedCache.object(forKey: key) {
+            return cached.value
+        }
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .full,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
-        return try? AttributedString(markdown: rawText, options: options)
+        guard let parsed = try? AttributedString(markdown: rawText, options: options) else {
+            return nil
+        }
+        fullAttributedCache.setObject(AttributedStringBox(parsed), forKey: key)
+        return parsed
     }
 
     private static func highlightedAttributedString(from attributed: AttributedString, query rawQuery: String?, isCurrent: Bool = false) -> AttributedString {
