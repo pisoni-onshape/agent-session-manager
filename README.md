@@ -153,10 +153,37 @@ Results (human-readable or JSON) include transcript and plan match counts and sn
 
 ### Install
 
+The easiest way to get started is to download the latest release:
+
+1. Download `AgentSessionManager-<version>.zip` from the [Releases page](https://github.com/pisoni-onshape/agent-session-manager/releases)
+2. Extract the zip file
+3. Move `AgentSessionManager.app` to `/Applications/`
+4. **Remove the quarantine attribute** (required for unsigned apps):
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/AgentSessionManager.app
+   ```
+5. Launch the app from Applications or Spotlight
+
+The CLI helper will be available at:
+```
+/Applications/AgentSessionManager.app/Contents/Helpers/AgentSessionManagerCLI
+```
+
+You can create a symlink for convenience:
+```bash
+sudo ln -sfn /Applications/AgentSessionManager.app/Contents/Helpers/AgentSessionManagerCLI /usr/local/bin/agent-session-manager
+```
+
+Alternatively, use the app's **CLI → Install CLI to PATH** menu command at any time. It symlinks the bundled CLI helper into the first writable directory on your `PATH`, falling back to `~/.local/bin` and adding that to your `PATH` via `~/.zprofile` if needed - no `sudo` required.
+
+### Build from Source
+
+If you prefer to build from source:
+
 1. Clone the repository and run the build script:
 
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/pisoni-onshape/agent-session-manager.git
    cd agent-session-manager
    ./build.sh
    ```
@@ -167,7 +194,7 @@ Results (human-readable or JSON) include transcript and plan match counts and sn
 
 3. Launch the app from `/Applications` or Spotlight.
 
-4. Alternatively, use the app's **CLI → Install CLI to PATH** menu command at any time. It symlinks the bundled CLI helper into the first writable directory on your `PATH`, falling back to `~/.local/bin` and adding that to your `PATH` via `~/.zprofile` if needed - no `sudo` required.
+See [RELEASE.md](RELEASE.md) for details on building distributable packages.
 
 ### First Launch
 
