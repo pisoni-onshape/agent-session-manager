@@ -410,6 +410,57 @@ final class TranscriptParsingTests: XCTestCase {
         )
     }
 
+    func testClaudeTranscriptSurfacesCommandArgsQueuedPromptAndDemotesCompactSummary() throws {
+        let url = try temporaryFile(
+            named: "claude-compacted.jsonl",
+            contents: """
+            {"type":"user","message":{"role":"user","content":"<command-message>insertable-display-data</command-message>\\n<command-name>/insertable-display-data</command-name>\\n<command-args>Please read the CSV.</command-args>"},"timestamp":"2026-07-27T14:00:00.000Z","uuid":"u1"}
+            {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Working on it."}]},"timestamp":"2026-07-27T14:01:00.000Z","uuid":"a1"}
+            {"type":"attachment","attachment":{"type":"queued_command","prompt":"Feel free to use multiple / parallel agents to do your tasks","commandMode":"prompt","origin":{"kind":"human"}},"timestamp":"2026-07-27T14:02:00.000Z","uuid":"q1"}
+            {"type":"user","message":{"role":"user","content":"<command-name>/model</command-name>\\n<command-args></command-args>"},"timestamp":"2026-07-27T14:03:00.000Z","uuid":"m1"}
+            {"type":"attachment","attachment":{"type":"queued_command","prompt":"<task-notification>internal</task-notification>","commandMode":"task-notification","origin":{"kind":"agent"}},"timestamp":"2026-07-27T14:04:00.000Z","uuid":"q2"}
+            {"type":"user","message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context."},"isCompactSummary":true,"timestamp":"2026-07-27T14:05:00.000Z","uuid":"cs1"}
+            {"type":"user","message":{"role":"user","content":"Second real message."},"timestamp":"2026-07-27T14:06:00.000Z","uuid":"u3"}
+            """
+        )
+
+        let record = makeClaudeRecord(sessionID: "cc-compacted", transcriptPath: url.path)
+        let transcript = try TranscriptPreviewExtractor.loadTranscript(for: record)
+
+        // Slash-command prompt surfaces as the user's message, reconstructed with the command name.
+        let firstPrompt = try XCTUnwrap(transcript.entries.first { $0.id == "u1" })
+        XCTAssertEqual(firstPrompt.role, .user)
+        XCTAssertEqual(firstPrompt.body, "/insertable-display-data Please read the CSV.")
+
+        // Human queued (steering) prompt is surfaced as a user message.
+        let queued = try XCTUnwrap(transcript.entries.first { $0.id == "q1" })
+        XCTAssertEqual(queued.role, .user)
+        XCTAssertEqual(queued.body, "Feel free to use multiple / parallel agents to do your tasks")
+
+        // Empty-args slash command stays internal; compaction recap is demoted to internal.
+        XCTAssertEqual(transcript.entries.first { $0.id == "m1" }?.role, .system)
+        let recap = try XCTUnwrap(transcript.entries.first { $0.id == "cs1" })
+        XCTAssertEqual(recap.role, .system)
+        XCTAssertFalse(recap.isChatMessage)
+
+        // Non-human queued command (task notification) is not surfaced at all.
+        XCTAssertNil(transcript.entries.first { $0.id == "q2" })
+
+        // Chat view shows, in order: slash-command prompt, assistant reply, queued prompt, follow-up.
+        XCTAssertEqual(transcript.chatDisplayItems.map(\.id), ["u1", "a1", "q1", "u3"])
+
+        // Search index excludes the recap but keeps the real prompts.
+        let searchableText = try TranscriptPreviewExtractor.searchableEntries(for: record)
+            .map(\.text).joined(separator: "\n")
+        XCTAssertTrue(searchableText.contains("parallel agents"), "Queued prompt should be searchable.")
+        XCTAssertTrue(searchableText.contains("Please read the CSV"), "Slash-command prompt should be searchable.")
+        XCTAssertFalse(searchableText.contains("continued from a previous conversation"), "Compaction recap should not be indexed.")
+
+        // Preview reflects the real first prompt (the slash-command args), not a wrapper.
+        let preview = try TranscriptPreviewExtractor.extractClaudeCodePreview(from: url)
+        XCTAssertEqual(preview.firstUser, "/insertable-display-data Please read the CSV.")
+    }
+
     func testTranscriptLoaderPreservesBasicMessageFormatting() throws {
         let url = try temporaryFile(
             named: "event-multiline.jsonl",

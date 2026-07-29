@@ -1706,30 +1706,40 @@ public enum TranscriptPreviewExtractor {
             guard let data = line.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let type = object["type"] as? String,
-                  type == "user" || type == "assistant" else {
+                  type == "user" || type == "assistant" || type == "attachment" else {
                 continue
             }
 
             let timestamp = ISO8601DateCoding.parse(object["timestamp"] as? String)
             let baseId = (object["uuid"] as? String) ?? "\(sessionId)-\(index)"
+
+            // Human "steering" prompts typed while the assistant is mid-turn are not stored as
+            // normal user messages; Claude records them as a queued-command attachment. Surface
+            // them as user chat so they appear at their chronological position.
+            if type == "attachment" {
+                guard let block = claudeQueuedHumanPromptBlock(object["attachment"]) else {
+                    continue
+                }
+                appendClaudeEntry(block, id: baseId, timestamp: timestamp, into: &entries)
+                continue
+            }
+
             let content = (object["message"] as? [String: Any])?["content"]
             let blocks: [ClaudeContentBlock]
             if type == "user" {
                 let isMeta = object["isMeta"] as? Bool ?? false
-                blocks = claudeUserContentBlocks(content, isMeta: isMeta)
+                let isCompactSummary = object["isCompactSummary"] as? Bool ?? false
+                blocks = claudeUserContentBlocks(content, isMeta: isMeta, isCompactSummary: isCompactSummary)
             } else {
                 blocks = claudeContentBlocks(content, defaultRole: .assistant)
             }
 
             for (subIndex, block) in blocks.enumerated() {
-                entries.append(
-                    TranscriptEntry(
-                        id: blocks.count > 1 ? "\(baseId)-\(subIndex)" : baseId,
-                        role: block.role,
-                        title: block.title,
-                        body: block.body,
-                        timestamp: timestamp
-                    )
+                appendClaudeEntry(
+                    block,
+                    id: blocks.count > 1 ? "\(baseId)-\(subIndex)" : baseId,
+                    timestamp: timestamp,
+                    into: &entries
                 )
             }
         }
@@ -1785,9 +1795,9 @@ public enum TranscriptPreviewExtractor {
     /// unless "Show internal events" is on. Genuine human prompts remain `.user`, and a
     /// task notification's inner `<result>` payload is surfaced as a visible `.assistant`
     /// message so useful subagent output is not lost.
-    private static func claudeUserContentBlocks(_ content: Any?, isMeta: Bool) -> [ClaudeContentBlock] {
+    private static func claudeUserContentBlocks(_ content: Any?, isMeta: Bool, isCompactSummary: Bool) -> [ClaudeContentBlock] {
         if let text = content as? String {
-            return claudeUserTextBlocks(text, isMeta: isMeta)
+            return claudeUserTextBlocks(text, isMeta: isMeta, isCompactSummary: isCompactSummary)
         }
 
         guard let array = content as? [[String: Any]] else { return [] }
@@ -1797,7 +1807,7 @@ public enum TranscriptPreviewExtractor {
             switch item["type"] as? String {
             case "text":
                 if let text = item["text"] as? String {
-                    blocks.append(contentsOf: claudeUserTextBlocks(text, isMeta: isMeta))
+                    blocks.append(contentsOf: claudeUserTextBlocks(text, isMeta: isMeta, isCompactSummary: isCompactSummary))
                 }
             case "tool_use":
                 let name = item["name"] as? String ?? "tool"
@@ -1812,9 +1822,9 @@ public enum TranscriptPreviewExtractor {
     }
 
     /// Classifies a single user text block into transcript blocks. Runs only on `user`
-    /// lines and does cheap prefix checks; the `<result>` extraction path executes only for
-    /// `<task-notification>` payloads.
-    private static func claudeUserTextBlocks(_ rawText: String, isMeta: Bool) -> [ClaudeContentBlock] {
+    /// lines and does cheap prefix checks; the `<result>` and `<command-args>` extraction
+    /// paths execute only for the relevant wrapper payloads.
+    private static func claudeUserTextBlocks(_ rawText: String, isMeta: Bool, isCompactSummary: Bool) -> [ClaudeContentBlock] {
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if trimmed.hasPrefix("<task-notification>") {
@@ -1834,6 +1844,31 @@ public enum TranscriptPreviewExtractor {
             return blocks
         }
 
+        // A slash-command turn stores the user's typed prose in `<command-args>` (the
+        // `<command-name>` is the invoked command, `<command-message>` is only its display
+        // name). Surface the args as the real user prompt, reconstructed with the command
+        // name; commands without args (e.g. /model, /clear) stay internal.
+        if trimmed.hasPrefix("<command-name>") || trimmed.hasPrefix("<command-message>") {
+            let name = claudeTaggedValue("command-name", in: rawText)
+            if let args = claudeTaggedValue("command-args", in: rawText),
+               let cleanedArgs = TextSanitizer.clean(args) {
+                let body = name.map { "\($0) \(cleanedArgs)" } ?? cleanedArgs
+                return [ClaudeContentBlock(role: .user, title: "User", body: body)]
+            }
+            let title = name.map { "Slash command: \($0)" } ?? "Slash command"
+            return [ClaudeContentBlock(role: .system, title: title, body: TextSanitizer.summarize(rawText, limit: 200))]
+        }
+
+        // Auto-generated recap injected when a compacted session is resumed. It duplicates
+        // earlier turns that are still present in the transcript, so keep it internal.
+        if isCompactSummary {
+            return [ClaudeContentBlock(
+                role: .system,
+                title: "Session continued (compacted summary)",
+                body: TextSanitizer.summarize(rawText, limit: 400)
+            )]
+        }
+
         if isMeta || claudeTextIsHarnessWrapper(trimmed) {
             guard let cleaned = TextSanitizer.summarize(rawText, limit: 400) else { return [] }
             return [ClaudeContentBlock(role: .system, title: claudeHarnessWrapperTitle(trimmed), body: cleaned)]
@@ -1842,6 +1877,42 @@ public enum TranscriptPreviewExtractor {
         guard let cleaned = TextSanitizer.clean(rawText) else { return [] }
         return [ClaudeContentBlock(role: .user, title: "User", body: cleaned)]
     }
+
+    /// Appends a transcript entry, skipping an immediately repeated identical user body so a
+    /// surfaced queued prompt is not duplicated by a coincident normal user turn.
+    private static func appendClaudeEntry(
+        _ block: ClaudeContentBlock,
+        id: String,
+        timestamp: Date?,
+        into entries: inout [TranscriptEntry]
+    ) {
+        if block.role == .user,
+           let body = block.body,
+           let previous = entries.last,
+           previous.role == .user,
+           previous.body == body {
+            return
+        }
+        entries.append(
+            TranscriptEntry(id: id, role: block.role, title: block.title, body: block.body, timestamp: timestamp)
+        )
+    }
+
+    /// Extracts a human-authored queued (steering) prompt from a Claude `attachment` record.
+    /// These are prompts typed while the assistant is mid-turn; Claude stores them as a
+    /// `queued_command` attachment rather than a normal user message, so they would otherwise
+    /// never appear in the transcript. Non-human queued commands (e.g. task notifications)
+    /// are ignored.
+    private static func claudeQueuedHumanPromptBlock(_ attachment: Any?) -> ClaudeContentBlock? {
+        guard let attachment = attachment as? [String: Any],
+              attachment["type"] as? String == "queued_command",
+              (attachment["origin"] as? [String: Any])?["kind"] as? String == "human",
+              let cleaned = TextSanitizer.clean(attachment["prompt"] as? String) else {
+            return nil
+        }
+        return ClaudeContentBlock(role: .user, title: "User", body: cleaned)
+    }
+
 
     /// Returns the text between the first `<tag>` and its matching `</tag>`, or nil.
     private static func claudeTaggedValue(_ tag: String, in text: String) -> String? {
@@ -1935,20 +2006,22 @@ public enum TranscriptPreviewExtractor {
                 preview.latestModel = model
             }
 
-            let role: TranscriptEntryRole = type == "user" ? .user : .assistant
-            let text = claudeContentBlocks(message?["content"], defaultRole: role)
-                .first(where: { $0.role == role })?
-                .body
-
             if type == "user", preview.firstUser == nil {
-                // Skip tool-injected / slash-command / IDE wrapper turns so the title and preview
-                // reflect the first real user prompt.
+                // Use the shared classifier so the preview reflects the first real human prompt
+                // (including a slash command's `<command-args>`) and skips wrapper/meta/recap turns.
                 let isMeta = object["isMeta"] as? Bool ?? false
-                if !isMeta, let text, !claudeIsMetaPrompt(text) {
-                    preview.firstUser = text
+                let isCompactSummary = object["isCompactSummary"] as? Bool ?? false
+                if let body = claudeUserContentBlocks(message?["content"], isMeta: isMeta, isCompactSummary: isCompactSummary)
+                    .first(where: { $0.role == .user })?
+                    .body {
+                    preview.firstUser = body
                 }
             }
-            if type == "assistant", preview.firstAssistant == nil { preview.firstAssistant = text }
+            if type == "assistant", preview.firstAssistant == nil {
+                preview.firstAssistant = claudeContentBlocks(message?["content"], defaultRole: .assistant)
+                    .first(where: { $0.role == .assistant })?
+                    .body
+            }
         }
 
         return preview
@@ -1966,11 +2039,6 @@ public enum TranscriptPreviewExtractor {
         "<ide_recently_modified_files", "<user-prompt-submit-hook", "<session-start-hook",
         "<user-memory-input", "Caveat:"
     ]
-
-    private static func claudeIsMetaPrompt(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return claudeMetaPromptPrefixes.contains { trimmed.hasPrefix($0) }
-    }
 
     private static func allMatches(of regex: NSRegularExpression, in text: String) -> [String] {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)

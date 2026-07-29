@@ -2,7 +2,7 @@ import Foundation
 import SQLite3
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-private let transcriptIndexSchemaVersion = "chat-only-v2"
+private let transcriptIndexSchemaVersion = "chat-only-v3"
 
 enum SQLiteStoreError: LocalizedError {
     case openFailed(code: Int32, message: String)
